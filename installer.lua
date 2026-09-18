@@ -7,15 +7,17 @@
 -- 【不做什么】不碰 <应用目录>/data/（那是程序自己记的阈值/实测/曲线/痕迹）；不删任何旧文件
 -- 【怎么用】在 OC 电脑上（要装因特网卡 Internet Card）：
 --     wget https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/installer.lua installer.lua
---     lua installer.lua
+--     lua installer.lua            -- 普通安装（不写任何日志文件）
+--     lua installer.lua --debug    -- 排错用：完整过程写进 <当前目录>/installer.log
 -- 【为何不叫 install.lua】OpenOS 自带 `/bin/install.lua`（装 OpenOS 用的），名字撞上会很乱。
 -- 【清单从哪来】下面的 FILE_LIST 由工作区的 `build_deploy.py` 生成（与应用目录里的文件逐一对应），
 --   所以加了模块只要重新打包 + 重新 push，这份清单不会和仓库脱节 —— 不要手改。
 -- 【下不下来怎么办】两层保险：① 直连 raw.githubusercontent.com 失败 → **整体**切备用镜像
 --   （镜像前缀 + 原链接，见 MIRROR_PREFIX）；② 一轮跑完还有失败项 → 再整轮重试，
 --   **每轮只给每个文件一次机会**（不在同一个文件上死磕），默认 3 轮。
--- 【留档】每次尝试（轮次 / 通道 / 网址 / 结果）都会攒着，跑完或失败时一次性写进
---   <当前目录>/installer.log —— OC 屏幕上滚掉的东西都能回去看，排错先看它。
+-- 【留档只在 --debug 下】加了 `--debug`，每次尝试（轮次 / 通道 / 网址 / 结果）才攒下来，
+--   跑完或失败时一次性写进 <当前目录>/installer.log —— OC 屏幕上滚掉的东西都能回去看。
+--   不加就是普通安装：不攒、不写盘，**一个多余文件都不产生**。
 --------------------------------------------------------------------------------
 
 local component     = require("component")
@@ -44,6 +46,8 @@ local RETRY_ROUNDS  = 3
 local APP_DIR       = (shell.getWorkingDirectory() .. "/PurifyWater"):gsub("//+", "/")
 -- 过程日志（跑完/失败时一次性写盘；屏幕滚掉的东西都在里面）
 local LOG_PATH      = (shell.getWorkingDirectory() .. "/installer.log"):gsub("//+", "/")
+-- 过程日志：默认**不开**（不加 --debug 时连文件都不写）；要开就是命令行加 --debug / -d
+local LOG_ON        = false
 -- 文件清单：应用目录下的相对路径（= 仓库里 SRC 目录下的相对路径），子目录会自动建
 local FILE_LIST     = {
     "main.lua",
@@ -105,6 +109,11 @@ local FILE_LIST     = {
 }
 -- ==========================================================================
 
+-- `--debug` / `-d`：把过程日志打开（OC 里就是 `lua installer.lua --debug`）
+for _, a in ipairs({ ... }) do
+    if a == "--debug" or a == "-d" then LOG_ON = true end
+end
+
 --- 递归建目录（OC 的 makeDirectory 不会替你建父目录）
 -- @param dir string 绝对路径
 local function ensureDir(dir)
@@ -118,7 +127,8 @@ local function ensureDir(dir)
     return true
 end
 
---- 拼下载地址：ch = 1 直连、2 备用（备用 = 镜像前缀 + 原链接）-- @param ch number
+--- 拼下载地址：ch = 1 直连、2 备用（备用 = 镜像前缀 + 原链接）
+-- @param ch number
 -- @param rel string 应用目录下的相对路径
 -- @return string
 local function urlFor(ch, rel)
@@ -129,15 +139,16 @@ end
 
 local CH_NAME = { "直连", "备用" }
 
--- 过程日志：先攒内存里，收尾时一次性写盘（OC 每次写盘都慢，而过程不需要实时看）
+-- 过程日志：只在 --debug 下攒（不开就只有一个空表，不占内存、不写盘）
 local LOG_LINES = {}
 local function log(text)
-    LOG_LINES[#LOG_LINES + 1] = text
+    if LOG_ON then LOG_LINES[#LOG_LINES + 1] = text end
 end
 
---- 把过程日志写盘（成功、失败两条路各调一次）
+--- 把过程日志写盘（成功、失败两条路各调一次；**没开日志就什么都不做**）
 -- @param title string 第一行：这次的结果
 local function flushLog(title)
+    if not LOG_ON then return end
     local f = io.open(LOG_PATH, "w")
     if not f then
         print("[提示] 日志没写成：" .. LOG_PATH)
@@ -254,8 +265,10 @@ local function main()
             end
         end
 
-        if #failed == 0 then break end
+        -- 【顺序要紧】先把本轮失败项收成新的待下清单，再判"是不是全好了" ——
+        --   反过来写（先 break）会把上一轮的整份清单留在 pending 里，全成功也会被判成"全没下来"。
         pending = failed
+        if #pending == 0 then break end
         if round >= RETRY_ROUNDS then break end
 
         round = round + 1
@@ -273,6 +286,9 @@ local function main()
             print("  - " .. rel .. "（" .. tostring(reasons[rel] or "?") .. "）")
         end
         flushLog(title)
+        if not LOG_ON then
+            print("（想看完整过程：加 --debug 重跑一次 —— lua installer.lua --debug，会写 " .. LOG_PATH .. "）")
+        end
         error("安装没完成：先把失败的补上再跑（应用目录里现在是半套代码，别直接启动）。")
     end
 
