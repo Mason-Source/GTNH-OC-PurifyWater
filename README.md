@@ -13,7 +13,7 @@ GTNH 净水线自动控制程序（OpenComputers）。一台 OC 电脑接上 ME 
 - **安全优先**：硬件缺失 / 主机总开关关闭 / 开关与调度意图不符 → 停机 + 锁定，**不自动恢复**，
   处理完手动点【启动系统】；锁定期只保留只读逻辑（采集、界面、日志）。
 - **数据集中在 `<应用目录>/data/`**：`levels.txt`（阈值 + 勾选，可直接手改）、`records.txt`（实测并行）、
-  `history.dat`（曲线）、`settings.txt`、`last_run.txt`（启动退出痕迹与界面错误，排错先看它）。
+  `history.dat`（曲线）、`settings.txt`、`last_run.txt`（启动退出痕迹，排错先看它）。
 - **镜像端**：`monitor.lua` 用另一台电脑 + 无线网卡显示同一份快照，不参与调度。
 
 ## 目录
@@ -31,7 +31,7 @@ GTNH 净水线自动控制程序（OpenComputers）。一台 OC 电脑接上 ME 
 在 OC 电脑上：
 
 ```bash
-wget https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/installer.lua installer.lua
+wget -f https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/installer.lua installer.lua
 lua installer.lua
 ```
 
@@ -48,6 +48,9 @@ lua main.lua          # 启动（按 Q 退出）；--debug 打开调度/采样�
 
 下载默认走 GitHub 直连；**直连失败会自动整体切到备用镜像**（`installer.lua` 里的 `MIRROR_PREFIX`），
 整轮跑完仍有失败项就再来几轮（默认 3 轮，每轮每个文件只试一次，不在同一个文件上死磕）。
+
+万一还是报失败：先看 **`installer.log`**（写在启动安装器的那个目录里）—— 每一行都带轮次、网址和原因，
+屏幕上滚掉的东西都在里面。
 
 ### 手动放置
 
@@ -68,3 +71,5 @@ lua monitor.lua [端口]    # 镜像端（另一台电脑 + 无线网卡，不�
 GTNH 2.8.4以上； OpenComputers：T3机箱 T3显示屏 T3APU（=T3CPU+T3显卡） 无线网卡 内存≥2MB（=T3.5内存*2）。
 
 内存实测：**2048K（2MB）才稳** —— 1024K 能启动，但半小时内会崩；曲线与日志已封顶，占地方的是基线本身。
+
+想看内存那几行诊断（`内存基线` / `可用 / 地板 / 峰值`）得带 `--debug` 跑：日常运行不采、也不写。
