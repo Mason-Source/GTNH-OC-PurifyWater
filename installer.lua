@@ -1,5 +1,7 @@
 --------------------------------------------------------------------------------
 -- installer.lua   —— 净化水线安装器（OpenComputers）
+-- 【别直接改这个文件】它是 `build_deploy.py` 从工作区根的 `publish_installer.lua` 生成的
+--   （下面的 FILE_LIST 由脚本填），下次 build 会覆盖这里 —— 要改请改模板。
 --------------------------------------------------------------------------------
 -- 【做什么】把整个应用从 GitHub 拉下来（含各层子目录），装到 <当前目录>/PurifyWater
 -- 【不做什么】不碰 <应用目录>/data/（那是程序自己记的阈值/实测/曲线/痕迹）；不删任何旧文件
@@ -19,17 +21,17 @@ local shell      = require("shell")
 -- 拉哪一份变体：
 --   "build"       = 去注释版（**日常跑这个**，体积小一半）
 --   "PurifyWater" = 带注释源码（要现场改代码才用）
-local SRC      = "build"
+local SRC        = "build"
 
-local REPO_URL = "https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/"
-local BASE_URL = REPO_URL .. SRC .. "/"
+local REPO_URL   = "https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/"
+local BASE_URL   = REPO_URL .. SRC .. "/"
 
 -- 装到"当前工作目录/PurifyWater"（绝对路径，避免歧义）
-local APP_DIR  = (shell.getWorkingDirectory() .. "/PurifyWater"):gsub("//+", "/")
+local APP_DIR    = (shell.getWorkingDirectory() .. "/PurifyWater"):gsub("//+", "/")
 
 -- 文件清单：应用目录下的相对路径（= 仓库里 SRC 目录下的相对路径），子目录会自动建
-local FILE_LIST = {
-    "main.lua",
+local FILE_LIST  = {
+        "main.lua",
     "monitor.lua",
     "backend/api.lua",
     "backend/app/plan.lua",
