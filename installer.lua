@@ -1,11 +1,12 @@
 --------------------------------------------------------------------------------
--- install.lua   —— 净化水线安装器（OpenComputers）
+-- installer.lua   —— 净化水线安装器（OpenComputers）
 --------------------------------------------------------------------------------
 -- 【做什么】把整个应用从 GitHub 拉下来（含各层子目录），装到 <当前目录>/PurifyWater
 -- 【不做什么】不碰 <应用目录>/data/（那是程序自己记的阈值/实测/曲线/痕迹）；不删任何旧文件
 -- 【怎么用】在 OC 电脑上（要装因特网卡 Internet Card）：
---     wget https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/install.lua install.lua
---     lua install.lua
+--     wget https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/installer.lua installer.lua
+--     lua installer.lua
+-- 【为何不叫 install.lua】OpenOS 自带 `/bin/install.lua`（装 OpenOS 用的），名字撞上会很乱。
 -- 【清单从哪来】下面的 FILE_LIST 由工作区的 `build_deploy.py` 生成（与应用目录里的文件逐一对应），
 --   所以加了模块只要重新打包 + 重新 push，这份清单不会和仓库脱节 —— 不要手改。
 --------------------------------------------------------------------------------

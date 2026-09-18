@@ -24,7 +24,7 @@ GTNH 净水线自动控制程序（OpenComputers）。一台 OC 电脑接上 ME 
 
 | 路径 | 内容 |
 |---|---|
-| `install.lua` | **一键安装器**（在 OC 电脑上跑，自动把下面的文件拉全） |
+| `installer.lua` | **一键安装器**（在 OC 电脑上跑，自动把下面的文件拉全） |
 | `PurifyWater/` | **带注释的源码**（要改就改这里） |
 | `build/` | 同一份源码**去注释后的版本**，整份丢进 OC 电脑的 `home/` 就能跑 |
 
@@ -35,11 +35,11 @@ GTNH 净水线自动控制程序（OpenComputers）。一台 OC 电脑接上 ME 
 在 OC 电脑上：
 
 ```bash
-wget https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/install.lua install.lua
-lua install.lua
+wget https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/installer.lua installer.lua
+lua installer.lua
 ```
 
-装到「当前目录/PurifyWater」，默认拉 `build/`（去注释版）；想要带注释的源码，把 `install.lua` 开头
+装到「当前目录/PurifyWater」，默认拉 `build/`（去注释版）；想要带注释的源码，把 `installer.lua` 开头
 `SRC = "build"` 改成 `"PurifyWater"`。装完：
 
 ```bash
