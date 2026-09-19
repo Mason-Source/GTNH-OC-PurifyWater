@@ -40,18 +40,15 @@ function rules.evaluate(level)
         return { open = false, forced = false, reason = "未部署机器" }
     end
 
+    -- 【前提】state.fluids 恒为数字：T2 在**注册时就跑过一次**，且读不到按 0 写（见 jobs.readFluids）。
+    --   所以这里不再有"水位读不到"那种分支 —— 读不到 = 0，判定的自然结果就是
+    --   "只强开 T1、L2-T8 被原料线挡住"，本身就是安全退化。
     local own = state.fluids[level]
-    if type(own) ~= "number" then
-        return { open = false, forced = false, reason = "本级水位读不到" }
-    end
     local line = rules.reserveLine(level)
 
     -- ① 原料不足：上一级的水不够本级用
     if level > 1 then
         local prev = state.fluids[level - 1]
-        if type(prev) ~= "number" then
-            return { open = false, forced = false, reason = "上级水位读不到" }
-        end
         if prev < line then
             return {
                 open = false,

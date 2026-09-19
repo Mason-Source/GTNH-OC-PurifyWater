@@ -84,13 +84,9 @@ function jobs.readFluids()
     local amounts, ok, err = fluid.readAll()
     last.fluidOk, last.fluidErr = ok, err
     for level = 1, constants.LEVEL_COUNT do
-        local amount = ok and amounts[level] or nil
+        local amount = (ok and amounts[level]) or 0
         state.fluids[level] = amount
-        if amount == nil then
-            scheduler.emit("fluid_unavailable", { level = level, reason = err })
-        else
-            scheduler.emit("fluid_state", { level = level, amount = amount })
-        end
+        scheduler.emit("fluid_state", { level = level, amount = amount })
     end
 end
 function jobs.observePlants()

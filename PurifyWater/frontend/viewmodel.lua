@@ -76,7 +76,7 @@ function vm.build(force)
     for level = 1, constants.LEVEL_COUNT do
         local row          = data.levels[level]
         row.running        = (row.deployed > 0) and ((row.active or 0) > 0) or false
-        row.waterText      = (row.water == nil) and "-" or utils.formatShortNumber(row.water)
+        row.waterText      = utils.formatShortNumber(row.water or 0)     -- 水位恒为数字（读不到=0）
         row.thresholdText  = utils.formatShortNumber(row.rule.threshold) -- 总览行里用短单位
         row.thresholdKText = kiloText(row.rule.threshold)                -- 配置页用：全量 + 逗号
         -- 当前并行 = 本周期传感器读到的在跑机器里的最低并行（多台取最小，未确认）

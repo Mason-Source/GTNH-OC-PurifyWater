@@ -30,7 +30,7 @@ local state = {}
 -- progress / progressMax：**只有主机（T0）这一行有**（T3 只读主机；各水厂周期同步，T1-8 不记进度）；界面画周期条用
 state.plants = {}
 
--- fluids[level] = number|nil（mB，读不到就是 nil）
+-- fluids[level] = number（mB；**读不到按 0 记** —— T2 是唯一写入方，注册时就写过一次）
 state.fluids = {}
 
 -- 功率：all = 全厂可用（能量仓）｜budget = 本轮剩余（allocator 逐级扣减）

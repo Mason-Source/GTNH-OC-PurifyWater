@@ -10,7 +10,7 @@
 --   parallel_sample   -> tracker 连续确认 -> parallel_write / parallel_discarded
 --   parallel_write    -> **不论谁在写**：写盘 -> 重算功率 -> 立刻重排
 --   fluid_state       -> 重判该级开启条件 -> 条件翻转就广播 level_openable_changed -> 重排
---   fluid_unavailable -> 直接进安全状态（B 类：不动机器、只停调度）
+--                        （水位读不到 = 按 0：网络里暂时没水缓存是正常态，不停机、不锁定）
 --
 -- 【判定放在这里】实测开关 vs **读数那一刻的方案**（payload.want，随事实一起上来）：
 --   一致 -> 无事；**偏离 -> 只可能是人（或外部线路）动过机器** -> 停机 + 锁定，
@@ -59,17 +59,6 @@ function watch.onFluidState(payload)
             level = level, open = verdict.open, forced = verdict.forced, reason = verdict.reason
         })
     end
-end
-
---- 水位读不到（ME 接口没接上 / 网络断）
--- 【处理】不拿旧水量判断：直接进安全状态（B 类：**不动机器**，只停调度），水位接回来也不自动继续。
---   报警行交给 `system.enterSafeState` 的第三个参数 —— 幂等与"只报一次"都在那一处
---   （原来这里那个 `warnedFluid` 模块内布尔、以及"没在跑就只记日志"的分支都随之删掉）。
--- @param payload table { level, reason }
-function watch.onFluidUnavailable(payload)
-    system.enterSafeState("水位读不到", false,
-        string.format("水位读不到（%s）——停机并锁定，接回 ME 网络后请手动点【启动系统】",
-            tostring(payload and payload.reason or "原因未知")))
 end
 
 --- 阈值文件变更（T2 检测到 -> 重判全部等级并立刻重排）

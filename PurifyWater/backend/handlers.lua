@@ -11,8 +11,7 @@
 --   采集类  hardware_missing  -> system（全关 + 锁定）
 --           hardware_changed  -> system（全关+锁定 -> 记录作废）
 --           power_changed     -> system（记录作废 -> 在跑时重排）
---           fluid_state       -> watch（开启条件判定 + 翻转广播）
---           fluid_unavailable -> watch（报警 + 停机锁定）
+--           fluid_state       -> watch（开启条件判定 + 翻转广播；**读不到按 0**）
 --           plant_observed    -> watch（边沿 + 归因）
 --           parallel_sample   -> watch（连续确认 -> parallel_write / discarded）
 --   派生类  level_rules_changed   -> watch（重判全部等级 + 重排）
@@ -38,7 +37,6 @@ function handlers.subscribe()
     scheduler.on("hardware_changed", system.onHardwareChanged)
     scheduler.on("power_changed", system.onPowerChanged)
     scheduler.on("fluid_state", watch.onFluidState)
-    scheduler.on("fluid_unavailable", watch.onFluidUnavailable)
     scheduler.on("plant_observed", watch.onPlantObserved)
     scheduler.on("parallel_sample", watch.onParallelSample)
 

@@ -13,15 +13,9 @@ function rules.evaluate(level)
         return { open = false, forced = false, reason = "未部署机器" }
     end
     local own = state.fluids[level]
-    if type(own) ~= "number" then
-        return { open = false, forced = false, reason = "本级水位读不到" }
-    end
     local line = rules.reserveLine(level)
     if level > 1 then
         local prev = state.fluids[level - 1]
-        if type(prev) ~= "number" then
-            return { open = false, forced = false, reason = "上级水位读不到" }
-        end
         if prev < line then
             return {
                 open = false,

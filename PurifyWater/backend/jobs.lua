@@ -9,7 +9,7 @@
 --
 -- 【任务清单（ARCHITECTURE.md §3）】
 --   T1 scanHardware  10 s  硬件 + 功率 + 拓扑清单         -> hardware_missing / hardware_changed / power_changed
---   T2 readFluids     5 s  1-8 级水量 + 阈值文件变更       -> fluid_state / fluid_unavailable / level_rules_changed
+--   T2 readFluids     5 s  1-8 级水量 + 阈值文件变更       -> fluid_state / level_rules_changed（**读不到按 0**）
 --   T3 observePlants  5 s  T0-8 开关与活动；在运行的读传感器
 --                                                       -> plant_observed ×N / parallel_sample ×N
 --                                                       （边沿、归因、不一致判定在 app/watch）
@@ -155,15 +155,13 @@ function jobs.readFluids()
     local amounts, ok, err = fluid.readAll()
     last.fluidOk, last.fluidErr = ok, err
 
+    -- 【读不到按 0】网络里暂时还没水缓存是**正常态**，不是故障：按 0 判定的结果天然是
+    --   "只强开源头那一级（T1）、L2-T8 被原料线挡住"——已经是安全退化，不必停机、更不必锁定。
+    --   长期取 0 而网络里有水，用户看水量列/曲线会自己察觉。ok/err 只留作排查（退出摘要那行）。
     for level = 1, constants.LEVEL_COUNT do
-        local amount = ok and amounts[level] or nil
+        local amount = (ok and amounts[level]) or 0
         state.fluids[level] = amount
-        if amount == nil then
-            -- 读不到就明说：宁可停，也不拿旧水量瞎开机器（处理器见 app/watch）
-            scheduler.emit("fluid_unavailable", { level = level, reason = err })
-        else
-            scheduler.emit("fluid_state", { level = level, amount = amount })
-        end
+        scheduler.emit("fluid_state", { level = level, amount = amount })
     end
 end
 

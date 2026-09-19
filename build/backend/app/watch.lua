@@ -27,11 +27,6 @@ function watch.onFluidState(payload)
         })
     end
 end
-function watch.onFluidUnavailable(payload)
-    system.enterSafeState("水位读不到", false,
-        string.format("水位读不到（%s）——停机并锁定，接回 ME 网络后请手动点【启动系统】",
-            tostring(payload and payload.reason or "原因未知")))
-end
 function watch.onLevelRulesChanged(payload)
     logs.debug("[调试] " .. tostring(payload and payload.why or "阈值配置已更新"))
     for level = 1, constants.LEVEL_COUNT do

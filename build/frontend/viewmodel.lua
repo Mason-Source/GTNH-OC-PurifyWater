@@ -37,7 +37,7 @@ function vm.build(force)
     for level = 1, constants.LEVEL_COUNT do
         local row          = data.levels[level]
         row.running        = (row.deployed > 0) and ((row.active or 0) > 0) or false
-        row.waterText      = (row.water == nil) and "-" or utils.formatShortNumber(row.water)
+        row.waterText      = utils.formatShortNumber(row.water or 0)
         row.thresholdText  = utils.formatShortNumber(row.rule.threshold)
         row.thresholdKText = kiloText(row.rule.threshold)
         row.sampleText     = row.sample and utils.formatShortNumber(row.sample) or "-"

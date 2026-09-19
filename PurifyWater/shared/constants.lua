@@ -13,7 +13,7 @@ local constants                   = {}
 -- OC 的 shell 会缓存已加载的模块：只重启程序不一定拿到新代码。
 -- 启动日志与 last_run 痕迹都写它，换完文件即可确认跑的是哪一份；改了需重启生效的东西就抬号。
 -- 跑 `--debug` 时显示成 `vX.Y-debug`：后缀在 `core/bootstrap.version()` 里拼（常量本身只有号）。
-constants.CODE_VERSION            = "v4.1"
+constants.CODE_VERSION            = "v4.2"
 
 -- 等级：1~8 级净水单元；0 级保留给净水主机
 constants.LEVEL_COUNT             = 8
