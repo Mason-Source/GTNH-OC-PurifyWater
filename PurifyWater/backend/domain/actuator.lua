@@ -6,12 +6,14 @@
 -- 【被谁用】backend/app/plan（正常调度）、backend/app/system（停机 / 急停）
 --
 -- 【下发与回读分在两个周期】本文件**只发不读**：
---     * 本周期：setWorkAllowed + 登记 state.cmd[level]（"我们发了什么"的凭据）
---     * 下一周期：T3 读到开关 -> app/watch 拿 cmd 对比 -> 不符才报警（归因表见 ARCHITECTURE §4.4）
---   同一个周期里刚下发就回读，机器可能还没走完自己的 tick，读回的是旧值，只会造出假告警。
+--   本周期 setWorkAllowed + 登记一条**待确认的下发记录** `state.cmd[level] = { want }`；
+--   之后 T3 读到开关时把记录随事实带上、由 app/watch 认领 —— 相符即销账，不符即报警
+--   （归因表见 ARCHITECTURE §4.4）。同一个周期里刚下发就回读，机器可能还没走完自己的 tick，
+--   读回的是旧值，只会造出假告警。
 -- 【回执】只回答"命令发出去没有"（调用是否报错），没有"回读值"这东西。
--- 【归因】下发时登记 state.cmd[level] = { want, at }：
---         下一周期观测到开关与意图不符，就能判断"是我们刚下发的、还是别人（玩家）改的"
+-- 【凭据 = 身份，不是时刻】每次下发**换一张新表**：表引用本身就是"哪一次下发"的身份。
+--   比时刻不可靠：`computer.uptime()` 是**游戏刻 ÷ 20**（0.05 秒分辨率），而主循环一帧可能跨
+--   好几个游戏刻，判定时取到的时刻必然晚于本帧下发 -> 下发前读的旧值会被当成新命令的回音。
 --------------------------------------------------------------------------------
 
 local constants = require("shared.constants")
@@ -49,8 +51,8 @@ function actuator.apply(plan)
                 receipt.items[#receipt.items + 1] = item
                 count = count + 1
             end
-            -- 归因凭据：这套意图是我们刚发的（下一周期读到时比对一次就清掉，见 app/watch）
-            state.cmd[level] = { want = want, at = now }
+            -- 凭据：这套意图是我们刚发的（T3 读数时带上、相符即销账，见 app/watch 的归因）
+            state.cmd[level] = { want = want }
         end
     end
     return count, failed

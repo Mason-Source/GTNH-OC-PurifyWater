@@ -128,20 +128,19 @@ function system.ensureHostStoppedLock()
 end
 
 --- 开关与调度意图不符 -> 停机 + 锁定（B 类：**不动机器**）
--- 【判定只有一处】"不一致"由 watch 拿实测与 state.lastPlan 比出（见 watch 注释）；这里只管怎么办。
--- 【两种来源】① 我们下发过（cmd 还在），下一周期读回来不是那个值（机器拒听）；
---   ② 我们没下发过（cmd 已清），开关却变了（用户手动动的）。两者分不清，日志里两种可能都写。
--- 【不下发全关】要么机器根本不听我们的（再发也不会听），要么是用户刚摆的状态（系统不该替他改）。
+-- 【判定只有一处】"不一致"由 watch 拿实测与**待确认的下发记录**比出（见 watch 注释）；这里只管怎么办。
+-- 【来源只有一种】我们下发过、机器回的不是那个值（机器拒听）。玩家手改进不了这里 ——
+--   那时 watch 手上一份待确认记录都没有，由 plan.drifted() 纠偏重发。
+-- 【不下发全关】机器根本不听我们的，再发也不会听。
 -- 重复进来直接返回：锁定期这同一件事每 5 秒再现一次，不能每轮都刷一行警告。
--- @param payload table { level, want, got, byUs }
+-- @param payload table { level, want, got }
 function system.onSwitchMismatch(payload)
     if not payload or not payload.level then return end
     if state.system.locked then return end -- 已经为这件事锁过了：锁定期不闹人
     local levelName    = constants.levelLabel(payload.level)
 
-    -- 证据行附两样，便于判断"到底是谁改的"：
-    --   ① 最近一次下发：几秒前 / 几台 / 失败几台（没发出去与不听从是完全不同的结论）
-    --   ② byUs：这次不符是否紧接在我们下发之后（cmd 还在）
+    -- 证据行：最近一次下发几秒前 / 几台 / 失败几台 ——
+    --   "命令没发出去"与"机器不听从"是完全不同的结论，一对照就能分清
     local receipt      = actuator.lastReceipt()
     local sent, failed = 0, 0
     for _, item in ipairs(receipt.items or {}) do
@@ -155,9 +154,8 @@ function system.onSwitchMismatch(payload)
         or string.format("最近一次下发 %s %d 台（失败 %d）", since, sent, failed)
 
     logs.warn(string.format(
-        "%s 实测%s，与调度意图（%s）不符%s —— %s。停机并锁定（不动机器），处理完请点【启动系统】",
-        levelName, payload.got and "开" or "关", payload.want and "开" or "关",
-        payload.byUs and "（紧接我们下发之后）" or "（我们没下发过）", sentText))
+        "%s 实测%s，与调度意图（%s）不符（紧接我们下发之后） —— %s。停机并锁定（不动机器），处理完请点【启动系统】",
+        levelName, payload.got and "开" or "关", payload.want and "开" or "关", sentText))
     system.enterSafeState(levelName .. " 开关与调度意图不符", false)
 end
 

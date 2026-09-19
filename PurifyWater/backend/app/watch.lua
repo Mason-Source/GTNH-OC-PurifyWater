@@ -11,8 +11,10 @@
 --   parallel_write   -> **不论谁在写**：写盘 -> 重算功率 -> 立刻重排
 --   fluid_state      -> 重判该级开启条件 -> 条件翻转就广播 level_openable_changed -> 重排
 --
--- 【归因放在这里】state.cmd[level] 是 actuator 下发时登记的"我们刚发过什么"，读一次即清：
---   "读回不符"因此能区分"我们发的没生效"与"别人改的"。
+-- 【归因放在这里】state.cmd[level] 是 actuator 下发时登记的**待确认下发记录**；
+--   T3 读到开关那一刻把当时挂着的那条记录随事实带上来（payload.cmd），这里用它认领这条读数：
+--   值 = 记录里的意图 -> 那次下发生效，销账；值 ≠ -> 报警（停机 + 锁定）。
+--   没有挂着记录 -> 这条读数不归属任何一次下发，只当观测（玩家手改由 plan.drifted 纠偏重发）。
 --------------------------------------------------------------------------------
 
 local CONFIG      = require("shared.config")
@@ -20,7 +22,6 @@ local constants   = require("shared.constants")
 local logs        = require("shared.logs")
 local state       = require("shared.state")
 local utils       = require("shared.utils")
-local computer    = require("computer")
 
 local scheduler   = require("core.scheduler")
 
@@ -97,13 +98,12 @@ function watch.onLevelOpenableChanged()
 end
 
 --- 观测事实（T3 -> 5 秒一次，T0-8 每级一行）
--- @param payload table { level, switch, active, deployed }
+-- @param payload table { level, switch, active, deployed, cmd }（cmd = 读数那一刻挂着的待确认下发记录）
 function watch.onPlantObserved(payload)
-    local level                        = payload.level
-    local snap                         = state.plant(level)
-    local prev                         = snap.lastSwitch
-    local at                           = computer.uptime()
-    snap.lastSwitch, snap.lastSwitchAt = payload.switch, at
+    local level     = payload.level
+    local snap      = state.plant(level)
+    local prev      = snap.lastSwitch
+    snap.lastSwitch = payload.switch
 
     -- 主机（0 级）：开关边沿只写一行证据，处理统一走"每轮对齐一次"（幂等）。
     -- 不发 host_switch_on/off 事件：处理已是电平语义，边沿事件只会重复同一件事。
@@ -131,27 +131,24 @@ function watch.onPlantObserved(payload)
 
     if payload.switch == nil then return end
 
-    -- 【不一致判定只有一处：实测 vs 正在执行的方案（state.lastPlan）】
-    --   lastPlan 由 plan.run 写入、plan.forget 清空；"机器拒听"与"用户手点"是同一个不一致，
-    --   不另开判定。cmd 只负责归因措辞（我们刚发过 / 别人动的）。
-    -- 【只认"下发之后读到的"那一次】T3 在本轮跑在 T4 前面，这条读数常发生在上次下发之前，
-    --   拿去判"下发后有没有生效"必然假不符。判据：读数时刻 ≤ 下发时刻 -> 跳过本次判定、
-    --   **保留 cmd**，等下一个周期的读数（宽容期 = 一个 T3 周期）。
+    -- 【不一致判定只有一处：实测 vs **读这一刻还挂着的那次下发**（payload.cmd）】
+    --   T3 在同一帧里跑在 T4 前面（注册序），而这里的处理要等本帧 drain 才跑 —— 那一刻 T4 可能
+    --   已经发过新命令。所以凭据必须由读数带上来；判定若自己另取时刻，就会把"下发前读到的旧值"
+    --   当成本次下发的回音（假不符 = 停机 + 锁定，实机踩过）。
+    --   cmd == nil（近期下发都已被确认过）-> 这条读数不归属任何一次下发：只当观测，不当证据；
+    --   开关真被改过由 plan.drifted() 纠偏重发（"机器拒听"与"玩家手点"是同一个不一致，不另开判定）。
     local want = state.lastPlan[level]
     if want == nil then
         state.cmd[level] = nil -- 没有意图就没什么可归因的
         return
     end
-    local cmd = state.cmd[level]
-    if cmd and at <= cmd.at then
-        logs.debug(string.format("[调试] %s 这次开关是下发前读到的，本轮不判一致（等下一个周期）",
-            constants.levelLabel(level)))
-        return
-    end
-    state.cmd[level] = nil -- 归因用一次就清：只解释"紧接下发之后的这一次观测"
-    if payload.switch ~= want then
+    local cmd = payload.cmd
+    if cmd == nil then return end
+    -- 认领：这条读数就是那次下发的回音 -> 销账（判定期间又发过新命令则不动它，那条还没被确认）
+    if state.cmd[level] == cmd then state.cmd[level] = nil end
+    if payload.switch ~= cmd.want then
         scheduler.emit("switch_mismatch", {
-            level = level, want = want, got = payload.switch, byUs = cmd ~= nil
+            level = level, want = cmd.want, got = payload.switch
         })
     end
 end

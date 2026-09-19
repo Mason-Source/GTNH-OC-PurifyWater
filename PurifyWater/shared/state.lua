@@ -17,7 +17,6 @@ local state = {}
 --     deployed = number,          -- 在册台数
 --     switch   = true|false|nil,  -- 全开 / 全关 / nil（混合态**或有读不到**——界面显示 ?）
 --     lastSwitch = true|false|nil, -- T3 最近一次读到的开关（**电平**：每轮观测都写，含 nil）
---     lastSwitchAt = number,      -- 上面那次读数的时刻（uptime）；不一致判定只认"下发之后读到的"那一次
 --     active   = number|nil,      -- 确认在跑的台数；nil = 有读不到的（**不等于 0**，界面显示 ?）
 --     sample   = number|nil,      -- **当前并行**：本周期读到的在跑机器的**最低并行**（多台取最小；**未确认**）
 --     success  = number|nil,      -- 本级**最小成功率**（多台取最小；最近一次采样）
@@ -37,8 +36,9 @@ state.fluids = {}
 -- 功率：all = 全厂可用（能量仓）｜budget = 本轮剩余（allocator 逐级扣减）
 state.power = { all = 0, budget = 0 }
 
--- 调度意图（"谁动的开关"归因用）：cmd[level] = { want = bool, at = uptime }
--- 不是长期意图表：读回一致就清掉。
+-- 待确认的下发记录（"谁动的开关"归因用）：cmd[level] = { want = bool }
+--   actuator 每下发一次就换一张**新表**，表引用本身就是凭据；T3 读数时随事实带上
+--   （plant_observed.cmd），读数与它相符即销账、不符则报警（见 app/watch 的归因）。
 state.cmd = {}
 
 -- 并行确认器：tracker[address] = { progress, cycleValue, value, streak, samples, confirmed }（见 domain/tracker）

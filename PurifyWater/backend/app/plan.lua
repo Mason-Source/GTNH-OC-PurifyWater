@@ -9,7 +9,8 @@
 --
 -- 【幂等】方案与 state.lastPlan 相同、且实测状态与方案一致 -> 什么都不做
 --   （每 5 秒无脑下发 8 条指令既浪费，也会把归因搅乱）。
--- 【纠偏】方案没变但**实测开关**与方案不符（玩家在 GT 界面手动关过）-> 强制重新下发。
+-- 【纠偏】方案没变、**没有待确认的下发**、但实测开关与方案不符（玩家在 GT 界面手动关过）
+--   -> 强制重新下发。还挂着待确认记录的不符由 app/watch 报警（那才是"机器拒听"）。
 -- v2 把"算"和"下发"散在 dispatch / actuator / unitScan 三处，
 --   出现过"算了一套、下发另一套"；这里只有这一条路径。
 --------------------------------------------------------------------------------
@@ -43,19 +44,17 @@ end
 -- 只比"确实记过意图"的等级：lastPlan[level] 为 nil 有两种情形 ——
 --   ① 还没跑过一轮调度；② 上一轮**没发出去**（actuator 报错，已被 plan.run 抹掉）。
 --   两者都不算"实测与方案不符"：后者靠 isSame 不成立触发**重发**，不是纠偏。
--- 只认"下发之后读到的"那次读数：T3 在同一轮里跑在 T4 前面，lastSwitch 常常是**上次下发之前**
---   读的，拿来判"下发后生效没有"会假不符。判据：读数时刻 > 下发时刻（cmd.at）。
+-- 【只认"没人认领"的读数】还挂着待确认下发（state.cmd[level]）的等级**不在这里纠偏**：
+--   那种不符是"我们发过、机器回的不是那个值"，由 app/watch 报警（停机 + 锁定）。
+--   这里只处理"下发都已被确认过、开关却又变了"的情形 —— 玩家在 GT 界面动的，重发纠正。
 -- @return number|nil level
 local function drifted()
     for level = 1, constants.LEVEL_COUNT do
         local snap = state.plant(level)
         local want = state.lastPlan[level]
-        if want ~= nil and (snap.deployed or 0) > 0 and snap.lastSwitch ~= nil then
-            local cmd   = state.cmd[level]
-            local after = (snap.lastSwitchAt or 0) > (cmd and cmd.at or 0)
-            if after and snap.lastSwitch ~= want then
-                return level
-            end
+        if want ~= nil and (snap.deployed or 0) > 0 and snap.lastSwitch ~= nil
+            and state.cmd[level] == nil and snap.lastSwitch ~= want then
+            return level
         end
     end
     return nil

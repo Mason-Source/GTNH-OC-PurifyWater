@@ -3,7 +3,6 @@ local constants   = require("shared.constants")
 local logs        = require("shared.logs")
 local state       = require("shared.state")
 local utils       = require("shared.utils")
-local computer    = require("computer")
 local scheduler   = require("core.scheduler")
 local rules       = require("backend.domain.rules")
 local power       = require("backend.domain.power")
@@ -52,11 +51,10 @@ function watch.onLevelOpenableChanged()
     if state.isActive() then plan.run("开启条件变化") end
 end
 function watch.onPlantObserved(payload)
-    local level                        = payload.level
-    local snap                         = state.plant(level)
-    local prev                         = snap.lastSwitch
-    local at                           = computer.uptime()
-    snap.lastSwitch, snap.lastSwitchAt = payload.switch, at
+    local level     = payload.level
+    local snap      = state.plant(level)
+    local prev      = snap.lastSwitch
+    snap.lastSwitch = payload.switch
     if level == constants.HOST_LEVEL then
         if prev ~= nil and payload.switch ~= nil and prev ~= payload.switch then
             logs.append(payload.switch
@@ -81,16 +79,12 @@ function watch.onPlantObserved(payload)
         state.cmd[level] = nil
         return
     end
-    local cmd = state.cmd[level]
-    if cmd and at <= cmd.at then
-        logs.debug(string.format("[调试] %s 这次开关是下发前读到的，本轮不判一致（等下一个周期）",
-            constants.levelLabel(level)))
-        return
-    end
-    state.cmd[level] = nil
-    if payload.switch ~= want then
+    local cmd = payload.cmd
+    if cmd == nil then return end
+    if state.cmd[level] == cmd then state.cmd[level] = nil end
+    if payload.switch ~= cmd.want then
         scheduler.emit("switch_mismatch", {
-            level = level, want = want, got = payload.switch, byUs = cmd ~= nil
+            level = level, want = cmd.want, got = payload.switch
         })
     end
 end

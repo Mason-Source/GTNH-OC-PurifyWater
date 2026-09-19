@@ -24,7 +24,7 @@ function actuator.apply(plan)
                 receipt.items[#receipt.items + 1] = item
                 count = count + 1
             end
-            state.cmd[level] = { want = want, at = now }
+            state.cmd[level] = { want = want }
         end
     end
     return count, failed

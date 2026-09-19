@@ -20,12 +20,9 @@ local function drifted()
     for level = 1, constants.LEVEL_COUNT do
         local snap = state.plant(level)
         local want = state.lastPlan[level]
-        if want ~= nil and (snap.deployed or 0) > 0 and snap.lastSwitch ~= nil then
-            local cmd   = state.cmd[level]
-            local after = (snap.lastSwitchAt or 0) > (cmd and cmd.at or 0)
-            if after and snap.lastSwitch ~= want then
-                return level
-            end
+        if want ~= nil and (snap.deployed or 0) > 0 and snap.lastSwitch ~= nil
+            and state.cmd[level] == nil and snap.lastSwitch ~= want then
+            return level
         end
     end
     return nil
