@@ -178,11 +178,11 @@ end
 -- @return boolean 是否成功
 -- @return number|string 成功时是字节数，失败时是说明
 local function fetch(url, dest)
-    local tmp = dest .. ".tmp"                                 -- 同目录：rename 就地换名，不搬数据
-    filesystem.remove(tmp)                                     -- 每次都从"确定不存在"起步（残留会让判定再次失真）
-    local rc = shell.execute("wget -f " .. url .. " " .. tmp)   -- 阻塞，直到下完
+    local tmp = dest .. ".tmp"                                -- 同目录：rename 就地换名，不搬数据
+    filesystem.remove(tmp)                                    -- 每次都从"确定不存在"起步（残留会让判定再次失真）
+    local rc = shell.execute("wget -f " .. url .. " " .. tmp) -- 阻塞，直到下完
     if not filesystem.exists(tmp) or filesystem.size(tmp) == 0 then
-        filesystem.remove(tmp)                                 -- 空壳也别留（wget 请求失败时不会自己删）
+        filesystem.remove(tmp)                                -- 空壳也别留（wget 请求失败时不会自己删）
         return false, "没下到内容（wget 返回 " .. tostring(rc) .. "：404 / 超时 / 网络不通）"
     end
     local okLoad, chunk, lerr = pcall(loadfile, tmp)
@@ -191,8 +191,8 @@ local function fetch(url, dest)
             .. tostring(not okLoad and chunk or lerr))
     end
     local size = filesystem.size(tmp)
-    filesystem.remove(dest)                                    -- OpenOS 的 rename 不保证覆盖（自家 cp/mv 也是先删再搬）
-    local _, mvErr = filesystem.rename(tmp, dest)              -- 成败不看返回值，直接看"临时文件还在不在"
+    filesystem.remove(dest)                       -- OpenOS 的 rename 不保证覆盖（自家 cp/mv 也是先删再搬）
+    local _, mvErr = filesystem.rename(tmp, dest) -- 成败不看返回值，直接看"临时文件还在不在"
     if filesystem.exists(tmp) then
         filesystem.remove(tmp)
         return false, "改名顶替失败（" .. tostring(mvErr or "临时文件还在") .. "）"

@@ -86,10 +86,17 @@ function jobs.scanHardware()
     -- 组件缓存先失效：插拔后 component.list 才是权威（这一步也顺带重取 ME 代理）
     device.invalidate()
 
-    local summary    = machines.scan()
+    local summary = machines.scan()
     -- 单仓：功率就取这一台仓的（没有仓 -> 0，会进 missing）
-    local hatch      = machines.energy()
-    local totalPower = energy.powerOf(hatch)
+    local hatch   = machines.energy()
+    -- 激光仓的电流能在仓界面里调小 -> 名字只给上限，真值要从缓冲容量换算（见 hardware/energy）。
+    -- 不先判名字：非激光仓读了也会被 powerOf 忽略，一次 invoke 而已
+    local euMax
+    if hatch then
+        local stored = device.invoke(hatch.address, "getEUMaxStored")
+        if type(stored) == "number" then euMax = stored end
+    end
+    local totalPower, powerNote = energy.powerOf(hatch, euMax)
     if hatch then hatch.power = totalPower end
     local meProxy = device.me()
 
@@ -132,7 +139,7 @@ function jobs.scanHardware()
         scheduler.emit("hardware_changed", diff)
     end
     if last.powerBefore ~= nil and math.floor(last.powerBefore) ~= math.floor(totalPower) then
-        scheduler.emit("power_changed", { from = last.powerBefore, to = totalPower })
+        scheduler.emit("power_changed", { from = last.powerBefore, to = totalPower, note = powerNote })
     end
     last.powerBefore = totalPower
 

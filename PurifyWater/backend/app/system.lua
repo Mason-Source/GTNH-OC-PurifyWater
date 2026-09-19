@@ -181,12 +181,13 @@ function system.onHardwareChanged(payload)
 end
 
 --- 全厂功率变化 -> 并行记录作废 + （在调度中才）重排
--- @param payload table { from, to }
+-- @param payload table { from, to, note? } note = 记账依据（如"激光仓电流被调过"），没有就是名字值
 function system.onPowerChanged(payload)
     -- 换过能源仓 -> 旧并行记录不可信，作废照做（与是否在调度无关）
     if CONFIG.SYSTEM.RELEARN_ON_POWER_CHANGE then
-        logs.system(records.invalidate(nil, string.format("全厂功率 %s -> %s",
-            tostring(payload and payload.from), tostring(payload and payload.to))))
+        logs.system(records.invalidate(nil, string.format("全厂功率 %s -> %s%s",
+            tostring(payload and payload.from), tostring(payload and payload.to),
+            (payload and payload.note) and ("（" .. payload.note .. "）") or "")))
     end
     if not state.isActive() then return end -- 提前拦截，见 onHardwareChanged
     plan.run("功率变化")

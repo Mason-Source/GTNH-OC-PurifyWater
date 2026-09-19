@@ -36,9 +36,14 @@ end
 function jobs.last() return last end
 function jobs.scanHardware()
     device.invalidate()
-    local summary    = machines.scan()
-    local hatch      = machines.energy()
-    local totalPower = energy.powerOf(hatch)
+    local summary = machines.scan()
+    local hatch   = machines.energy()
+    local euMax
+    if hatch then
+        local stored = device.invoke(hatch.address, "getEUMaxStored")
+        if type(stored) == "number" then euMax = stored end
+    end
+    local totalPower, powerNote = energy.powerOf(hatch, euMax)
     if hatch then hatch.power = totalPower end
     local meProxy = device.me()
     local missing = {}
@@ -69,7 +74,7 @@ function jobs.scanHardware()
         scheduler.emit("hardware_changed", diff)
     end
     if last.powerBefore ~= nil and math.floor(last.powerBefore) ~= math.floor(totalPower) then
-        scheduler.emit("power_changed", { from = last.powerBefore, to = totalPower })
+        scheduler.emit("power_changed", { from = last.powerBefore, to = totalPower, note = powerNote })
     end
     last.powerBefore = totalPower
     logs.debug(string.format("[调试] 硬件扫描 #%d：主机 %d、单元 %d、能量仓 %s、其它 %d、总功率 %s、缺失 %s",

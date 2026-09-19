@@ -88,8 +88,9 @@ function system.onHardwareChanged(payload)
 end
 function system.onPowerChanged(payload)
     if CONFIG.SYSTEM.RELEARN_ON_POWER_CHANGE then
-        logs.system(records.invalidate(nil, string.format("全厂功率 %s -> %s",
-            tostring(payload and payload.from), tostring(payload and payload.to))))
+        logs.system(records.invalidate(nil, string.format("全厂功率 %s -> %s%s",
+            tostring(payload and payload.from), tostring(payload and payload.to),
+            (payload and payload.note) and ("（" .. payload.note .. "）") or "")))
     end
     if not state.isActive() then return end
     plan.run("功率变化")

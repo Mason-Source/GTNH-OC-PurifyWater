@@ -1,5 +1,10 @@
 local energy = {}
-function energy.powerOf(item)
+local function bufferK(head)
+    if head:find("wirelesstunnel", 1, true) then return 4000 end 
+    if head:find("tunnel", 1, true) then return 24 end
+    return nil
+end
+function energy.powerOf(item, euMax)
     local name = tostring(item and item.name or "")
     local tier = tonumber(name:match("tier%.(%d+)"))
     if not tier then return 0 end
@@ -12,6 +17,19 @@ function energy.powerOf(item)
     elseif tunnel then
         amps = 64 * (4 ^ tunnel)
     end
-    return 8 * (4 ^ tier) * amps
+    local voltage = 8 * (4 ^ tier)
+    local nominal = voltage * amps
+    if tunnel then
+        local k = bufferK(head)
+        if k and type(euMax) == "number" and euMax > 0 then
+            local exact = euMax / k
+            if exact ~= nominal then
+                return exact, string.format("激光仓限流至 %.0f A（最高 %.0f A）",
+                    exact / voltage, amps)
+            end
+            return exact
+        end
+    end
+    return nominal
 end
 return energy
