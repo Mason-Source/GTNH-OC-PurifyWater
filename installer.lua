@@ -11,12 +11,14 @@
 --     wget https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/installer.lua installer.lua
 --     lua installer.lua            -- 普通安装（不写任何日志文件）
 --     lua installer.lua --debug    -- 排错用：完整过程写进 <当前目录>/installer.log
+--     lua installer.lua --mirror   -- **首选备用通道**（国内的镜像域名，直连慢/不稳时用）
 -- 【为何不叫 install.lua】OpenOS 自带 `/bin/install.lua`（装 OpenOS 用的），名字撞上会很乱。
 -- 【清单从哪来】下面的 FILE_LIST 由工作区的 `build_deploy.py` 生成（与应用目录里的文件逐一对应），
 --   所以加了模块只要重新打包 + 重新 push，这份清单不会和仓库脱节 —— 不要手改。
--- 【下不下来怎么办】两层保险：① 直连 raw.githubusercontent.com 失败 → **整体**切备用镜像
---   （镜像前缀 + 原链接，见 MIRROR_PREFIX）；② 一轮跑完还有失败项 → 再整轮重试，
+-- 【下不下来怎么办】两层保险：① 当前通道失败 → **整体**切另一条（镜像前缀 + 原链接，见
+--   MIRROR_PREFIX；每轮最多切一次，不逐文件混用）；② 一轮跑完还有失败项 → 再整轮重试，
 --   **每轮只给每个文件一次机会**（不在同一个文件上死磕），默认 3 轮。
+--   首用哪条由 `--mirror` 决定：不给就是直连，备用只在直连出问题时顶上。
 -- 【留档只在 --debug 下】加了 `--debug`，每次尝试（轮次 / 通道 / 网址 / 结果）才攒下来，
 --   跑完或失败时一次性写进 <当前目录>/installer.log —— OC 屏幕上滚掉的东西都能回去看。
 --   不加就是普通安装：不攒、不写盘，**跑完一个多余文件都不留**（下载中的 .tmp 当场改名或清掉）。
@@ -111,9 +113,14 @@ local FILE_LIST     = {
 }
 -- ==========================================================================
 
--- `--debug` / `-d`：把过程日志打开（OC 里就是 `lua installer.lua --debug`）
+-- 首选通道：1 = 直连、2 = 备用（`--mirror` 换成备用优先；备用不可用则仍是直连）
+local PREFER        = 1
+
+-- 命令行开关（OC 里就是 `lua installer.lua --mirror --debug`）：
+--   `--debug` / `-d` 开过程日志；`--mirror` / `-m` 把**首用通道**换成备用
 for _, a in ipairs({ ... }) do
     if a == "--debug" or a == "-d" then LOG_ON = true end
+    if a == "--mirror" or a == "-m" then PREFER = 2 end
 end
 
 --- 递归建目录（OC 的 makeDirectory 不会替你建父目录）
@@ -226,10 +233,17 @@ local function main()
         error("没检测到因特网卡（Internet Card）：安装要从 GitHub 下载文件。")
     end
 
+    -- `--mirror` 但没配备用：说一声就退回直连（不报错，免得脚本化调用直接挂）
+    if PREFER == 2 and MIRROR_PREFIX == "" then
+        print("[提示] 没有配备用通道（MIRROR_PREFIX 为空）：--mirror 无效，仍走直连。")
+        PREFER = 1
+    end
+
     print("== 净化水线 安装器 ==")
     print("变体： " .. SRC .. (SRC == "build" and "（去注释版）" or ""))
     print("源：   " .. BASE_URL)
-    print("备用： " .. (MIRROR_PREFIX ~= "" and (MIRROR_PREFIX .. "（直连失败时整体切过去）") or "无（只走直连）"))
+    print("备用： " .. (MIRROR_PREFIX ~= "" and (MIRROR_PREFIX .. "（哪条失败就整体切另一条）") or "无（只走直连）"))
+    print("首选： " .. CH_NAME[PREFER] .. (PREFER == 2 and "（--mirror）" or "") .. "，失败会自动换另一条通道")
     print("目标： " .. APP_DIR)
     if filesystem.exists(APP_DIR) then
         print("       目录已存在：只覆盖清单里的同名文件 —— 上游删掉/改名的旧文件不会被清掉，")
@@ -245,7 +259,7 @@ local function main()
     for i, rel in ipairs(FILE_LIST) do pending[i] = rel end
 
     local reasons   = {} -- 每个失败文件的最后一次原因（汇总时打在文件后面）
-    local ch, round = 1, 0
+    local ch, round = PREFER, 0
     local total     = #FILE_LIST
 
     log("变体 " .. SRC .. "，源 " .. BASE_URL .. "，备用 " .. MIRROR_PREFIX)
@@ -255,7 +269,7 @@ local function main()
             round + 1, CH_NAME[ch], #pending,
             round > 0 and string.format("（重试 %d/%d）", round, RETRY_ROUNDS) or ""))
 
-        local failed, okRound = {}, 0
+        local failed, okRound, switched = {}, 0, false -- switched：每轮最多切一次通道
         for i, rel in ipairs(pending) do
             local dir = rel:match("^(.*)/[^/]*$")
             if dir then ensureDir(APP_DIR .. "/" .. dir) end
@@ -274,11 +288,15 @@ local function main()
             log(string.format("第 %d 轮 %s [%d/%d] %-34s %s  %s", round + 1, CH_NAME[ch], i, #pending,
                 rel, ok and ("OK " .. tostring(info) .. " 字节") or ("失败：" .. tostring(info)), url))
 
-            -- 【一次失败就整体切备用】不逐文件混着用通道：本轮余下的与之后的重试都走备用
-            if not ok and ch == 1 and MIRROR_PREFIX ~= "" then
-                ch = 2
-                log("  → 直连失败，改用备用通道：" .. MIRROR_PREFIX)
-                print("         直连失败 → 余下文件改用备用通道：" .. MIRROR_PREFIX)
+            -- 【一次失败就整体切另一条通道】不逐文件混着用：本轮余下的与之后的重试都跟着走。
+            --   每轮最多切一次：两条都不通时不在同一轮里来回横跳（换回来是"轮级"那条规则的事）
+            if not ok and not switched and MIRROR_PREFIX ~= "" then
+                switched = true
+                local from = ch
+                ch = (ch == 1) and 2 or 1
+                log(string.format("  → %s 失败，改用%s通道：%s", CH_NAME[from], CH_NAME[ch],
+                    ch == 2 and MIRROR_PREFIX or BASE_URL))
+                print(string.format("         %s失败 → 余下文件改用%s通道", CH_NAME[from], CH_NAME[ch]))
             end
         end
 
