@@ -11,15 +11,14 @@
 --   内存不必缓存一大堆，要翻旧账看盘上那份。
 -- 【分级规则】debug 行在 user 级下**直接丢弃**（不入缓冲），否则会把用户级行挤出面板
 --
--- 【写法规范】只准用下面这 6 个前缀：
+-- 【写法规范】只准用下面这 5 个前缀：
 --   [警告] 异常 / 失败 / 要人来处理        （红）
---   [纠偏] 自动纠正（重发了一次）           （黄）
 --   [调度] 调度与判定结果                   （青）
 --   [系统] 系统状态变化（启停/锁定/硬件/采样写入）（白）
 --   [界面] 界面操作回执与拒绝原因           （灰）
 --   [调试] debug 级细节                     （灰）
 --   没前缀的行按 info（白）算；界面**只按前缀上色**，不再用 find("警告") 猜。
---   新代码推荐 `logs.warn/fix/schedule/system/ui(...)`：前缀由 logs 统一加，不会拼错。
+--   新代码推荐 `logs.warn/schedule/system/ui(...)`：前缀由 logs 统一加，不会拼错。
 --------------------------------------------------------------------------------
 
 local CONFIG       = require("shared.config")
@@ -83,7 +82,6 @@ end
 -- 前缀表（**顺序就是匹配顺序**；界面靠它判种类，颜色在 theme.LOG_COLORS）
 local KINDS = {
     { prefix = "[警告]", kind = "warn" },
-    { prefix = "[纠偏]", kind = "fix" },
     { prefix = "[调度]", kind = "schedule" },
     { prefix = "[系统]", kind = "system" },
     { prefix = "[界面]", kind = "ui" },
@@ -92,7 +90,7 @@ local KINDS = {
 
 --- 一行日志的种类（按**前缀**判；没有前缀 = "info"）
 -- @param text any
--- @return string "warn"|"fix"|"schedule"|"system"|"ui"|"debug"|"info"
+-- @return string "warn"|"schedule"|"system"|"ui"|"debug"|"info"
 function logs.kindOf(text)
     local s = tostring(text)
     for _, item in ipairs(KINDS) do
@@ -102,7 +100,7 @@ function logs.kindOf(text)
 end
 
 --- 按种类写一行（**前缀由这里统一加**，调用方只给正文）
--- @param kind string "warn"|"fix"|"schedule"|"system"|"ui"
+-- @param kind string "warn"|"schedule"|"system"|"ui"
 -- @param text any
 local function note(kind, text)
     local prefix = "[" .. tostring(kind) .. "]"
@@ -117,8 +115,6 @@ end
 
 -- 快捷方式（新代码用这些；前缀由上面统一加，不会拼错）
 function logs.warn(text) return note("warn", text) end
-
-function logs.fix(text) return note("fix", text) end
 
 function logs.schedule(text) return note("schedule", text) end
 

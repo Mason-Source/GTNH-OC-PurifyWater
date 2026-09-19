@@ -3,7 +3,6 @@ local state = {}
 state.plants = {}
 state.fluids = {}
 state.power = { all = 0, budget = 0 }
-state.cmd = {}
 state.tracker = {}
 state.system = {
     running    = false,

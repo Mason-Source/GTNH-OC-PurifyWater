@@ -13,9 +13,11 @@
 -- 【没有自动恢复】恢复调度的**唯一**入口是用户点【启动系统】；早期那几套自动恢复
 --   （开关一致 N 次、主机重开、水位读得到）已全部删除。
 --
--- 【两种锁定期】区别只在"进锁定时要不要动机器"：
---   A. 用户开关 T0 / 硬件变更 -> 下发一次全关 + 锁定（控制对象变了，先关掉才安全）
---   B. 用户启停 T1-8 / 机器拒听 / 水位读不到 -> 不动机器 + 锁定（只管停调度）
+-- 【两类锁定只有这一个入口】`enterSafeState(why, allOff, line)`，区别只在 allOff：
+--   A. 用户开关 T0 / 硬件缺失 / 硬件变更 -> 下发一次全关 + 锁定（控制对象变了，先关掉才安全）
+--   B. 水位读不到 / T1-8 开关被人工改动 -> 不动机器 + 锁定（只管停调度、机器保持现状）
+--   **幂等与"只报一次"都在 enterSafeState 里**（`locked` 早退吞掉重复进入；传进去的 `line`
+--   只在真的进锁那一刻写），所以各触发器都只是"拼锁因 + 一行说明"，不持有去重标志。
 --   锁定期保留只读逻辑（T1/T2/T3 采集、界面、日志），调度入口一律被 state.isActive() 拦下。
 -- 【主机开关关】算 A 类；主机重新打开后同样要用户手动点【启动系统】。
 --------------------------------------------------------------------------------
@@ -86,18 +88,22 @@ function system.unlock()
 end
 
 --- 进安全状态：停机 + 锁定（**幂等**：已经锁定就直接返回）
--- 【两种锁定期】区别只在 allOff：
---   allOff = true  （A 类：用户开关 T0 / 硬件变更）-> 下发一次全关
---   allOff = false （B 类：用户启停 T1-8 / 机器拒听 / 水位读不到）-> **不动机器**，只停调度
+-- 【两类锁定只有这一个入口】区别只在 allOff：
+--   allOff = true  （A 类：用户开关 T0 / 硬件缺失 / 硬件变更）-> 下发一次全关
+--   allOff = false （B 类：水位读不到 / 开关偏离方案）-> **不动机器**，只停调度
+-- 【幂等只有这一处】hardware_missing 是**电平**事件（T1 每 10 秒只要还缺件就发一次）、
+--   主机开关与开关偏离每轮也都能再观测到 —— 全部由这里的 `locked` 早退吸收。
+-- 【"只报一次"也只有这一处】`line` 只在**真的进锁**那一刻写一行；锁定期同一件事再发生就静默
+--   （锁因已记、界面也在显示）。所以触发器不必自己写去重标志（原有三套写法已统一到这里）。
 -- 【退出方式】只有用户点【启动系统】（system.start 里 unlock），没有自动恢复路径。
--- 【必须幂等】hardware_missing 是**电平**事件（T1 每 10 秒只要还缺件就发一次），
---   按边沿语义处理会变成"每 10 秒再下发一遍全关 + 再写一遍日志"。
 -- 【不覆盖锁定原因】锁定是状态：谁先出事谁是真因，后来的事件不该顶掉它（否则原因会来回跳）。
 -- @param why string 锁定原因（**进日志与界面**，一句话讲清出了什么事）
 -- @param allOff boolean 要不要下发一次全关
+-- @param line string|nil 进锁时写的那行警告（调用方拼好；不传就不写）
 -- @return boolean 本次是否真的进了安全状态
-function system.enterSafeState(why, allOff)
+function system.enterSafeState(why, allOff, line)
     if state.system.locked then return false end
+    if line then logs.warn(line) end
     if allOff then
         system.stop(why) -- 内部：下发全关 + running=false + 一行"已下发全关"日志
     else
@@ -127,20 +133,22 @@ function system.ensureHostStoppedLock()
     return system.enterSafeState(HOST_OFF_REASON, true)
 end
 
---- 开关与调度意图不符 -> 停机 + 锁定（B 类：**不动机器**）
--- 【判定只有一处】"不一致"由 watch 拿实测与**待确认的下发记录**比出（见 watch 注释）；这里只管怎么办。
--- 【来源只有一种】我们下发过、机器回的不是那个值（机器拒听）。玩家手改进不了这里 ——
---   那时 watch 手上一份待确认记录都没有，由 plan.drifted() 纠偏重发。
--- 【不下发全关】机器根本不听我们的，再发也不会听。
--- 重复进来直接返回：锁定期这同一件事每 5 秒再现一次，不能每轮都刷一行警告。
+--- 实测开关偏离方案 -> 停机 + 锁定（B 类：**不动机器**，机器保持用户摆的样子）
+-- 【判定只有一处】"偏离"由 watch 拿实测与**读数那一刻的方案**比出（见 watch 注释）；这里只管怎么办。
+-- 【为什么"偏离"就等于"人动过"】下发只在"方案变了"时发生，而且**立即生效**（`setWorkAllowed`
+--   直接写机器的 `mWorks`）。方案生效之后还偏离，就只可能有人（或外部线路）动过机器 ——
+--   不需要额外证据，也不需要猜是谁发的命令。程序该做的是**尊重这个改动并停手**，
+--   不是把它改回去（旧的"纠偏重发"已删，见决策 34）。
+-- 【不下发全关】机器现在是用户要的状态，系统不该替他改。
+-- 【幂等与去重都在 enterSafeState】这里只拼"锁因 + 那一行证据"，不自己判 locked：
+--   每 5 秒还会再观察到同一次偏离，重复进来由 `locked` 早退吞掉（也就不会重复刷警告）。
 -- @param payload table { level, want, got }
 function system.onSwitchMismatch(payload)
     if not payload or not payload.level then return end
-    if state.system.locked then return end -- 已经为这件事锁过了：锁定期不闹人
     local levelName    = constants.levelLabel(payload.level)
 
     -- 证据行：最近一次下发几秒前 / 几台 / 失败几台 ——
-    --   "命令没发出去"与"机器不听从"是完全不同的结论，一对照就能分清
+    --   便于对账"这次改动是不是紧接我们下发之后"（是 -> 更像通路/红石问题；不是 -> 用户动过）
     local receipt      = actuator.lastReceipt()
     local sent, failed = 0, 0
     for _, item in ipairs(receipt.items or {}) do
@@ -153,10 +161,9 @@ function system.onSwitchMismatch(payload)
     local sentText = (sent == 0) and "还没有过下发记录"
         or string.format("最近一次下发 %s %d 台（失败 %d）", since, sent, failed)
 
-    logs.warn(string.format(
-        "%s 实测%s，与调度意图（%s）不符（紧接我们下发之后） —— %s。停机并锁定（不动机器），处理完请点【启动系统】",
+    system.enterSafeState(levelName .. " 开关被人工改动", false, string.format(
+        "%s 实测%s，方案要%s。停机并锁定（机器保持现状），处理完请点【启动系统】｜ %s",
         levelName, payload.got and "开" or "关", payload.want and "开" or "关", sentText))
-    system.enterSafeState(levelName .. " 开关与调度意图不符", false)
 end
 
 --- 硬件台账变化 -> 采样重置 + 记录作废 + 全关 + 锁定（A 类）

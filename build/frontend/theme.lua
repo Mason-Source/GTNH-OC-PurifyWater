@@ -21,7 +21,6 @@ theme.COLORS     = {
 }
 theme.LOG_COLORS = {
     warn     = 0xef4444,
-    fix      = 0xf59e0b,
     schedule = 0x38bdf8,
     system   = 0xe2e8f0,
     ui       = 0x64748b,

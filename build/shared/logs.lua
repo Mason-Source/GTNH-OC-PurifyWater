@@ -33,7 +33,6 @@ function logs.applyArgs(args)
 end
 local KINDS = {
     { prefix = "[警告]", kind = "warn" },
-    { prefix = "[纠偏]", kind = "fix" },
     { prefix = "[调度]", kind = "schedule" },
     { prefix = "[系统]", kind = "system" },
     { prefix = "[界面]", kind = "ui" },
@@ -57,7 +56,6 @@ local function note(kind, text)
     logs.append(prefix .. " " .. tostring(text))
 end
 function logs.warn(text) return note("warn", text) end
-function logs.fix(text) return note("fix", text) end
 function logs.schedule(text) return note("schedule", text) end
 function logs.system(text) return note("system", text) end
 function logs.ui(text) return note("ui", text) end

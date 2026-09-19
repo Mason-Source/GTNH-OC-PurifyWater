@@ -40,8 +40,9 @@ function system.unlock()
     logs.system("已解锁（原锁定原因：" .. tostring(why) .. "）")
     return true
 end
-function system.enterSafeState(why, allOff)
+function system.enterSafeState(why, allOff, line)
     if state.system.locked then return false end
+    if line then logs.warn(line) end
     if allOff then
         system.stop(why)
     else
@@ -60,7 +61,6 @@ function system.ensureHostStoppedLock()
 end
 function system.onSwitchMismatch(payload)
     if not payload or not payload.level then return end
-    if state.system.locked then return end
     local levelName    = constants.levelLabel(payload.level)
     local receipt      = actuator.lastReceipt()
     local sent, failed = 0, 0
@@ -73,10 +73,9 @@ function system.onSwitchMismatch(payload)
         or "无记录"
     local sentText = (sent == 0) and "还没有过下发记录"
         or string.format("最近一次下发 %s %d 台（失败 %d）", since, sent, failed)
-    logs.warn(string.format(
-        "%s 实测%s，与调度意图（%s）不符（紧接我们下发之后） —— %s。停机并锁定（不动机器），处理完请点【启动系统】",
+    system.enterSafeState(levelName .. " 开关被人工改动", false, string.format(
+        "%s 实测%s，方案要%s。停机并锁定（机器保持现状），处理完请点【启动系统】｜ %s",
         levelName, payload.got and "开" or "关", payload.want and "开" or "关", sentText))
-    system.enterSafeState(levelName .. " 开关与调度意图不符", false)
 end
 function system.onHardwareChanged(payload)
     tracker.resetAll()

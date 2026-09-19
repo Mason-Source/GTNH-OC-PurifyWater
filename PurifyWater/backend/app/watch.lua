@@ -6,38 +6,39 @@
 -- 【被谁用】backend/handlers.lua
 --
 -- 【事实 vs 判断】jobs 只报"读到了什么"，所有"这意味着什么"都在这里：
---   plant_observed   -> 边沿(unit_switched) + 归因(switch_mismatch) + 主机开关对齐
---   parallel_sample  -> tracker 连续确认 -> parallel_write / parallel_discarded
---   parallel_write   -> **不论谁在写**：写盘 -> 重算功率 -> 立刻重排
---   fluid_state      -> 重判该级开启条件 -> 条件翻转就广播 level_openable_changed -> 重排
+--   plant_observed    -> 边沿(日志) + 偏离判定(switch_mismatch) + 主机开关对齐
+--   parallel_sample   -> tracker 连续确认 -> parallel_write / parallel_discarded
+--   parallel_write    -> **不论谁在写**：写盘 -> 重算功率 -> 立刻重排
+--   fluid_state       -> 重判该级开启条件 -> 条件翻转就广播 level_openable_changed -> 重排
+--   fluid_unavailable -> 直接进安全状态（B 类：不动机器、只停调度）
 --
--- 【归因放在这里】state.cmd[level] 是 actuator 下发时登记的**待确认下发记录**；
---   T3 读到开关那一刻把当时挂着的那条记录随事实带上来（payload.cmd），这里用它认领这条读数：
---   值 = 记录里的意图 -> 那次下发生效，销账；值 ≠ -> 报警（停机 + 锁定）。
---   没有挂着记录 -> 这条读数不归属任何一次下发，只当观测（玩家手改由 plan.drifted 纠偏重发）。
+-- 【判定放在这里】实测开关 vs **读数那一刻的方案**（payload.want，随事实一起上来）：
+--   一致 -> 无事；**偏离 -> 只可能是人（或外部线路）动过机器** -> 停机 + 锁定，
+--   机器保持原状、程序不再替用户做决定（偏离本身就是证据，不需要再猜是谁发的命令）。
+--   没有方案可对照（停机 / 还没跑过 / 上一轮没发出去）-> 不判。
+-- 【进锁只有一个入口】`system.enterSafeState(why, allOff, line)` —— 幂等与"只报一次"都在那里，
+--   这里只负责拼出 `why` 与那一行说明，不持有任何去重标志。
 --------------------------------------------------------------------------------
 
-local CONFIG      = require("shared.config")
-local constants   = require("shared.constants")
-local logs        = require("shared.logs")
-local state       = require("shared.state")
-local utils       = require("shared.utils")
+local CONFIG    = require("shared.config")
+local constants = require("shared.constants")
+local logs      = require("shared.logs")
+local state     = require("shared.state")
+local utils     = require("shared.utils")
 
-local scheduler   = require("core.scheduler")
+local scheduler = require("core.scheduler")
 
-local rules       = require("backend.domain.rules")
-local power       = require("backend.domain.power")
-local tracker     = require("backend.domain.tracker")
+local rules     = require("backend.domain.rules")
+local power     = require("backend.domain.power")
+local tracker   = require("backend.domain.tracker")
 
-local records     = require("backend.store.records")
-local machines    = require("backend.hardware.machines")
+local records   = require("backend.store.records")
+local machines  = require("backend.hardware.machines")
 
-local plan        = require("backend.app.plan")
-local system      = require("backend.app.system")
+local plan      = require("backend.app.plan")
+local system    = require("backend.app.system")
 
-local watch       = {}
-
-local warnedFluid = false
+local watch     = {}
 
 --- 水位读数（T2 -> 5 秒一次，1-8 级）
 -- 【触发事件】各等级水的开启条件判定
@@ -45,8 +46,6 @@ local warnedFluid = false
 function watch.onFluidState(payload)
     local level                             = payload.level
     state.fluids[level]                     = payload.amount
-
-    warnedFluid                             = false
 
     local snap                              = state.plant(level)
     local before                            = snap.openable
@@ -63,18 +62,14 @@ function watch.onFluidState(payload)
 end
 
 --- 水位读不到（ME 接口没接上 / 网络断）
--- 【处理】不拿旧水量判断：报警 + 进安全状态（B 类：**不动机器**，只停调度）。
---   水位接回来也不自动继续，等用户手动恢复。
+-- 【处理】不拿旧水量判断：直接进安全状态（B 类：**不动机器**，只停调度），水位接回来也不自动继续。
+--   报警行交给 `system.enterSafeState` 的第三个参数 —— 幂等与"只报一次"都在那一处
+--   （原来这里那个 `warnedFluid` 模块内布尔、以及"没在跑就只记日志"的分支都随之删掉）。
 -- @param payload table { level, reason }
 function watch.onFluidUnavailable(payload)
-    if warnedFluid then return end
-    warnedFluid = true
-    logs.warn(string.format("水位读不到（%s）——停机并锁定，接回 ME 网络后请手动点【启动系统】",
-        tostring(payload and payload.reason or "原因未知")))
-    -- 没在调度就只记一行日志（锁不锁由 system 定，它是幂等的）
-    if state.isActive() then
-        system.enterSafeState("水位读不到", false)
-    end
+    system.enterSafeState("水位读不到", false,
+        string.format("水位读不到（%s）——停机并锁定，接回 ME 网络后请手动点【启动系统】",
+            tostring(payload and payload.reason or "原因未知")))
 end
 
 --- 阈值文件变更（T2 检测到 -> 重判全部等级并立刻重排）
@@ -98,7 +93,7 @@ function watch.onLevelOpenableChanged()
 end
 
 --- 观测事实（T3 -> 5 秒一次，T0-8 每级一行）
--- @param payload table { level, switch, active, deployed, cmd }（cmd = 读数那一刻挂着的待确认下发记录）
+-- @param payload table { level, switch, active, deployed, want }（want = 读数那一刻该级的方案）
 function watch.onPlantObserved(payload)
     local level     = payload.level
     local snap      = state.plant(level)
@@ -126,31 +121,22 @@ function watch.onPlantObserved(payload)
         logs.system(string.format("%s 开关%s", constants.levelLabel(level),
             payload.switch and "打开" or "关闭"))
         tracker.clear(machines.of(level))
-        scheduler.emit("unit_switched", { level = level, on = payload.switch })
     end
 
     if payload.switch == nil then return end
 
-    -- 【不一致判定只有一处：实测 vs **读这一刻还挂着的那次下发**（payload.cmd）】
-    --   T3 在同一帧里跑在 T4 前面（注册序），而这里的处理要等本帧 drain 才跑 —— 那一刻 T4 可能
-    --   已经发过新命令。所以凭据必须由读数带上来；判定若自己另取时刻，就会把"下发前读到的旧值"
-    --   当成本次下发的回音（假不符 = 停机 + 锁定，实机踩过）。
-    --   cmd == nil（近期下发都已被确认过）-> 这条读数不归属任何一次下发：只当观测，不当证据；
-    --   开关真被改过由 plan.drifted() 纠偏重发（"机器拒听"与"玩家手点"是同一个不一致，不另开判定）。
-    local want = state.lastPlan[level]
-    if want == nil then
-        state.cmd[level] = nil -- 没有意图就没什么可归因的
-        return
-    end
-    local cmd = payload.cmd
-    if cmd == nil then return end
-    -- 认领：这条读数就是那次下发的回音 -> 销账（判定期间又发过新命令则不动它，那条还没被确认）
-    if state.cmd[level] == cmd then state.cmd[level] = nil end
-    if payload.switch ~= cmd.want then
-        scheduler.emit("switch_mismatch", {
-            level = level, want = cmd.want, got = payload.switch
-        })
-    end
+    -- 【判定只有一处：实测 vs **读数那一刻的方案**（payload.want）】
+    --   为什么用 payload.want 而不是 state.lastPlan：T3 在同一帧里跑在 T4 前面（注册序），
+    --   而这里的处理要等本帧 drain 才跑 —— 那一刻 lastPlan 可能已经换成新方案了（事件驱动的
+    --   重排也在 drain 里）。拿新方案比旧读数，就会把"一致的旧读数"判成"人动过"。
+    --   want == nil（停机 / 还没跑过 / 上一轮没发出去）-> 没有方案可对照，不判。
+    local want = payload.want
+    if want == nil or payload.switch == want then return end
+
+    -- 偏离方案 = 只可能是人（或外部线路）动过机器 -> 停机 + 锁定，机器保持原状
+    scheduler.emit("switch_mismatch", {
+        level = level, want = want, got = payload.switch
+    })
 end
 
 --- 并行采样（T3：只对"正在运行"的单元读；progress 用来判运行周期边界）

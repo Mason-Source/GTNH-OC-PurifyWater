@@ -1,22 +1,20 @@
-local CONFIG      = require("shared.config")
-local constants   = require("shared.constants")
-local logs        = require("shared.logs")
-local state       = require("shared.state")
-local utils       = require("shared.utils")
-local scheduler   = require("core.scheduler")
-local rules       = require("backend.domain.rules")
-local power       = require("backend.domain.power")
-local tracker     = require("backend.domain.tracker")
-local records     = require("backend.store.records")
-local machines    = require("backend.hardware.machines")
-local plan        = require("backend.app.plan")
-local system      = require("backend.app.system")
-local watch       = {}
-local warnedFluid = false
+local CONFIG    = require("shared.config")
+local constants = require("shared.constants")
+local logs      = require("shared.logs")
+local state     = require("shared.state")
+local utils     = require("shared.utils")
+local scheduler = require("core.scheduler")
+local rules     = require("backend.domain.rules")
+local power     = require("backend.domain.power")
+local tracker   = require("backend.domain.tracker")
+local records   = require("backend.store.records")
+local machines  = require("backend.hardware.machines")
+local plan      = require("backend.app.plan")
+local system    = require("backend.app.system")
+local watch     = {}
 function watch.onFluidState(payload)
     local level                             = payload.level
     state.fluids[level]                     = payload.amount
-    warnedFluid                             = false
     local snap                              = state.plant(level)
     local before                            = snap.openable
     local verdict                           = rules.evaluate(level)
@@ -30,13 +28,9 @@ function watch.onFluidState(payload)
     end
 end
 function watch.onFluidUnavailable(payload)
-    if warnedFluid then return end
-    warnedFluid = true
-    logs.warn(string.format("水位读不到（%s）——停机并锁定，接回 ME 网络后请手动点【启动系统】",
-        tostring(payload and payload.reason or "原因未知")))
-    if state.isActive() then
-        system.enterSafeState("水位读不到", false)
-    end
+    system.enterSafeState("水位读不到", false,
+        string.format("水位读不到（%s）——停机并锁定，接回 ME 网络后请手动点【启动系统】",
+            tostring(payload and payload.reason or "原因未知")))
 end
 function watch.onLevelRulesChanged(payload)
     logs.debug("[调试] " .. tostring(payload and payload.why or "阈值配置已更新"))
@@ -71,22 +65,13 @@ function watch.onPlantObserved(payload)
         logs.system(string.format("%s 开关%s", constants.levelLabel(level),
             payload.switch and "打开" or "关闭"))
         tracker.clear(machines.of(level))
-        scheduler.emit("unit_switched", { level = level, on = payload.switch })
     end
     if payload.switch == nil then return end
-    local want = state.lastPlan[level]
-    if want == nil then
-        state.cmd[level] = nil
-        return
-    end
-    local cmd = payload.cmd
-    if cmd == nil then return end
-    if state.cmd[level] == cmd then state.cmd[level] = nil end
-    if payload.switch ~= cmd.want then
-        scheduler.emit("switch_mismatch", {
-            level = level, want = cmd.want, got = payload.switch
-        })
-    end
+    local want = payload.want
+    if want == nil or payload.switch == want then return end
+    scheduler.emit("switch_mismatch", {
+        level = level, want = want, got = payload.switch
+    })
 end
 function watch.onParallelSample(payload)
     local verdict, why = tracker.feed(payload.address, payload.parallel, payload.progress)

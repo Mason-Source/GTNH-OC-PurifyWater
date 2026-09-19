@@ -36,11 +36,6 @@ state.fluids = {}
 -- 功率：all = 全厂可用（能量仓）｜budget = 本轮剩余（allocator 逐级扣减）
 state.power = { all = 0, budget = 0 }
 
--- 待确认的下发记录（"谁动的开关"归因用）：cmd[level] = { want = bool }
---   actuator 每下发一次就换一张**新表**，表引用本身就是凭据；T3 读数时随事实带上
---   （plant_observed.cmd），读数与它相符即销账、不符则报警（见 app/watch 的归因）。
-state.cmd = {}
-
 -- 并行确认器：tracker[address] = { progress, cycleValue, value, streak, samples, confirmed }（见 domain/tracker）
 state.tracker = {}
 

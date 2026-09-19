@@ -41,7 +41,6 @@ theme.COLORS     = {
 -- 日志行颜色：种类由 shared/logs 按**前缀**判出（logs.kindOf），面板不做关键字猜测式上色。
 theme.LOG_COLORS = {
     warn     = 0xef4444, -- [警告] 异常 / 失败
-    fix      = 0xf59e0b, -- [纠偏] 自动纠正
     schedule = 0x38bdf8, -- [调度] 调度与判定
     system   = 0xe2e8f0, -- [系统] 状态变化
     ui       = 0x64748b, -- [界面] 操作回执 / 被拒原因

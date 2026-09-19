@@ -5,15 +5,11 @@
 -- 【依赖】backend/hardware/{device,machines}、shared/{state,constants}
 -- 【被谁用】backend/app/plan（正常调度）、backend/app/system（停机 / 急停）
 --
--- 【下发与回读分在两个周期】本文件**只发不读**：
---   本周期 setWorkAllowed + 登记一条**待确认的下发记录** `state.cmd[level] = { want }`；
---   之后 T3 读到开关时把记录随事实带上、由 app/watch 认领 —— 相符即销账，不符即报警
---   （归因表见 ARCHITECTURE §4.4）。同一个周期里刚下发就回读，机器可能还没走完自己的 tick，
---   读回的是旧值，只会造出假告警。
--- 【回执】只回答"命令发出去没有"（调用是否报错），没有"回读值"这东西。
--- 【凭据 = 身份，不是时刻】每次下发**换一张新表**：表引用本身就是"哪一次下发"的身份。
---   比时刻不可靠：`computer.uptime()` 是**游戏刻 ÷ 20**（0.05 秒分辨率），而主循环一帧可能跨
---   好几个游戏刻，判定时取到的时刻必然晚于本帧下发 -> 下发前读的旧值会被当成新命令的回音。
+-- 【只发不读】本文件不读回开关、也不记"我发过什么"：`setWorkAllowed` 立即写进机器的 `mWorks`、
+--   `isWorkAllowed` 立即读得到，所以"下一条读数"必然反映我们的下发，不需要任何凭据。
+--   判定在 app/watch：**实测 ≠ 方案就是人动过机器** -> 停机 + 锁定（见 ARCHITECTURE §4.4）。
+-- 【回执】只回答"命令发出去没有"（调用是否报错），没有"回读值"这东西；
+--   `receipt.at` 只用于告警行的"最近一次下发几秒前"。
 --------------------------------------------------------------------------------
 
 local constants = require("shared.constants")
@@ -51,8 +47,6 @@ function actuator.apply(plan)
                 receipt.items[#receipt.items + 1] = item
                 count = count + 1
             end
-            -- 凭据：这套意图是我们刚发的（T3 读数时带上、相符即销账，见 app/watch 的归因）
-            state.cmd[level] = { want = want }
         end
     end
     return count, failed

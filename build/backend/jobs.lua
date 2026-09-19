@@ -100,7 +100,7 @@ function jobs.observePlants()
     for level = constants.HOST_LEVEL, constants.LEVEL_COUNT do
         local list                 = machines.of(level)
         local snap                 = state.plant(level)
-        local cmd                  = state.cmd[level]
+        local want                 = state.lastPlan[level]
         local total, on, off, fail = 0, 0, 0, 0
         local running, actFail     = 0, 0
         local facts                = {}
@@ -165,7 +165,7 @@ function jobs.observePlants()
         end
         if total > 0 then
             scheduler.emit("plant_observed", {
-                level = level, switch = observed, active = snap.active, deployed = total, cmd = cmd
+                level = level, switch = observed, active = snap.active, deployed = total, want = want
             })
         end
     end

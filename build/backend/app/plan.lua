@@ -16,17 +16,6 @@ end
 local function clearOnce(key)
     warned[key] = nil
 end
-local function drifted()
-    for level = 1, constants.LEVEL_COUNT do
-        local snap = state.plant(level)
-        local want = state.lastPlan[level]
-        if want ~= nil and (snap.deployed or 0) > 0 and snap.lastSwitch ~= nil
-            and state.cmd[level] == nil and snap.lastSwitch ~= want then
-            return level
-        end
-    end
-    return nil
-end
 function plan.run(reason)
     if not state.isActive() then
         return false
@@ -38,9 +27,8 @@ function plan.run(reason)
     else
         clearOnce("noPower")
     end
-    local fix = drifted()
     local known = next(state.lastPlan) ~= nil
-    if known and allocator.isSame(state.lastPlan, result.plan) and not fix then
+    if known and allocator.isSame(state.lastPlan, result.plan) then
         return false
     end
     local _, failed = actuator.apply(result.plan)
@@ -61,9 +49,6 @@ function plan.run(reason)
         allocator.describe(result.plan),
         utils.formatShortNumber(result.used), utils.formatShortNumber(result.budget),
         actuator.describeReceipt()))
-    if fix then
-        logs.fix(string.format("%s 实测开关与方案不符，已重新下发", constants.levelLabel(fix)))
-    end
     return true
 end
 function plan.togglePriority()

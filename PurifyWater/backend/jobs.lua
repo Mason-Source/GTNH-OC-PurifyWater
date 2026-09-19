@@ -169,11 +169,11 @@ end
 
 --------------------------------------------------------------------------------
 -- T3 开关与运行状态（5 秒）：T0-8
--- 【只报事实】每级一行 `plant_observed`（开关/在跑台数 + **读这一刻的待确认下发记录**）
+-- 【只报事实】每级一行 `plant_observed`（开关/在跑台数 + **读这一刻该级的方案**）
 --   + 在跑的每台一条 `parallel_sample`。
---   "开关变了没有"（边沿）、"是不是我们下发的"（归因）、"该不该警告"（不一致）
+--   "开关变了没有"（边沿）、"偏离方案没有"（判定）、"该不该警告"（后果）
 --   全部在 backend/app/watch.lua —— 这里只管读，不管判断。
---   凭据必须随事实走：判断层不许自己另取时刻（那会把"下发前读到的旧值"当成新命令的回音）。
+--   方案值必须随事实走：判断层不许自己另取（读数与判定之间可能刚下发过新方案）。
 --------------------------------------------------------------------------------
 
 
@@ -192,9 +192,9 @@ function jobs.observePlants()
     for level = constants.HOST_LEVEL, constants.LEVEL_COUNT do
         local list                 = machines.of(level)
         local snap                 = state.plant(level)
-        -- 【凭据随事实走】读这一刻"我们发出去、还没被确认"的那次下发是哪一次（可为 nil）。
-        --   判定层要拿它认领这条读数；判定若自己另取时刻，就会把"下发前读到的旧值"当成新命令的回音。
-        local cmd                  = state.cmd[level]
+        -- 【对照基准随事实走】读这一刻该级的方案是什么（可为 nil：停机 / 还没跑过 / 上一轮没发出去）。
+        --   判定层要拿它对照这条读数；判定若自己另取方案，就会拿"读数之后才下发的新方案"去比旧读数。
+        local want                 = state.lastPlan[level]
 
         local total, on, off, fail = 0, 0, 0, 0
         local running, actFail     = 0, 0
@@ -278,11 +278,11 @@ function jobs.observePlants()
             hostAllowed      = snap.switch
         end
 
-        -- 【事实出口 1】每级一行观测（含主机 level=0）：边沿/归因/警告由 app/watch 决定；
-        --   cmd = 读这一刻仍挂着的那条待确认下发记录（凭据随事实走，见函数头与 app/watch 的归因）
+        -- 【事实出口 1】每级一行观测（含主机 level=0）：边沿/判定/警告由 app/watch 决定；
+        --   want = 读这一刻该级的方案（偏离判定就靠它，见 app/watch）
         if total > 0 then
             scheduler.emit("plant_observed", {
-                level = level, switch = observed, active = snap.active, deployed = total, cmd = cmd
+                level = level, switch = observed, active = snap.active, deployed = total, want = want
             })
         end
     end
