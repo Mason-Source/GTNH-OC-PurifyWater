@@ -25,8 +25,9 @@ if appDir == "" then
     return
 end
 locate.injectPath(appDir)
-local bootstrap = require("core.bootstrap")
+local bootstrap = require("core.bootstrap") 
 local removed   = bootstrap.clearModuleCache()
+bootstrap       = require("core.bootstrap") 
 bootstrap.applyArgs({ ... })
 local memwatch, bootFree, bootTotal = nil, nil, nil
 if require("shared.logs").isDebug() then

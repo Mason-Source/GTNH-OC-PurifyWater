@@ -4,6 +4,7 @@
 -- 【启动顺序（规范，加东西都按这个顺序）】
 --   ① 定位应用目录并注入 require 路径（此时还不能 require 工程模块）
 --   ② 清旧模块缓存 + 解析参数 + 注入数据根目录 + 写运行痕迹
+--      （**清完缓存必须重新 require 一次 bootstrap**：否则版本号来自缓存里的旧 constants，见下）
 --   ③ 注册定时任务（T1-T7）+ 读回记录与阈值 + 订阅事件与退出语义
 --   ④ 注入广播快照来源 + 注册 T7 + 前端 boot + 进入主循环（每帧 = 界面一帧）
 --   ⑤ 收尾：停机 + 强制存盘 + 写退出痕迹
@@ -44,8 +45,13 @@ end
 locate.injectPath(appDir)
 
 -- ② 卫生工作
-local bootstrap = require("core.bootstrap")
+-- 【为什么 require 两次】OpenOS 把模块留在 package.loaded 里，热更新后**第一次重跑**拿到的是上一版的
+--   `core.bootstrap`，而它在模块级就 require 了 `shared.constants` —— 版本号会停在旧值（功能不受影响，
+--   因为后面所有 require 都发生在清缓存之后）。所以：先用它清缓存，清完**再装一份**。
+--   入口文件本身永远是新的（`lua main.lua` 是直接 loadfile 跑的），所以这个修正必须写在入口里。
+local bootstrap = require("core.bootstrap") -- 可能来自缓存：这一步只借它的"清缓存"能力
 local removed   = bootstrap.clearModuleCache()
+bootstrap       = require("core.bootstrap") -- 重新装：版本号从这一份起才是新文件的
 bootstrap.applyArgs({ ... })
 
 -- 【内存观测：只在 --debug 下做（决策 32）】整套观测在 `backend/debug/memwatch`，日常运行连模块都不装。
