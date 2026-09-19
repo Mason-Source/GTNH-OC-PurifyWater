@@ -4,6 +4,9 @@ local function bufferK(head)
     if head:find("tunnel", 1, true) then return 24 end
     return nil
 end
+local function whole(x)
+    return math.floor(x + 0.5)
+end
 function energy.powerOf(item, euMax)
     local name = tostring(item and item.name or "")
     local tier = tonumber(name:match("tier%.(%d+)"))
@@ -24,12 +27,12 @@ function energy.powerOf(item, euMax)
         if k and type(euMax) == "number" and euMax > 0 then
             local exact = euMax / k
             if exact ~= nominal then
-                return exact, string.format("激光仓限流至 %.0f A（最高 %.0f A）",
+                return whole(exact), string.format("激光仓限流至 %.0f A（最高 %.0f A）",
                     exact / voltage, amps)
             end
-            return exact
+            return whole(exact)
         end
     end
-    return nominal
+    return whole(nominal)
 end
 return energy

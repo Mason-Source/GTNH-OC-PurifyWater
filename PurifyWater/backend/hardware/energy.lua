@@ -32,6 +32,18 @@ local function bufferK(head)
     return nil
 end
 
+--- 出口取整（四舍五入）成 **integer 子类型**
+-- 【为什么】功率真值必然是整数（V × 电流 / 容量 ÷ K），但 Lua 5.3 里 `^` 恒给 float、
+--   组件读数也是 double，于是 `tostring` 会打 `5368709120000.0` 或 `5.36870912e+14`
+-- 【为什么 +0.5】容量超过 2^53 时驱动侧已被量化（步长≈256），除以 K 后可能带 ~0.03 尾差，
+--   直接 floor 会掉一位；四舍五入把真值恢复成整数。
+-- 【放不下时】math.floor 返回原 float（不报错）—— 实测量级 ≤ 5.6e14，碰不到。
+-- @param x number
+-- @return number
+local function whole(x)
+    return math.floor(x + 0.5)
+end
+
 --- 单台能量仓贡献的 EU/t（0 = 名字里没有 tier，认不出）
 -- @param item table { address = string, name = string }
 -- @param euMax number|nil getEUMaxStored()：**激光仓才有意义**，由调用方读（本模块不碰组件）
@@ -66,14 +78,14 @@ function energy.powerOf(item, euMax)
             local exact = euMax / k
             if exact ~= nominal then
                 -- 只有真被调过才提示（没调时两者相等，静默）
-                return exact, string.format("激光仓限流至 %.0f A（最高 %.0f A）",
+                return whole(exact), string.format("激光仓限流至 %.0f A（最高 %.0f A）",
                     exact / voltage, amps)
             end
-            return exact
+            return whole(exact)
         end
     end
 
-    return nominal
+    return whole(nominal)
 end
 
 return energy

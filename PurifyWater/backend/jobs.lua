@@ -90,7 +90,7 @@ function jobs.scanHardware()
     -- 单仓：功率就取这一台仓的（没有仓 -> 0，会进 missing）
     local hatch   = machines.energy()
     -- 激光仓的电流能在仓界面里调小 -> 名字只给上限，真值要从缓冲容量换算（见 hardware/energy）。
-    -- 不先判名字：非激光仓读了也会被 powerOf 忽略，一次 invoke 而已
+    -- 只认 number（字符串那套还没实证）；拿不到就是 nil，powerOf 退回名字值
     local euMax
     if hatch then
         local stored = device.invoke(hatch.address, "getEUMaxStored")

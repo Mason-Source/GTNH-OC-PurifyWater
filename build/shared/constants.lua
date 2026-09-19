@@ -1,5 +1,5 @@
 local constants                   = {}
-constants.CODE_VERSION            = "v4.2"
+constants.CODE_VERSION            = "v4.3"
 constants.LEVEL_COUNT             = 8
 constants.HOST_LEVEL              = 0
 constants.STOCK_PER_PARALLEL      = 1000
