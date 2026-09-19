@@ -4,7 +4,9 @@
 --   （下面的 FILE_LIST 由脚本填），下次 build 会覆盖这里 —— 要改请改模板。
 --------------------------------------------------------------------------------
 -- 【做什么】把整个应用从 GitHub 拉下来（含各层子目录），装到 <当前目录>/PurifyWater
--- 【不做什么】不碰 <应用目录>/data/（那是程序自己记的阈值/实测/曲线/痕迹）；不删任何旧文件
+-- 【不做什么】不碰 <应用目录>/data/（那是程序自己记的阈值/实测/曲线/痕迹）；不删清单外的任何文件
+-- 【怎么算"下到了"】每个文件先下到同目录的 <文件名>.tmp，**确认非空才改名顶替**（见 fetch）——
+--   判成败只看这一次下载；下不动时旧文件原样留着（不会被清空，也不会拿旧文件冒充新文件）。
 -- 【怎么用】在 OC 电脑上（要装因特网卡 Internet Card）：
 --     wget https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/installer.lua installer.lua
 --     lua installer.lua            -- 普通安装（不写任何日志文件）
@@ -17,7 +19,7 @@
 --   **每轮只给每个文件一次机会**（不在同一个文件上死磕），默认 3 轮。
 -- 【留档只在 --debug 下】加了 `--debug`，每次尝试（轮次 / 通道 / 网址 / 结果）才攒下来，
 --   跑完或失败时一次性写进 <当前目录>/installer.log —— OC 屏幕上滚掉的东西都能回去看。
---   不加就是普通安装：不攒、不写盘，**一个多余文件都不产生**。
+--   不加就是普通安装：不攒、不写盘，**跑完一个多余文件都不留**（下载中的 .tmp 当场改名或清掉）。
 --------------------------------------------------------------------------------
 
 local component     = require("component")
@@ -160,9 +162,14 @@ local function flushLog(title)
 end
 
 --- 用系统 wget 下一个文件
--- 【-f】= 强制覆盖：OpenOS 的 wget 默认**拒绝**覆盖已存在的文件，而重装时目标一定在那儿。
---   （不另外再 remove 一遍 —— 同一件事做两遍；只留 `-f` 这一处。）
---   **不要加引号**：OC 的 shell 按空格切参数 —— 路径里不能有空格，见 main() 开头那道检查。
+-- 【为什么先写 .tmp 再改名】OpenOS 的 wget（/bin/wget.lua）失败时**不清它动过的目标文件**：
+--   它先 `open(目标, "a")`（建/开文件，不动原有内容）→ 再请求 URL → 有数据才 `open(目标, "wb")` 覆盖，
+--   而失败清理只对"原本不存在"的文件做（`if not preexisted then fs.remove(...)`）。
+--   于是**覆盖安装**时下载失败，目标位置上留着的就是**旧文件**（或半截新文件）——
+--   "存在且非空"必然判成成功：直连明明没通却报 OK，也就**永远切不到备用通道**。
+--   改成"下到 .tmp → 非空才改名顶替"后，判定只看这一次下载：【下不动 = 失败】，且旧文件还在。
+-- 【-f】仍然带着：防上次崩溃残留的 .tmp 让 wget 拒绝写。**不要加引号**：OC 的 shell 按空格切参数 ——
+--   路径里不能有空格，见 main() 开头那道检查。
 -- 【判定只认"存在且非空"】曾经在这里加过 `loadfile` 编译校验（想挡半截文件 / 错误页），
 --   实机翻车：文件明明下齐了，它却对一批文件一律报错，把整套安装误判成失败。
 --   所以判定放宽，编译的情况**只记进日志**，不影响成败。
@@ -171,16 +178,26 @@ end
 -- @return boolean 是否成功
 -- @return number|string 成功时是字节数，失败时是说明
 local function fetch(url, dest)
-    local rc = shell.execute("wget -f " .. url .. " " .. dest) -- 阻塞，直到下完
-    if not filesystem.exists(dest) or filesystem.size(dest) == 0 then
+    local tmp = dest .. ".tmp"                                 -- 同目录：rename 就地换名，不搬数据
+    filesystem.remove(tmp)                                     -- 每次都从"确定不存在"起步（残留会让判定再次失真）
+    local rc = shell.execute("wget -f " .. url .. " " .. tmp)   -- 阻塞，直到下完
+    if not filesystem.exists(tmp) or filesystem.size(tmp) == 0 then
+        filesystem.remove(tmp)                                 -- 空壳也别留（wget 请求失败时不会自己删）
         return false, "没下到内容（wget 返回 " .. tostring(rc) .. "：404 / 超时 / 网络不通）"
     end
-    local okLoad, chunk, lerr = pcall(loadfile, dest)
+    local okLoad, chunk, lerr = pcall(loadfile, tmp)
     if not okLoad or not chunk then
         log("      [诊断] loadfile 没通过（不判失败，仅留档）："
             .. tostring(not okLoad and chunk or lerr))
     end
-    return true, filesystem.size(dest)
+    local size = filesystem.size(tmp)
+    filesystem.remove(dest)                                    -- OpenOS 的 rename 不保证覆盖（自家 cp/mv 也是先删再搬）
+    local _, mvErr = filesystem.rename(tmp, dest)              -- 成败不看返回值，直接看"临时文件还在不在"
+    if filesystem.exists(tmp) then
+        filesystem.remove(tmp)
+        return false, "改名顶替失败（" .. tostring(mvErr or "临时文件还在") .. "）"
+    end
+    return true, size
 end
 
 --- 写一个启动器：从任何目录都能跑，也方便写进 /autorun.lua
