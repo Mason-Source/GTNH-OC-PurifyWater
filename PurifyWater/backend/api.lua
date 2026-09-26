@@ -22,7 +22,6 @@ local scheduler     = require("core.scheduler")
 
 local jobs          = require("backend.jobs")
 local app           = require("backend.app.system")
-local plan          = require("backend.app.plan")
 local power         = require("backend.domain.power")
 local rules         = require("backend.domain.rules")
 
@@ -67,7 +66,8 @@ function api.read.levels()
     for level = 1, constants.LEVEL_COUNT do
         local snap = state.plant(level)
         local rule = state.rules[level] or { threshold = 0, enabled = false }
-        -- 【逐台机器】详情页要"每台机器分别的当前并行 / 真实并行 / 成功率"：
+        local line = rules.lines(level)
+        -- 【逐台机器】详情页要"每台机器分别的当前并行 / 学习并行 / 成功率"：
         --   **只拷界面要的字段**（不给内部表）；confirmed 取自 tracker（这台机器确认过的值）
         local perMachine = {}
         for i, m in ipairs(snap.machines or {}) do
@@ -77,7 +77,7 @@ function api.read.levels()
                 active = m.active,
                 current = m.parallel,                        -- 当前并行（本周期传感器读数）
                 success = m.success,                         -- 当前成功率
-                confirmed = track and track.confirmed or nil -- 真实并行（连续 N 周期确认过的）
+                confirmed = track and track.confirmed or nil -- 学习并行（连续 N 周期确认过的）
             }
         end
         out[level] = {
@@ -95,9 +95,16 @@ function api.read.levels()
             forced = snap.forced,
             reason = snap.reason,
             water = state.fluids[level],
-            rule = { threshold = rule.threshold or 0, enabled = rule.enabled == true },
-            reserveLine = rules.reserveLine(level),
-            suggest = power.suggest(level)
+            rule = {
+                threshold           = rule.threshold or 0,
+                enabled             = rule.enabled == true,
+                userThreshold       = line.user,
+                effectiveThreshold  = line.actual,
+                thresholdOverridden = line.overridden
+            },
+            reserveLine     = rules.reserveLine(level),
+            nextReserveLine = line.next,
+            suggest         = power.suggest(level)
         }
     end
     return out
@@ -197,16 +204,13 @@ COMMANDS.system_stop = function()
 end
 
 COMMANDS.priority_toggle = function()
-    -- 日志由 plan.togglePriority 写（含“是否保存成功”），这里不再返回文案避免重复
-    plan.togglePriority()
+    -- 日志由 plan.togglePriority 写（含“是否保存成功”），重排由 system 统一发起
+    app.onPriorityToggle()
     return true, ""
 end
 
 COMMANDS.schedule_now = function()
-    -- 没在跑/已锁定就不去试
-    if not state.isActive() then return false, "系统没在跑或已锁定，未重排" end
-    -- plan.run 短路（方案没变）时不回"已重排"，免得日志里出现一句做不到的话
-    if not plan.run("界面") then return false, "方案没变，未重排" end
+    if not app.requestPlan("界面") then return false, "系统没在跑、已锁定或方案没变" end
     return true, ""
 end
 

@@ -2,13 +2,13 @@
 -- backend/app/watch.lua
 --------------------------------------------------------------------------------
 -- 【职责】把**事实事件**变成**判断与动作**：开关边沿、归因、不一致、采样可信化、水位判定
--- 【依赖】domain/{rules,power,tracker}、store/records、app/{plan,system}、shared/*
+-- 【依赖】domain/{rules,tracker}、app/system、shared/*
 -- 【被谁用】backend/handlers.lua
 --
 -- 【事实 vs 判断】jobs 只报"读到了什么"，所有"这意味着什么"都在这里：
 --   plant_observed    -> 边沿(日志) + 偏离判定(switch_mismatch) + 主机开关对齐
 --   parallel_sample   -> tracker 连续确认 -> parallel_write / parallel_discarded
---   parallel_write    -> **不论谁在写**：写盘 -> 重算功率 -> 立刻重排
+--   parallel_write    -> **不论谁在写**：写内存学习值 -> 重算规则 -> 立刻重排
 --   fluid_state       -> 重判该级开启条件 -> 条件翻转就广播 level_openable_changed -> 重排
 --                        （水位读不到 = 按 0：网络里暂时没水缓存是正常态，不停机、不锁定）
 --
@@ -20,22 +20,17 @@
 --   这里只负责拼出 `why` 与那一行说明，不持有任何去重标志。
 --------------------------------------------------------------------------------
 
-local CONFIG    = require("shared.config")
 local constants = require("shared.constants")
 local logs      = require("shared.logs")
 local state     = require("shared.state")
-local utils     = require("shared.utils")
 
 local scheduler = require("core.scheduler")
 
 local rules     = require("backend.domain.rules")
-local power     = require("backend.domain.power")
 local tracker   = require("backend.domain.tracker")
 
-local records   = require("backend.store.records")
 local machines  = require("backend.hardware.machines")
 
-local plan      = require("backend.app.plan")
 local system    = require("backend.app.system")
 
 local watch     = {}
@@ -66,19 +61,14 @@ end
 function watch.onLevelRulesChanged(payload)
     -- 行数统计属排查信息：改完阈值后，界面上的新值本身就是回执。
     logs.debug("[调试] " .. tostring(payload and payload.why or "阈值配置已更新"))
-    -- 重判一遍照做：界面的"可开"标记靠它（停机时也得对）
-    for level = 1, constants.LEVEL_COUNT do
-        local verdict                           = rules.evaluate(level)
-        local snap                              = state.plant(level)
-        snap.openable, snap.forced, snap.reason = verdict.open, verdict.forced, verdict.reason
-    end
-    -- 没在跑/已锁定就不发起调度尝试
-    if state.isActive() then plan.run("阈值变化") end
+    rules.refreshAll()
+    system.auditThresholds()
+    system.requestPlan("阈值变化")
 end
 
---- 某级开启条件翻转 -> 立刻重排（不必等 5 秒的 T4）
+--- 某级开启条件翻转 -> 交给 system 的统一调度闸
 function watch.onLevelOpenableChanged()
-    if state.isActive() then plan.run("开启条件变化") end
+    system.requestPlan("开启条件变化")
 end
 
 --- 观测事实（T3 -> 5 秒一次，T0-8 每级一行）
@@ -133,6 +123,8 @@ end
 --   （判定全部交给 domain/tracker）
 -- @param payload table { level, address, parallel, success, progress }
 function watch.onParallelSample(payload)
+    if not state.isActive() then return end
+
     local verdict, why = tracker.feed(payload.address, payload.parallel, payload.progress)
     if verdict ~= "write" then
         scheduler.emit("parallel_discarded", {
@@ -144,7 +136,7 @@ function watch.onParallelSample(payload)
     local snap = state.plant(payload.level)
     if snap.source == "measured" and snap.parallel == payload.parallel then
         scheduler.emit("parallel_discarded", {
-            level = payload.level, value = payload.parallel, why = "与记录相同"
+            level = payload.level, value = payload.parallel, why = "与学习值相同"
         })
         return
     end
@@ -163,30 +155,6 @@ end
 function watch.onParallelDiscarded(payload)
     logs.debug(string.format("[调试] %s 并行采样丢弃：%s（%s）",
         constants.levelLabel(payload.level), tostring(payload.value), tostring(payload.why)))
-end
-
---- 实际并行写入（**不论谁在写**都走这里：传感器确认 / 界面上手动填写）
--- 【流程】写盘 -> 重算各级总并行与功率 -> 立刻重排（用户敲定的第三条事件）
--- @param payload table { level, parallel, success, by, address }
--- @return boolean ok
--- @return string 说明
-function watch.onParallelWrite(payload)
-    local ok, text = records.save(payload.level, payload.parallel, payload.success)
-    logs.system(string.format("%s 实际并行 = %s（来源：%s）%s",
-        constants.levelLabel(payload.level), utils.formatShortNumber(payload.parallel),
-        tostring(payload.by or "-"), ok and "" or "【写盘失败】"))
-
-    power.refresh()
-    -- 【提前拦截】写盘与重算照做（是"事实"），但没在跑/已锁定就不发起调度
-    if state.isActive() then plan.run("并行更新") end
-    return ok, text
-end
-
---- 事件触发的重排（schedule_now）
--- @param payload table|nil { reason }
-function watch.onScheduleNow(payload)
-    if not state.isActive() then return end -- 【提前拦截】见上
-    plan.run(payload and payload.reason or "事件")
 end
 
 return watch

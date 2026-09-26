@@ -14,7 +14,7 @@
 --                                                       -> plant_observed ×N / parallel_sample ×N
 --                                                       （边沿、归因、不一致判定在 app/watch）
 --   T4 schedule       5 s  跑一轮调度（算方案 -> 下发）   -> 由 app/plan 具体干活
---   T5 persist       30 s  抽一个曲线点 + 脏数据落盘（含日志，不脏就不写盘）
+--   T5 persist       30 s  抽一个曲线点 + 脏数据落盘（不含并行学习值）
 --   T6 sampleMemory   1 s  **仅 --debug**：内存地板/峰值采样（整套观测在 backend/debug/memwatch）
 --   T7 broadcast      1 s  无线快照（门控：总开关 + 网卡在位；在 main.lua 注册）
 --------------------------------------------------------------------------------
@@ -35,11 +35,10 @@ local fluid            = require("backend.hardware.fluid")
 
 local inventory        = require("backend.store.inventory")
 local levels_config    = require("backend.store.levels_config")
-local records          = require("backend.store.records")
 local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
 local power            = require("backend.domain.power")
-local plan             = require("backend.app.plan")
+local system           = require("backend.app.system")
 
 local jobs             = {}
 
@@ -114,8 +113,7 @@ function jobs.scanHardware()
     state.power.all         = totalPower
 
     -- 【当前并行 vs 建议并行】有任一等级不一致就写一行警告。
-    --   当前并行 = snap.sample（本周期读到、**未确认**）；真实并行 = snap.parallel（连续 N 周期确认），
-    --   它属"记录是否过时"那条线，不在这里比。
+    --   当前并行 = snap.sample（本周期读到、**未确认**）；学习并行 = snap.parallel（连续 N 周期确认）。
     --   边沿触发：两个数通常长期稳定，每 10 秒刷一屏只会挤掉别的行。
     --   不自作结论：可能机器没吃满、可能建议值被上限夹住、也可能刚换能源仓在过渡。
     local warnParts         = {}
@@ -302,8 +300,7 @@ end
 --------------------------------------------------------------------------------
 
 function jobs.schedule()
-    -- 没在跑/已锁定：连"尝试调度"都不发起（plan.run 里那道闸是最后一道保险）
-    if state.isActive() then plan.run("定时") end
+    system.requestPlan("定时")
 end
 
 --------------------------------------------------------------------------------
@@ -318,11 +315,6 @@ function jobs.persist()
     history.append()
     state.markDirty("history")
 
-    if state.isDirty("records") then
-        local ok, text = records.save(nil)
-        logs.debug("[调试] T5 写并行记录：" .. tostring(text))
-        if ok then state.clearDirty("records") end
-    end
     if state.isDirty("levels") then
         levels_config.saveAll()
         state.clearDirty("levels")

@@ -58,8 +58,10 @@ function config.draw(data)
             row.rule.enabled and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED, rowBg)
 
         -- 阈值：选中行只换底色表示"正在改这级"，数字仍是当前值（正在敲的数在键盘块的编辑行）
+        local thresholdColor = sel and theme.COLORS.TEXT_YELLOW
+            or (row.thresholdOverridden and theme.COLORS.TEXT_RED or theme.COLORS.TEXT)
         widgets.drawTextRight(cols[3].x, cols[3].w, y, row.thresholdKText,
-            sel and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT, rowBg)
+            thresholdColor, rowBg)
 
         fstate.configRows[level] = { x = area.x, y = y, w = area.w, h = 1 }
     end

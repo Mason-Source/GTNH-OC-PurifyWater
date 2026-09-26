@@ -16,9 +16,10 @@ function levels_config.ensure()
     if files.exists(path()) then return false end
     local lines = {
         "# 净水厂阈值配置：一行一级  格式 = 等级 阈值 是否勾选",
-        "# 勾选 true  = 该级受阈值管理：水位低于阈值就开启，到了阈值就关闭",
-        "# 勾选 false = 该级不受阈值管理（只受 5 倍强制线和原料不足两条硬规则约束）",
-        "# 阈值 0     = 永不因阈值开启（**新装默认值**，请按需自己改）",
+        "# 勾选 true  = 该级受用户阈值管理",
+        "# 勾选 false = 忽略用户阈值；下一级 N 倍保供线仍然生效",
+        "# 实际阈值   = max(用户阈值, 下一级 N 倍线)",
+        "# 阈值 0     = 不使用用户阈值（**新装默认值**，请按需自己改）",
         "# 阈值单位 = mB（1 桶 = 1000）"
     }
     for level = 1, constants.LEVEL_COUNT do

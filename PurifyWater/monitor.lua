@@ -138,7 +138,7 @@ local function buildView()
         row.switchText = (row.deployed == 0) and "未部署"
             or ((row.switch == nil) and "读不到" or (row.switch and "开" or "关"))
         row.running = (row.deployed > 0) and ((row.active or 0) > 0) or false
-        row.verdict = (row.forced and "强制开") or (row.openable and "开" or "关")
+        row.verdict = (row.forced and "保供开") or (row.openable and "开" or "关")
         row.reasonText = row.reason or "-"
     end
     return data

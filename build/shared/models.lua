@@ -1,5 +1,4 @@
 local constants = require("shared.constants")
-local utils     = require("shared.utils")
 local models    = {}
 function models.levelRule(line)
     local s = tostring(line or ""):gsub("^%s+", "")
@@ -16,30 +15,7 @@ function models.levelRuleLine(level, threshold, enabled)
     return string.format("%d %d %s", level, math.floor(tonumber(threshold) or 0),
         enabled and "true" or "false")
 end
-function models.record(line)
-    local s = tostring(line or ""):gsub("^%s+", "")
-    if s == "" or s:sub(1, 1) == "#" then return nil end
-    local lv, parallel, success, stamp = s:match("^(%d+)%s+(%d+)%s*(%S*)%s*(%S*)")
-    lv = tonumber(lv)
-    if not lv or lv < 1 or lv > constants.LEVEL_COUNT then return nil end
-    return {
-        level    = lv,
-        parallel = tonumber(parallel),
-        success  = tonumber(success),
-        stamp    = tonumber(stamp)
-    }
-end
-function models.recordLine(level, parallel, success, stamp)
-    return string.format("%d %d %s %s", math.floor(tonumber(level) or 0),
-        math.floor(tonumber(parallel) or 0), tostring(success or "-"),
-        string.format("%.1f", tonumber(stamp) or 0))
-end
-function models.powerSnapshot(line)
-    local s = tostring(line or "")
-    if s:sub(1, 1) ~= "#" then return nil end
-    return utils.firstNumber(s)
-end
-models.SNAP_VERSION = 6
+models.SNAP_VERSION = 7
 local function clean(value)
     return (tostring(value == nil and "-" or value):gsub("[|\r\n]", "/"))
 end
@@ -82,7 +58,8 @@ function models.snapshot(payload)
     for _, row in ipairs(payload.levels or {}) do
         lines[#lines + 1] = table.concat({
             "L", numOf(row.level), numOf(row.deployed), flagOf(row.switch),
-            numOf(row.active), numOf(row.water), numOf(row.rule and row.rule.threshold),
+            numOf(row.active), numOf(row.water),
+            numOf(row.rule and (row.rule.effectiveThreshold or row.rule.threshold)),
             flagOf(row.openable), flagOf(row.forced), clean(row.reason)
         }, "|")
     end

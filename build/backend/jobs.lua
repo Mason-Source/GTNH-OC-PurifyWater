@@ -12,11 +12,10 @@ local energy           = require("backend.hardware.energy")
 local fluid            = require("backend.hardware.fluid")
 local inventory        = require("backend.store.inventory")
 local levels_config    = require("backend.store.levels_config")
-local records          = require("backend.store.records")
 local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
 local power            = require("backend.domain.power")
-local plan             = require("backend.app.plan")
+local system           = require("backend.app.system")
 local jobs             = {}
 local last             = {
     scanCount = 0,
@@ -173,17 +172,12 @@ function jobs.observePlants()
     logs.debug(string.format("[调试] 观测：单元在跑 %d 台，本轮采样 %d 条", runningTotal, samples))
 end
 function jobs.schedule()
-    if state.isActive() then plan.run("定时") end
+    system.requestPlan("定时")
 end
 function jobs.persist()
     if memwatch then memwatch.watch(jobs.elapsed()) end
     history.append()
     state.markDirty("history")
-    if state.isDirty("records") then
-        local ok, text = records.save(nil)
-        logs.debug("[调试] T5 写并行记录：" .. tostring(text))
-        if ok then state.clearDirty("records") end
-    end
     if state.isDirty("levels") then
         levels_config.saveAll()
         state.clearDirty("levels")

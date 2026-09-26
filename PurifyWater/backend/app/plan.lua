@@ -94,7 +94,7 @@ function plan.run(reason)
     return true
 end
 
---- 切换优先级（低级水优先 <-> 高级水优先），并立刻按新顺序重排
+--- 切换优先级（低级水优先 <-> 高级水优先）
 -- 运行模式是永久配置：切完立刻存盘、下次启动沿用；存盘失败不拦切换，只是重启回到默认值。
 -- @return string 新的优先级
 function plan.togglePriority()
@@ -104,8 +104,6 @@ function plan.togglePriority()
     logs.system(string.format("运行模式：%s%s",
         state.system.priority == "high" and "高级水优先" or "低级水优先",
         ok and "（已保存，下次启动沿用）" or "（保存失败，重启会回到默认）"))
-    -- 存盘照做；没在跑/已锁定则不发起调度
-    if state.isActive() then plan.run("优先级切换") end
     return state.system.priority
 end
 

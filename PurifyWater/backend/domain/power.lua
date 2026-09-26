@@ -19,7 +19,7 @@ local state     = require("shared.state")
 local power     = {}
 
 --- 该等级"采用的单台并行" + 来源
--- 优先级：真实并行（连续 N 个运行周期确认过的 measured） > 建议值（suggest，仅当种子用）
+-- 优先级：本轮学习并行（连续 N 个运行周期确认过的 measured） > 建议值（suggest）
 -- @param level number
 -- @return number parallel
 -- @return string "measured"|"suggest"
@@ -49,7 +49,7 @@ end
 -- 【公式】建议并行 = floor( 总功率 / 该级台数 / 该级每并行功耗 )，再按级别夹上限：
 --   **T1 = 2386092，T2~T8 = 2147483**。
 -- 上限写死在这里而不进常量表：这两个数只在本函数参与运算，放 constants 只会多一处需要同步。
--- 不平摊总预算：建议值只是**缺记录时的种子**，开不开由 allocator 逐级扣预算决定。
+-- 不平摊总预算：建议值只是**本轮尚未学习出并行时的种子**，开不开由 allocator 逐级扣预算决定。
 -- @param level number
 -- @return number
 function power.suggest(level)
@@ -66,11 +66,11 @@ end
 --- 当前并行与建议值不一致的等级（**只找出"不一致"，不下结论**）
 -- 【三个"并行"】
 --   当前并行 = `state.plant(level).sample` —— T3 读到的本周期在跑机器的**最低并行**（多台取最小，未确认）
---   真实并行 = `state.plant(level).parallel` —— 当前并行**连续 N 个运行周期一致**后由 tracker 确认、
---              经 `records.save` 写入（来源标 "measured"，落盘的就是它）
---   建议并行 = `power.suggest(level)` —— 公式推算；只在没有真实并行时才被 adopted 当种子
+--   学习并行 = `state.plant(level).parallel` —— 当前并行**连续 N 个运行周期一致**后由 tracker 确认、
+--              经 `learning.remember` 写入内存（来源标 "measured"，本次运行有效）
+--   建议并行 = `power.suggest(level)` —— 公式推算；只在没有学习值时被 adopted 当种子
 -- 【这里比的是「当前 vs 建议」】看机器**此刻**吃多少、跟公式认为它能吃多少差多少。
---   「真实并行 vs 建议」属"记录是否过时"，由 records 的功率快照校验管（另一条线）。
+--   「学习并行 vs 建议」只反映本轮实测与公式推算的差异。
 -- 【不一致不奇怪】机器行为与公式本来就不保证相等：可能没吃满、可能建议值被本级上限夹住、
 --   也可能刚换能源仓在过渡。所以这里只给数字，文案由调用方写。
 -- 【没读到过的不比】sample 为空（从未跑到过 / 刚开机）就没什么可比的。

@@ -12,12 +12,13 @@ function handlers.subscribe()
     scheduler.on("level_rules_changed", watch.onLevelRulesChanged)
     scheduler.on("level_openable_changed", watch.onLevelOpenableChanged)
     scheduler.on("parallel_discarded", watch.onParallelDiscarded)
-    scheduler.on("parallel_write", watch.onParallelWrite)
+    scheduler.on("parallel_write", system.onParallelWrite)
     scheduler.on("switch_mismatch", system.onSwitchMismatch)
+    scheduler.on("rules_audit", system.auditThresholds)
     scheduler.on("system_start", system.onSystemStart)
     scheduler.on("system_stop", system.onSystemStop)
     scheduler.on("priority_toggle", system.onPriorityToggle)
-    scheduler.on("schedule_now", watch.onScheduleNow)
+    scheduler.on("schedule_now", system.onScheduleRequest)
     return 16
 end
 return handlers

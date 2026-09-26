@@ -2,7 +2,7 @@
 -- backend/domain/tracker.lua
 --------------------------------------------------------------------------------
 -- 【职责】并行"采样 -> 可信"的唯一判定：同一个值**连续 N 个运行周期**才算数
--- 【不做什么】不写盘（那是 store/records）、不算功率（那是 domain/power）
+-- 【不做什么】不写学习值（那是 domain/learning）、不算功率（那是 domain/power）
 -- 【依赖】shared/config、shared/state
 -- 【被谁用】backend/app/watch（parallel_sample 事件）
 --
@@ -22,7 +22,7 @@
 --   value      上一个周期结算下来的值（连续比较的基准）
 --   streak     已经连续多少个周期同值
 --   samples    读不到进度时的采样计数（退化口径用）
---   confirmed  **这台机器被确认过的真实并行**（连续 N 周期同值那一刻记下；详情页逐台展示用）
+--   confirmed  **这台机器被确认过的学习并行**（连续 N 周期同值那一刻记下；详情页逐台展示用）
 --------------------------------------------------------------------------------
 
 local CONFIG  = require("shared.config")
@@ -86,8 +86,7 @@ function tracker.feed(address, value, progress)
     if t.streak >= limit() then
         -- 确认过就不再每轮重复写盘；下次真的变了再重新数
         t.streak    = 0
-        -- 【留一份逐台确认值】记录文件是按**等级**写的（records.save 写 snap.parallel），
-        --   详情页要看"每台机器分别"的真实并行，所以这里留一份。
+        -- 【留一份逐台确认值】详情页要看"每台机器分别"的学习并行，所以这里留一份。
         t.confirmed = value
         return "write", string.format("连续 %d 个运行周期均为 %d", limit(), value)
     end

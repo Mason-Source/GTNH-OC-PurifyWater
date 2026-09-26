@@ -20,11 +20,11 @@ local state = {}
 --     active   = number|nil,      -- 确认在跑的台数；nil = 有读不到的（**不等于 0**，界面显示 ?）
 --     sample   = number|nil,      -- **当前并行**：本周期读到的在跑机器的**最低并行**（多台取最小；**未确认**）
 --     success  = number|nil,      -- 本级**最小成功率**（多台取最小；最近一次采样）
---     parallel = number|nil,      -- **真实并行**：当前并行连续 N 个运行周期一致 -> tracker 确认 -> 写这里
---                                 --   （power.adopted 优先用它；没有它才拿建议值当种子）
+--     parallel = number|nil,      -- **本轮学习并行**：连续 N 个运行周期一致 -> tracker 确认 -> 写这里
+--                                 --   （仅内存；power.adopted 优先用它，停机/暂停后清空）
 --     source   = "measured"|"suggest"|nil,
 --     openable = true|false|nil,  -- 可开启性判定结果（domain/rules 写）
---     forced   = true|false|nil,  -- 是否"强制开启"（水位低于 5 倍线）
+--     forced   = true|false|nil,  -- 是否由下一级保供线覆盖用户阈值而开启
 --     reason   = string|nil       -- 没开的原因（给人看的一句话）
 -- }
 -- progress / progressMax：**只有主机（T0）这一行有**（T3 只读主机；各水厂周期同步，T1-8 不记进度）；界面画周期条用
@@ -81,7 +81,7 @@ function state.plant(level)
     return p
 end
 
---- 标脏：`state.markDirty("records")`
+--- 标脏：`state.markDirty("levels")`
 -- @param what string
 function state.markDirty(what)
     state.dirty[what] = true

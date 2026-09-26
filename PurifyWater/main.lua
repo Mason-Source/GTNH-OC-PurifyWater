@@ -5,7 +5,7 @@
 --   ① 定位应用目录并注入 require 路径（此时还不能 require 工程模块）
 --   ② 清旧模块缓存 + 解析参数 + 注入数据根目录 + 写运行痕迹
 --      （**清完缓存必须重新 require 一次 bootstrap**：否则版本号来自缓存里的旧 constants，见下）
---   ③ 注册定时任务（T1-T7）+ 读回记录与阈值 + 订阅事件与退出语义
+--   ③ 注册定时任务（T1-T7）+ 读回阈值与历史 + 订阅事件与退出语义
 --   ④ 注入广播快照来源 + 注册 T7 + 前端 boot + 进入主循环（每帧 = 界面一帧）
 --   ⑤ 收尾：停机 + 强制存盘 + 写退出痕迹
 --
@@ -74,14 +74,15 @@ local runtime       = require("core.runtime")
 local files         = require("backend.store.files")
 local trace         = require("backend.store.trace")
 local log_file      = require("backend.store.log_file")
-local records       = require("backend.store.records")
 local history       = require("backend.store.history")
 local levels_config = require("backend.store.levels_config")
+local learning      = require("backend.domain.learning")
 local jobs          = require("backend.jobs")
 local handlers      = require("backend.handlers")
 local api           = require("backend.api")
 local power         = require("backend.domain.power")
 local net           = require("backend.hardware.net")
+local system        = require("backend.app.system")
 local render        = require("frontend.render")
 
 files.setRoot(appDir) -- 数据文件（配置里的相对名）都相对应用目录解析
@@ -100,16 +101,15 @@ logs.debug(string.format("[调试] 已注册 %d 个定时任务；日志级别 =
 
 -- 注册后已各跑一次（T1 拿到功率、T2 拿到水位），此时读盘才有意义
 local _, ruleText             = levels_config.load()
-local gotRecords, recordText  = records.load()
 local gotHistory, historyText = history.load()
 power.refresh()
 logs.debug("[调试] " .. tostring(ruleText))
-logs.debug("[调试] " .. tostring(recordText) .. (gotRecords and "" or "（将从建议值开始学习）"))
 logs.debug("[调试] " .. tostring(historyText))
 
 -- 【事件接线本身不能删】下面这行才是"把事件表挂上"的动作；条数只是排查信息
 local subCount = handlers.subscribe()
 logs.debug(string.format("[调试] 已订阅 %d 类事件", subCount))
+system.auditThresholds()
 
 runtime.discardStaleInterrupts() -- 先丢掉上一个进程残留的 interrupted
 runtime.bindQuitKeys()
@@ -138,7 +138,7 @@ logs.system("界面已就绪（点按钮或快捷键 X/P/R/T）")
 
 -- 无人值守机房：想让程序一启动就自动开调度，把 CONFIG.SYSTEM.START_ON_BOOT 改成 true
 if CONFIG.SYSTEM.START_ON_BOOT then
-    require("backend.app.system").start("开机自启")
+    system.start("开机自启")
 end
 
 runtime.run(render.frame)
@@ -150,8 +150,9 @@ runtime.run(render.frame)
 do
     render.restoreResolution()
     bootstrap.releaseConsole()
+    local learnedCount = learning.count()
     if state.system.running then
-        require("backend.app.system").stop("程序退出")
+        system.stop("程序退出")
     end
     local okHistory, historyNote = history.save()
     if not okHistory then logs.warn(tostring(historyNote)) end
@@ -161,10 +162,10 @@ do
     local j       = jobs.last()
     local memText = memwatch and memwatch.summary()     -- 没带 --debug 时为 nil，摘要里就没有内存那段
     trace.stop(runtime.quitReason(), string.format(
-        "运行 %.0f 秒，硬件扫描 %d 次，水位 %s，总功率 %s，记录 %d 级，历史 %d 点%s",
+        "运行 %.0f 秒，硬件扫描 %d 次，水位 %s，总功率 %s，本次学习 %d 级，历史 %d 点%s",
         jobs.elapsed(), j.scanCount,
         j.fluidOk and "读取成功" or ("读取失败(" .. tostring(j.fluidErr) .. ")"),
-        utils.formatNumber(j.powerBefore or 0), records.count(),
+        utils.formatNumber(j.powerBefore or 0), learnedCount,
         state.chart and #state.chart.points or 0,
         memText and ("，内存 " .. memText) or ""))
 end

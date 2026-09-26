@@ -58,7 +58,6 @@ function plan.togglePriority()
     logs.system(string.format("运行模式：%s%s",
         state.system.priority == "high" and "高级水优先" or "低级水优先",
         ok and "（已保存，下次启动沿用）" or "（保存失败，重启会回到默认）"))
-    if state.isActive() then plan.run("优先级切换") end
     return state.system.priority
 end
 function plan.forget()

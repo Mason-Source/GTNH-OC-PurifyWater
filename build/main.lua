@@ -44,14 +44,15 @@ local runtime       = require("core.runtime")
 local files         = require("backend.store.files")
 local trace         = require("backend.store.trace")
 local log_file      = require("backend.store.log_file")
-local records       = require("backend.store.records")
 local history       = require("backend.store.history")
 local levels_config = require("backend.store.levels_config")
+local learning      = require("backend.domain.learning")
 local jobs          = require("backend.jobs")
 local handlers      = require("backend.handlers")
 local api           = require("backend.api")
 local power         = require("backend.domain.power")
 local net           = require("backend.hardware.net")
+local system        = require("backend.app.system")
 local render        = require("frontend.render")
 files.setRoot(appDir)
 trace.start(appDir, bootstrap.version())
@@ -62,14 +63,13 @@ logs.debug("[调试] 应用目录 " .. appDir
 local taskCount = jobs.register()
 logs.debug(string.format("[调试] 已注册 %d 个定时任务；日志级别 = %s", taskCount, logs.getLevel()))
 local _, ruleText             = levels_config.load()
-local gotRecords, recordText  = records.load()
 local gotHistory, historyText = history.load()
 power.refresh()
 logs.debug("[调试] " .. tostring(ruleText))
-logs.debug("[调试] " .. tostring(recordText) .. (gotRecords and "" or "（将从建议值开始学习）"))
 logs.debug("[调试] " .. tostring(historyText))
 local subCount = handlers.subscribe()
 logs.debug(string.format("[调试] 已订阅 %d 类事件", subCount))
+system.auditThresholds()
 runtime.discardStaleInterrupts()
 runtime.bindQuitKeys()
 local savedSettings = require("backend.store.settings").load()
@@ -89,14 +89,15 @@ end
 render.boot()
 logs.system("界面已就绪（点按钮或快捷键 X/P/R/T）")
 if CONFIG.SYSTEM.START_ON_BOOT then
-    require("backend.app.system").start("开机自启")
+    system.start("开机自启")
 end
 runtime.run(render.frame)
 do
     render.restoreResolution()
     bootstrap.releaseConsole()
+    local learnedCount = learning.count()
     if state.system.running then
-        require("backend.app.system").stop("程序退出")
+        system.stop("程序退出")
     end
     local okHistory, historyNote = history.save()
     if not okHistory then logs.warn(tostring(historyNote)) end
@@ -105,10 +106,10 @@ do
     local j       = jobs.last()
     local memText = memwatch and memwatch.summary()
     trace.stop(runtime.quitReason(), string.format(
-        "运行 %.0f 秒，硬件扫描 %d 次，水位 %s，总功率 %s，记录 %d 级，历史 %d 点%s",
+        "运行 %.0f 秒，硬件扫描 %d 次，水位 %s，总功率 %s，本次学习 %d 级，历史 %d 点%s",
         jobs.elapsed(), j.scanCount,
         j.fluidOk and "读取成功" or ("读取失败(" .. tostring(j.fluidErr) .. ")"),
-        utils.formatNumber(j.powerBefore or 0), records.count(),
+        utils.formatNumber(j.powerBefore or 0), learnedCount,
         state.chart and #state.chart.points or 0,
         memText and ("，内存 " .. memText) or ""))
 end

@@ -35,7 +35,7 @@ local function machineRows(machines, record)
             string.format("%s#%d", BULLET, item[1]),
             table.concat({
                 cell("当前并行 ", item[2], curW),
-                cell("真实并行 ", item[3], realW),
+                cell("学习并行 ", item[3], realW),
                 cell("成功率 ", item[4], rateW)
             }, "   "),
             item[5] and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED
@@ -61,6 +61,11 @@ local function lines(row, level)
     sep("基础")
     item("单并行功耗", num(per) .. " EU/t", theme.COLORS.TEXT)
     item("已部署机器", tostring(deployed) .. " 台", theme.COLORS.TEXT)
+    local thresholdText = row.thresholdOverridden
+        and (row.userThresholdText .. " → " .. row.thresholdText)
+        or row.thresholdText
+    item("实际阈值", thresholdText,
+        row.thresholdOverridden and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT)
     sep("建议（公式推算）")
     item("每台并行", num(suggest), theme.COLORS.TEXT_CYAN)
     item("每台功耗", num(suggest * per) .. " EU/t", theme.COLORS.TEXT_CYAN)
@@ -120,7 +125,9 @@ function detail.fingerprint(data)
         tostring(fstate.areas.status and fstate.areas.status.w or 0),
         tostring(fstate.areas.status and fstate.areas.status.h or 0),
         tostring(row.deployed), tostring(row.active), tostring(row.sample),
-        tostring(row.parallel), tostring(row.suggest)
+        tostring(row.parallel), tostring(row.suggest),
+        tostring(row.rule and row.rule.userThreshold), tostring(row.rule and row.rule.effectiveThreshold),
+        tostring(row.thresholdOverridden)
     }
     for _, machine in ipairs(row.machines or {}) do
         parts[#parts + 1] = tostring(machine.address) .. ":" .. tostring(machine.active)

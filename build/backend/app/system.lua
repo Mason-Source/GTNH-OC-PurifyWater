@@ -1,31 +1,86 @@
-local CONFIG          = require("shared.config")
 local constants       = require("shared.constants")
 local logs            = require("shared.logs")
 local state           = require("shared.state")
+local utils           = require("shared.utils")
 local computer        = require("computer")
+local scheduler       = require("core.scheduler")
 local actuator        = require("backend.domain.actuator")
 local tracker         = require("backend.domain.tracker")
-local records         = require("backend.store.records")
+local learning        = require("backend.domain.learning")
+local rules           = require("backend.domain.rules")
 local plan            = require("backend.app.plan")
 local HOST_OFF_REASON = "主机开关已关"
 local system          = {}
+local lastWarnSig     = nil
+local warnedAllZero   = false
+function system.requestPlan(reason)
+    if not state.isActive() then return false end
+    return plan.run(reason)
+end
+function system.auditThresholds()
+    local texts, sig = {}, {}
+    local hasPositive = false
+    for level = 1, constants.LEVEL_COUNT do
+        local rule = state.rules[level]
+        local line = rules.lines(level)
+        if rule and (rule.threshold or 0) > 0 then hasPositive = true end
+        if line.overridden then
+            texts[#texts + 1] = string.format(
+                "%s 用户阈值 %s 低于下一级保供线 %s，实际按 %s 执行",
+                constants.levelLabel(level),
+                utils.formatShortNumber(line.user),
+                utils.formatShortNumber(line.next),
+                utils.formatShortNumber(line.actual))
+            sig[#sig + 1] = table.concat({ level, line.user, line.next }, ":")
+        end
+    end
+    if not hasPositive then
+        if not warnedAllZero then
+            logs.warn("所有等级的用户阈值均为 0，暂按低保线执行；请前往【配置】页面设置阈值")
+            warnedAllZero = true
+        end
+    else
+        warnedAllZero = false
+    end
+    local signature = table.concat(sig, "|")
+    if signature == lastWarnSig then return end
+    lastWarnSig = signature
+    for _, text in ipairs(texts) do logs.warn(text) end
+end
+function system.resetLearning(why)
+    tracker.resetAll()
+    learning.forgetAll()
+    rules.refreshAll()
+    scheduler.emit("rules_audit", { reason = why })
+end
+local function beginSession(reason)
+    system.resetLearning(reason)
+    state.system.running = true
+    plan.forget()
+    logs.system("并行学习已重置：本轮将从建议值重新学习真实并行")
+end
+local function endSession(reason)
+    state.system.running = false
+    system.resetLearning(reason)
+    plan.forget()
+end
 function system.start(reason)
+    if state.system.running then return true end
     if state.plant(constants.HOST_LEVEL).switch == false then
         system.ensureHostStoppedLock()
         logs.warn("无法启动：净水主机开关是关的（请先在主机上打开）")
         return false
     end
-    if state.system.locked then system.unlock() end
-    state.system.running = true
     logs.system(string.format("启动（%s）", tostring(reason or "-")))
-    plan.forget()
-    plan.run("启动")
+    if state.system.locked then system.unlock() end
+    beginSession(reason)
+    system.auditThresholds()
+    system.requestPlan("启动")
     return true
 end
 function system.stop(reason)
     local count = actuator.shutdownAll()
-    state.system.running = false
-    plan.forget()
+    endSession(reason)
     logs.system(string.format("停机（%s）：已下发全关 %d 台", tostring(reason or "-"), count))
 end
 function system.lock(why)
@@ -46,7 +101,7 @@ function system.enterSafeState(why, allOff, line)
     if allOff then
         system.stop(why)
     else
-        state.system.running = false
+        endSession(why)
         logs.system(string.format("停机（%s）：保持 T1-8 现状，未下发任何指令", why))
     end
     system.lock(why)
@@ -77,23 +132,25 @@ function system.onSwitchMismatch(payload)
         "%s 实测%s，方案要%s。停机并锁定（机器保持现状），处理完请点【启动系统】｜ %s",
         levelName, payload.got and "开" or "关", payload.want and "开" or "关", sentText))
 end
-function system.onHardwareChanged(payload)
-    tracker.resetAll()
-    if CONFIG.SYSTEM.RELEARN_ON_UNIT_CHANGE and payload then
-        for _, level in ipairs(payload.levels or {}) do
-            logs.system(records.invalidate(level, "该级机器增减"))
-        end
-    end
+function system.onHardwareChanged()
     system.enterSafeState("硬件变更", true)
 end
 function system.onPowerChanged(payload)
-    if CONFIG.SYSTEM.RELEARN_ON_POWER_CHANGE then
-        logs.system(records.invalidate(nil, string.format("全厂功率 %s -> %s%s",
-            tostring(payload and payload.from), tostring(payload and payload.to),
-            (payload and payload.note) and ("（" .. payload.note .. "）") or "")))
+    system.resetLearning(string.format("功率变化 %s -> %s",
+        tostring(payload and payload.from), tostring(payload and payload.to)))
+    system.requestPlan("功率变化")
+end
+function system.onParallelWrite(payload)
+    if not payload or not learning.remember(payload.level, payload.parallel, payload.success) then
+        return false
     end
-    if not state.isActive() then return end
-    plan.run("功率变化")
+    logs.system(string.format("%s 本次实际并行 = %s（来源：%s）",
+        constants.levelLabel(payload.level), utils.formatShortNumber(payload.parallel),
+        tostring(payload.by or "传感器确认")))
+    rules.refreshAll()
+    system.auditThresholds()
+    system.requestPlan("并行更新")
+    return true
 end
 function system.onSystemStart(payload)
     system.start(payload and payload.reason)
@@ -103,6 +160,10 @@ function system.onSystemStop(payload)
 end
 function system.onPriorityToggle()
     plan.togglePriority()
+    system.requestPlan("优先级切换")
+end
+function system.onScheduleRequest(payload)
+    system.requestPlan(payload and payload.reason or "事件")
 end
 function system.toggle(reason)
     if state.system.running then

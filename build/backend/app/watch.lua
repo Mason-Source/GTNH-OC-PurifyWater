@@ -1,15 +1,10 @@
-local CONFIG    = require("shared.config")
 local constants = require("shared.constants")
 local logs      = require("shared.logs")
 local state     = require("shared.state")
-local utils     = require("shared.utils")
 local scheduler = require("core.scheduler")
 local rules     = require("backend.domain.rules")
-local power     = require("backend.domain.power")
 local tracker   = require("backend.domain.tracker")
-local records   = require("backend.store.records")
 local machines  = require("backend.hardware.machines")
-local plan      = require("backend.app.plan")
 local system    = require("backend.app.system")
 local watch     = {}
 function watch.onFluidState(payload)
@@ -29,15 +24,12 @@ function watch.onFluidState(payload)
 end
 function watch.onLevelRulesChanged(payload)
     logs.debug("[调试] " .. tostring(payload and payload.why or "阈值配置已更新"))
-    for level = 1, constants.LEVEL_COUNT do
-        local verdict                           = rules.evaluate(level)
-        local snap                              = state.plant(level)
-        snap.openable, snap.forced, snap.reason = verdict.open, verdict.forced, verdict.reason
-    end
-    if state.isActive() then plan.run("阈值变化") end
+    rules.refreshAll()
+    system.auditThresholds()
+    system.requestPlan("阈值变化")
 end
 function watch.onLevelOpenableChanged()
-    if state.isActive() then plan.run("开启条件变化") end
+    system.requestPlan("开启条件变化")
 end
 function watch.onPlantObserved(payload)
     local level     = payload.level
@@ -69,6 +61,7 @@ function watch.onPlantObserved(payload)
     })
 end
 function watch.onParallelSample(payload)
+    if not state.isActive() then return end
     local verdict, why = tracker.feed(payload.address, payload.parallel, payload.progress)
     if verdict ~= "write" then
         scheduler.emit("parallel_discarded", {
@@ -79,7 +72,7 @@ function watch.onParallelSample(payload)
     local snap = state.plant(payload.level)
     if snap.source == "measured" and snap.parallel == payload.parallel then
         scheduler.emit("parallel_discarded", {
-            level = payload.level, value = payload.parallel, why = "与记录相同"
+            level = payload.level, value = payload.parallel, why = "与学习值相同"
         })
         return
     end
@@ -94,18 +87,5 @@ end
 function watch.onParallelDiscarded(payload)
     logs.debug(string.format("[调试] %s 并行采样丢弃：%s（%s）",
         constants.levelLabel(payload.level), tostring(payload.value), tostring(payload.why)))
-end
-function watch.onParallelWrite(payload)
-    local ok, text = records.save(payload.level, payload.parallel, payload.success)
-    logs.system(string.format("%s 实际并行 = %s（来源：%s）%s",
-        constants.levelLabel(payload.level), utils.formatShortNumber(payload.parallel),
-        tostring(payload.by or "-"), ok and "" or "【写盘失败】"))
-    power.refresh()
-    if state.isActive() then plan.run("并行更新") end
-    return ok, text
-end
-function watch.onScheduleNow(payload)
-    if not state.isActive() then return end
-    plan.run(payload and payload.reason or "事件")
 end
 return watch

@@ -9,14 +9,14 @@
 --
 -- 【事件总表（ARCHITECTURE.md §4）】
 --   采集类  hardware_missing  -> system（全关 + 锁定）
---           hardware_changed  -> system（全关+锁定 -> 记录作废）
---           power_changed     -> system（记录作废 -> 在跑时重排）
+--           hardware_changed  -> system（全关+锁定 -> 清本轮学习）
+--           power_changed     -> system（清本轮学习 -> 在跑时重排）
 --           fluid_state       -> watch（开启条件判定 + 翻转广播；**读不到按 0**）
 --           plant_observed    -> watch（边沿 + 归因）
 --           parallel_sample   -> watch（连续确认 -> parallel_write / discarded）
 --   派生类  level_rules_changed   -> watch（重判全部等级 + 重排）
 --           level_openable_changed-> watch（立刻重排）
---           parallel_write        -> watch（写盘 + 重算功率 + 重排）
+--           parallel_write        -> system（内存学习 + 重算规则 + 重排）
 --           switch_mismatch       -> system（停机 + 锁定，不动机器）
 --           主机开关                -> 不走事件：watch 每轮观测对一次（电平语义，见 app/system）
 --   控制类  system_start / system_stop / priority_toggle / schedule_now
@@ -44,14 +44,15 @@ function handlers.subscribe()
     scheduler.on("level_rules_changed", watch.onLevelRulesChanged)
     scheduler.on("level_openable_changed", watch.onLevelOpenableChanged)
     scheduler.on("parallel_discarded", watch.onParallelDiscarded)
-    scheduler.on("parallel_write", watch.onParallelWrite)
+    scheduler.on("parallel_write", system.onParallelWrite)
     scheduler.on("switch_mismatch", system.onSwitchMismatch)
+    scheduler.on("rules_audit", system.auditThresholds)
 
     -- 控制类
     scheduler.on("system_start", system.onSystemStart)
     scheduler.on("system_stop", system.onSystemStop)
     scheduler.on("priority_toggle", system.onPriorityToggle)
-    scheduler.on("schedule_now", watch.onScheduleNow)
+    scheduler.on("schedule_now", system.onScheduleRequest)
 
     return 16
 end

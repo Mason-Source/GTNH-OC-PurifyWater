@@ -10,9 +10,9 @@
 --   ① 基础：单并行功耗 / 已部署机器数
 --   ② 建议（公式推算）：每台并行 / 每台功耗 / 全开总功耗
 --   ③ 当前功耗：只留当前等级总功耗
---   ④ 每台机器：序号 | 当前并行 | 真实并行 | 当前成功率（按列宽补齐）
--- 【三个"并行"】当前并行 = sample（本周期读到、未确认）｜ 真实并行 = parallel（连续 N 个运行周期
---   一致 -> tracker 确认 -> 落盘）｜ 建议并行 = power.suggest（公式）。三者都逐台可见。
+--   ④ 每台机器：序号 | 当前并行 | 学习并行 | 当前成功率（按列宽补齐）
+-- 【三个"并行"】当前并行 = sample（本周期读到、未确认）｜ 学习并行 = parallel（连续 N 个运行周期
+--   一致 -> tracker 确认 -> 仅内存）｜ 建议并行 = power.suggest（公式）。三者都逐台可见。
 -- 【陈旧怎么标】没在跑时"当前"那个数就是上次运行留下的 -> 值后面跟 `(上次运行)`（不清零）。
 -- 【排版】只用工程里已经在用的符号：分隔线 `─`、项目符号 `·`（与 drawBorder 的 ┌─┐│└┘ 同族）；
 --   OC 字体里没验证过的字符不上屏。
@@ -43,12 +43,12 @@ local function ruleLine(x, y, w, text)
         theme.COLORS.TEXT_DISABLED)
 end
 
---- 逐台机器那几行：**严格对齐**的表格（序号 | 当前并行 | 真实并行 | 当前成功率）
+--- 逐台机器那几行：**严格对齐**的表格（序号 | 当前并行 | 学习并行 | 当前成功率）
 -- 列宽取本表里最宽的那一格：数值长度不一（3,000,000 vs 499,999、#1 vs #10），不补空格就会参差。
 -- 每列前缀宽度一致、数值右对齐，一眼能比大小。
--- 列名写全（"当前并行 / 真实并行"）：只写"当前 / 真实"语义不明 —— 这里三个数都是并行，还有成功率。
+-- 列名写全（"当前并行 / 学习并行"）：只写"当前 / 学习"语义不明 —— 这里三个数都是并行，还有成功率。
 -- 【三个数的来源】当前并行 = fact.parallel（本周期传感器读数，没在跑写"停"）；
---   真实并行 = tracker 确认值，没确认过就用本级记录值；成功率 = 传感器那次读到的。
+--   学习并行 = tracker 确认值，没确认过就用本级内存值；成功率 = 传感器那次读到的。
 -- @param machines table api.read.levels() 的 machines
 -- @param record number|nil 本级记录的并行（机器还没单独确认时的兼底）
 -- @return table 行数组 { { 左列, 右列, 颜色 }, ... }
@@ -78,7 +78,7 @@ local function machineRows(machines, record)
             string.format("%s#%d", BULLET, item[1]),
             table.concat({
                 cell("当前并行 ", item[2], curW),
-                cell("真实并行 ", item[3], realW),
+                cell("学习并行 ", item[3], realW),
                 cell("成功率 ", item[4], rateW)
             }, "   "),
             item[5] and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED
@@ -113,6 +113,11 @@ local function lines(row, level)
     sep("基础")
     item("单并行功耗", num(per) .. " EU/t", theme.COLORS.TEXT)
     item("已部署机器", tostring(deployed) .. " 台", theme.COLORS.TEXT)
+    local thresholdText = row.thresholdOverridden
+        and (row.userThresholdText .. " → " .. row.thresholdText)
+        or row.thresholdText
+    item("实际阈值", thresholdText,
+        row.thresholdOverridden and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT)
 
     sep("建议（公式推算）")
     item("每台并行", num(suggest), theme.COLORS.TEXT_CYAN)
@@ -196,7 +201,9 @@ function detail.fingerprint(data)
         tostring(fstate.areas.status and fstate.areas.status.w or 0),
         tostring(fstate.areas.status and fstate.areas.status.h or 0),
         tostring(row.deployed), tostring(row.active), tostring(row.sample),
-        tostring(row.parallel), tostring(row.suggest)
+        tostring(row.parallel), tostring(row.suggest),
+        tostring(row.rule and row.rule.userThreshold), tostring(row.rule and row.rule.effectiveThreshold),
+        tostring(row.thresholdOverridden)
     }
     for _, machine in ipairs(row.machines or {}) do
         parts[#parts + 1] = tostring(machine.address) .. ":" .. tostring(machine.active)

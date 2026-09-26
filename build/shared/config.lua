@@ -1,6 +1,5 @@
 local CONFIG                     = {}
 CONFIG.FILES                     = {
-    RECORDS  = "data/records.txt",  
     LEVELS   = "data/levels.txt",   
     HARDWARE = "data/hardware.txt", 
     HISTORY  = "data/history.dat",  
@@ -46,8 +45,6 @@ CONFIG.LEVELS_DEFAULT            = {
 CONFIG.SYSTEM                    = {
     PRIORITY_DEFAULT        = "low", 
     START_ON_BOOT           = false,
-    RELEARN_ON_POWER_CHANGE = true,
-    RELEARN_ON_UNIT_CHANGE  = true
 }
 CONFIG.LOG                       = {
     LEVEL      = "user", 

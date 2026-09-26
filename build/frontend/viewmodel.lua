@@ -38,8 +38,10 @@ function vm.build(force)
         local row          = data.levels[level]
         row.running        = (row.deployed > 0) and ((row.active or 0) > 0) or false
         row.waterText      = utils.formatShortNumber(row.water or 0)
-        row.thresholdText  = utils.formatShortNumber(row.rule.threshold)
+        row.thresholdText  = utils.formatShortNumber(row.rule.effectiveThreshold)
         row.thresholdKText = kiloText(row.rule.threshold)
+        row.userThresholdText = utils.formatShortNumber(row.rule.userThreshold)
+        row.thresholdOverridden = row.rule.thresholdOverridden == true
         row.sampleText     = row.sample and utils.formatShortNumber(row.sample) or "-"
         row.sampleStale    = (row.active or 0) == 0
         local rateStale    = (row.sampleStale and row.success ~= nil) and "(上次)" or ""
@@ -53,8 +55,7 @@ function vm.build(force)
             or ((row.active == nil) and "?" or (tostring(row.active) .. "/" .. tostring(row.deployed)))
         row.waterOfText    = string.format("%s / %s", row.waterText, row.thresholdText)
         machineTotal       = machineTotal + (row.deployed or 0)
-        local base         = (row.rule.enabled and row.rule.threshold > 0) and row.rule.threshold
-            or row.reserveLine
+        local base         = row.rule.effectiveThreshold
         row.ratio          = (base and base > 0) and math.min(1, (row.water or 0) / base) or 0
     end
     data.systemText, data.systemColor = theme.systemStatus(data.system, data.hardware)

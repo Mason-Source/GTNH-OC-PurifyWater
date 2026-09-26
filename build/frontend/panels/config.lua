@@ -29,8 +29,10 @@ function config.draw(data)
         fstate.checkCells[level] = { x = cols[2].x, y = y, w = 4, h = 1 }
         widgets.drawText(cols[2].x, y, row.rule.enabled and "[√]" or "[  ]",
             row.rule.enabled and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED, rowBg)
+        local thresholdColor = sel and theme.COLORS.TEXT_YELLOW
+            or (row.thresholdOverridden and theme.COLORS.TEXT_RED or theme.COLORS.TEXT)
         widgets.drawTextRight(cols[3].x, cols[3].w, y, row.thresholdKText,
-            sel and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT, rowBg)
+            thresholdColor, rowBg)
         fstate.configRows[level] = { x = area.x, y = y, w = area.w, h = 1 }
     end
 end

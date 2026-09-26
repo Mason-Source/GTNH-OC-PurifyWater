@@ -77,8 +77,11 @@ function vm.build(force)
         local row          = data.levels[level]
         row.running        = (row.deployed > 0) and ((row.active or 0) > 0) or false
         row.waterText      = utils.formatShortNumber(row.water or 0)     -- 水位恒为数字（读不到=0）
-        row.thresholdText  = utils.formatShortNumber(row.rule.threshold) -- 总览行里用短单位
-        row.thresholdKText = kiloText(row.rule.threshold)                -- 配置页用：全量 + 逗号
+        -- 总览/详情用实际执行阈值；配置页继续显示用户原始阈值
+        row.thresholdText  = utils.formatShortNumber(row.rule.effectiveThreshold)
+        row.thresholdKText = kiloText(row.rule.threshold)
+        row.userThresholdText = utils.formatShortNumber(row.rule.userThreshold)
+        row.thresholdOverridden = row.rule.thresholdOverridden == true
         -- 当前并行 = 本周期传感器读到的在跑机器里的最低并行（多台取最小，未确认）
         row.sampleText     = row.sample and utils.formatShortNumber(row.sample) or "-"
         -- 陈旧标注：没在跑时这个值是上次运行留下的（不清零，只标注）
@@ -97,9 +100,8 @@ function vm.build(force)
         -- 水量 / 阈值（一个字段一次拼好：状态面板用，改格式只改这里）
         row.waterOfText    = string.format("%s / %s", row.waterText, row.thresholdText)
         machineTotal       = machineTotal + (row.deployed or 0)
-        -- 进度条比例：优先用阈值，没勾选/阈值为 0 时用 5 倍线
-        local base         = (row.rule.enabled and row.rule.threshold > 0) and row.rule.threshold
-            or row.reserveLine
+        -- 进度条按实际执行阈值；本级自身 N 倍线只用于上一级供料检查
+        local base         = row.rule.effectiveThreshold
         row.ratio          = (base and base > 0) and math.min(1, (row.water or 0) / base) or 0
     end
 

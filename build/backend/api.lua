@@ -5,7 +5,6 @@ local runtime       = require("core.runtime")
 local scheduler     = require("core.scheduler")
 local jobs          = require("backend.jobs")
 local app           = require("backend.app.system")
-local plan          = require("backend.app.plan")
 local power         = require("backend.domain.power")
 local rules         = require("backend.domain.rules")
 local levels_config = require("backend.store.levels_config")
@@ -35,6 +34,7 @@ function api.read.levels()
     for level = 1, constants.LEVEL_COUNT do
         local snap = state.plant(level)
         local rule = state.rules[level] or { threshold = 0, enabled = false }
+        local line = rules.lines(level)
         local perMachine = {}
         for i, m in ipairs(snap.machines or {}) do
             local track = state.tracker[m.address]
@@ -61,9 +61,16 @@ function api.read.levels()
             forced = snap.forced,
             reason = snap.reason,
             water = state.fluids[level],
-            rule = { threshold = rule.threshold or 0, enabled = rule.enabled == true },
-            reserveLine = rules.reserveLine(level),
-            suggest = power.suggest(level)
+            rule = {
+                threshold           = rule.threshold or 0,
+                enabled             = rule.enabled == true,
+                userThreshold       = line.user,
+                effectiveThreshold  = line.actual,
+                thresholdOverridden = line.overridden
+            },
+            reserveLine     = rules.reserveLine(level),
+            nextReserveLine = line.next,
+            suggest         = power.suggest(level)
         }
     end
     return out
@@ -127,12 +134,11 @@ COMMANDS.system_stop = function()
     return true, "已停机"
 end
 COMMANDS.priority_toggle = function()
-    plan.togglePriority()
+    app.onPriorityToggle()
     return true, ""
 end
 COMMANDS.schedule_now = function()
-    if not state.isActive() then return false, "系统没在跑或已锁定，未重排" end
-    if not plan.run("界面") then return false, "方案没变，未重排" end
+    if not app.requestPlan("界面") then return false, "系统没在跑、已锁定或方案没变" end
     return true, ""
 end
 COMMANDS.refresh = function()
