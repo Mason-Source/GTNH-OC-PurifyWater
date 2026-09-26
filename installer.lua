@@ -10,7 +10,6 @@ local filesystem = require("filesystem")
 local shell      = require("shell")
 
 local ARGS       = { ... }
-local unpack     = table.unpack or unpack
 
 local REPO_URL   = "https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/"
 local CORE_NAME  = "installer_core.lua"
@@ -70,9 +69,9 @@ local function main()
         error("没检测到因特网卡（Internet Card）。")
     end
 
-    local ch = PREFER
+    local tryOrder = (PREFER == 2) and { 2, 1 } or { 1, 2 }
     local chunk, why
-    for _, tryCh in ipairs({ ch, ch == 1 and 2 or 1 }) do
+    for _, tryCh in ipairs(tryOrder) do
         local url = (tryCh == 2 and MIRROR_PREFIX ~= "") and (MIRROR_PREFIX .. CORE_URL) or CORE_URL
         print(string.format("下载安装器核心：%s", tryCh == 2 and "备用" or "直连"))
         local ok
@@ -86,7 +85,7 @@ local function main()
 
     print("执行安装器核心：" .. CORE_NAME)
     local ok, result, err = xpcall(function()
-        return chunk(unpack(ARGS))
+        return chunk(table.unpack(ARGS))
     end, debug.traceback)
 
     if not ok or result == false then
