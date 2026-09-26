@@ -20,7 +20,8 @@ GTNH 净水线自动控制程序（OpenComputers）。一台 OC 电脑接上 ME 
 
 | 目录 | 内容 |
 |---|---|
-| `installer.lua` | **一键安装器**（在 OC 电脑上跑，自动把下面的文件拉全） |
+| `installer.lua` | **稳定引导器**：每次运行自动获取最新 `installer_core.lua` 并执行 |
+| `installer_core.lua` | 实际安装器核心，由引导器下载，成功后自动删除 |
 | `PurifyWater/` | **带注释的源码**（要改就改这里） |
 | `build/` | 同一份源码**去注释后的版本**，整份丢进 OC 电脑的 `home/` 就能跑 |
 
@@ -35,18 +36,23 @@ wget -f https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/
 lua installer.lua
 ```
 
-装到「当前目录/PurifyWater」，默认拉 `build/`（去注释版）；想要带注释的源码，把 `installer.lua` 开头
-`SRC = "build"` 改成 `"PurifyWater"`。装完：
+装到「当前目录/PurifyWater」，默认拉 `build/`（去注释版）；想要带注释的源码，运行：
+
+```bash
+lua installer.lua --source=PurifyWater
+```
+
+装完：
 
 ```bash
 cd PurifyWater
 lua main.lua          # 启动（按 Q 退出）；--debug 打开调度/采样细节
 ```
 
-安装器**只覆盖清单里的文件**，`data/`（阈值、实测并行、曲线、痕迹）不会被碰 —— 以后更新重跑一遍即可；
-但它**不删**上游删掉/改名的旧文件，要干净就先删整个应用目录（记得先备份 `data/`）。
+安装器使用清单同步代码，会清理上游已删除或改名的旧文件；`data/`（阈值、实测并行、曲线、痕迹）
+不会被碰。下载和替换失败时，旧代码保持不变。
 
-下载默认走 GitHub 直连；**直连失败会自动整体切到备用镜像**（`installer.lua` 里的 `MIRROR_PREFIX`），
+下载默认走 GitHub 直连；**直连失败会自动整体切到备用镜像**，
 整轮跑完仍有失败项就再来几轮（默认 3 轮，每轮每个文件只试一次，不在同一个文件上死磕）。
 
 万一还是报失败：加 `--debug` 重跑一遍（`lua installer.lua --debug`），完整过程会写进 **`installer.log`**
