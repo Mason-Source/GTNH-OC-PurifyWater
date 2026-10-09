@@ -150,6 +150,10 @@ local function onClick(x, y)
                 return
             end
         end
+        if fstate.hit(fstate.autostartRow, x, y) then
+            fire("autostart_toggle")
+            return
+        end
         for level, box in pairs(fstate.configRows or {}) do
             if fstate.hit(box, x, y) then
                 selectLevel(level)

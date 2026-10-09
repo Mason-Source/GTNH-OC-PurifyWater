@@ -48,7 +48,11 @@ state.system = {
     running    = false, -- 自动控制系统是否在跑
     locked     = false, -- 进过安全状态：**不自动恢复**（硬锁时界面按钮还会变灰）
     lockReason = nil,   -- 锁定原因（**只记第一条**：谁先出事谁是真因）
-    priority   = "low"  -- "low" = 低级水优先 / "high" = 高级水优先
+    priority   = "low", -- "low" = 低级水优先 / "high" = 高级水优先
+    -- 开机自启（真源 = $HOME/.shrc 里那段标记块，由 backend/store/autostart 读回）：
+    autostart      = false, -- 勾选 = 块在且指向当前应用目录
+    autostartStale = false, -- 块在但指向别的路径（界面显示未勾选 + 启动时警告）
+    autostartPath  = nil    -- 那个 .shrc 的完整路径（界面文案里显示）
 }
 
 -- 曲线（界面用；盘上的历史见 store/history）

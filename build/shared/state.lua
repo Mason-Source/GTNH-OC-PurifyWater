@@ -8,7 +8,10 @@ state.system = {
     running    = false,
     locked     = false,
     lockReason = nil,
-    priority   = "low"  
+    priority   = "low", 
+    autostart      = false,
+    autostartStale = false,
+    autostartPath  = nil
 }
 state.chart = { points = {} }
 state.net = { enabled = false, frame = 0, warned = nil }

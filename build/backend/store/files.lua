@@ -4,6 +4,9 @@ local ROOT = "."
 function files.setRoot(dir)
     ROOT = tostring(dir or ".")
 end
+function files.root()
+    return ROOT
+end
 function files.path(name)
     local s = tostring(name or "")
     if s:sub(1, 1) == "/" then return s end

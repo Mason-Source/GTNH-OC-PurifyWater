@@ -7,10 +7,10 @@ local config    = {}
 local COL_W     = { 0.16, 0.10, 0.74 }
 function config.draw(data)
     local area = fstate.areas.config
-    widgets.clearArea(area.x, area.y, area.w, area.h)
+    widgets.clearArea(area.x, area.y, area.w, layout.CONFIG_HEAD_H)
     widgets.drawBorder(area.x, area.y, area.w, area.h,
         theme.borderColor(data.system.priority == "high"))
-    widgets.drawText(area.x + 2, area.y + 1, "净水厂配置（点某级选中，用下方键盘改阈值）",
+    widgets.drawText(area.x + 2, area.y + 1, "阈值配置（点某级选中，用下面键盘改）",
         theme.COLORS.TEXT_CYAN)
     local inner                          = { x = area.x + 2, w = area.w - 4 }
     local cols                           = layout.cols(inner, COL_W)

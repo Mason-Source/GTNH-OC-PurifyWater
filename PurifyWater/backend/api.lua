@@ -22,6 +22,7 @@ local scheduler     = require("core.scheduler")
 
 local jobs          = require("backend.jobs")
 local app           = require("backend.app.system")
+local autostart     = require("backend.app.autostart")
 local power         = require("backend.domain.power")
 local rules         = require("backend.domain.rules")
 
@@ -35,13 +36,17 @@ local api           = { read = {} }
 -- 只读
 --------------------------------------------------------------------------------
 
---- 系统状态（界面正文只需这三个）
+--- 系统状态（界面正文只需前三个；后三个给配置页「运行设置」）
 -- @return table
 function api.read.system()
     return {
         running  = state.system.running == true,
         locked   = state.system.locked == true,
-        priority = state.system.priority
+        priority = state.system.priority,
+        -- 开机自启：真源 = $HOME/.shrc 里那段标记块（见 backend/store/autostart）
+        autostart      = state.system.autostart == true,
+        autostartStale = state.system.autostartStale == true,
+        autostartPath  = state.system.autostartPath
     }
 end
 
@@ -206,6 +211,12 @@ end
 COMMANDS.priority_toggle = function()
     -- 日志由 plan.togglePriority 写（含“是否保存成功”），重排由 system 统一发起
     app.onPriorityToggle()
+    return true, ""
+end
+
+COMMANDS.autostart_toggle = function()
+    -- 日志由 backend/app/autostart.toggle 写（含写入失败那条）；这里只转发
+    autostart.toggle()
     return true, ""
 end
 

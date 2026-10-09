@@ -1,13 +1,16 @@
 --------------------------------------------------------------------------------
 -- frontend/panels/config.lua
 --------------------------------------------------------------------------------
--- 【职责】配置页的**上半块**：8 级的「等级 / 勾选 / 维持阈值（kL）」列表
--- 【不做什么】不画键盘（那是 panels/keypad）、不碰后端（提交由 input 发 `level_rules_set`）
+-- 【职责】配置页「阈值配置」卡片的**上半块**：卡片边框 + 标题 + 8 级的「等级 / 勾选 / 阈值（kL）」
+-- 【不做什么】不画回显/键盘（那是 panels/editline、panels/keypad，它们在**同一张卡内部**）、
+--   不碰后端（提交由 input 发 `level_rules_set`）、不画「运行设置」卡（panels/settings）
 -- 【依赖】frontend/{state,theme,widgets,layout}、shared/constants
 -- 【被谁用】frontend/render
 --
--- 与键盘分成两块：两者共用一个指纹时，每点一下键盘 8 行列表也跟着重画（看着就是闪）。
---   现在列表只认"勾选 / 阈值 / 选中行"，键盘只认"改谁 / 填了什么"。
+-- 与回显/键盘分成三块：共用一个指纹时，每点一下键盘 8 行列表也跟着重画（看着就是闪）。
+--   现在列表只认"勾选 / 阈值 / 选中行"，回显只认"改谁 / 填了什么"，键盘只认"改谁"。
+-- 【清区范围】只清卡片的**上半**（layout.CONFIG_HEAD_H 行）：卡内下半的回显/键盘各有矩形，
+--   这里不能连带擦掉；边框整卡重描一遍（两个内部面板都缩进了 2 列，不碰它）。
 -- 【单位 kL】界面一律 kL（提交那一刻 ×1000 存成 mB），单位只在表头写一次。
 -- 【显示】阈值全量 + 三位逗号 + 右对齐；选中行只换底色，正在敲的数字显示在键盘块的编辑行。
 -- 【点击】整行 = 选中它；行内 `[√]` 只切勾选，不算选中。
@@ -26,10 +29,11 @@ local COL_W     = { 0.16, 0.10, 0.74 }
 
 function config.draw(data)
     local area = fstate.areas.config
-    widgets.clearArea(area.x, area.y, area.w, area.h)
+    -- 只清"卡片上半"（表头 + 8 级）：卡内下半的回显/键盘各自重画，擦掉就白屏了
+    widgets.clearArea(area.x, area.y, area.w, layout.CONFIG_HEAD_H)
     widgets.drawBorder(area.x, area.y, area.w, area.h,
         theme.borderColor(data.system.priority == "high"))
-    widgets.drawText(area.x + 2, area.y + 1, "净水厂配置（点某级选中，用下方键盘改阈值）",
+    widgets.drawText(area.x + 2, area.y + 1, "阈值配置（点某级选中，用下面键盘改）",
         theme.COLORS.TEXT_CYAN)
 
     local inner                          = { x = area.x + 2, w = area.w - 4 }

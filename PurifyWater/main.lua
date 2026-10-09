@@ -83,6 +83,7 @@ local api           = require("backend.api")
 local power         = require("backend.domain.power")
 local net           = require("backend.hardware.net")
 local system        = require("backend.app.system")
+local autostart     = require("backend.app.autostart")
 local render        = require("frontend.render")
 
 files.setRoot(appDir) -- 数据文件（配置里的相对名）都相对应用目录解析
@@ -124,6 +125,9 @@ if savedSettings and (savedSettings.priority == "high" or savedSettings.priority
 else
     state.system.priority = CONFIG.SYSTEM.PRIORITY_DEFAULT or "low"
 end
+-- 开机自启：真源在 $HOME/.shrc（勾选与否 = 那段标记块在不在）；这里只读回状态 + 按需写一行日志
+autostart.refresh()
+
 net.setEnabled(CONFIG.NET.ENABLED == true)
 
 -- ④ 广播（T7）：快照来源由这里注入，避免 net 反过来 require api 造成环依赖
@@ -171,3 +175,6 @@ do
 end
 print("已退出：" .. tostring(runtime.quitReason() or "未说明"))
 print("运行痕迹：" .. tostring(trace.path()))
+if state.system.autostart then
+    print("已开启开机自启：下次开机会自动运行；现在要重开执行 lua " .. appDir .. "/main.lua")
+end

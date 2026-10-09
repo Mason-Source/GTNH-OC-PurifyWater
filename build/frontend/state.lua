@@ -12,6 +12,7 @@ local fstate = {
     chartLevel     = 0,
     chartChips     = {},
     logTitle       = nil,
+    autostartRow   = nil,
     configRows     = {},
     checkCells     = {},
     keyCells       = {},
@@ -43,6 +44,7 @@ function fstate.clearHitboxes()
     fstate.checkCells, fstate.configRows, fstate.keyCells = {}, {}, {}
     fstate.levelRows = {}
     fstate.logTitle = nil
+    fstate.autostartRow = nil
 end
 function fstate.hit(box, x, y)
     if not box then return false end

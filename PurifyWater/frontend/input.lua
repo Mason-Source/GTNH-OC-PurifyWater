@@ -11,7 +11,7 @@
 --   touch    = { "touch", 屏幕地址, x, y, 玩家 }
 -- 【分工】键盘：X 启停 / P 优先级 / R 刷新 / T 切页 / 数字（选曲线等级，0 = 全部）
 --         鼠标：页签、净水状态块（行→详情；详情态下点任意处→返回）、图表等级按钮、
---               配置页（点行选中 / 点勾选切换 / 点虚拟键盘改阈值）、日志标题、按钮
+--               配置页（点行选中 / 点勾选切换 / 点自启子项切换 / 点虚拟键盘改阈值）、日志标题、按钮
 --   Q 退出不在这里：退出语义归 core/runtime（runtime.bindQuitKeys）。
 -- 【阈值输入】物理键盘不进输入框：点某级**选中**它，再用常驻虚拟键盘改。键的语义（kind/value）
 --   由面板随热区带过来 —— 键盘长什么样归面板，按下去怎么改归这里；缓冲是 kL 整数串，
@@ -234,7 +234,12 @@ local function onClick(x, y)
                 return
             end
         end
-        -- ③ 整行：选中它（缓冲直接填当前值，"选中就能改"）
+        -- ③ 「运行设置」卡的自启子项行：点它切开机自启（不选中、不涉及键盘）
+        if fstate.hit(fstate.autostartRow, x, y) then
+            fire("autostart_toggle")
+            return
+        end
+        -- ④ 整行：选中它（缓冲直接填当前值，"选中就能改"）
         for level, box in pairs(fstate.configRows or {}) do
             if fstate.hit(box, x, y) then
                 selectLevel(level)

@@ -25,6 +25,12 @@ function files.setRoot(dir)
     ROOT = tostring(dir or ".")
 end
 
+--- 当前数据根目录（= 应用目录）：需要绝对路径的模块（如 store/autostart 算 main.lua 路径）读它
+-- @return string
+function files.root()
+    return ROOT
+end
+
 --- 把配置里的文件名解析成实际路径
 -- 【规则】以 "/" 开头的当绝对路径，否则相对应用根目录
 --   （应用目录一定可写，不赌文件系统根目录）

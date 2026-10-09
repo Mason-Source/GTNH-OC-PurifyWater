@@ -53,6 +53,7 @@ local api           = require("backend.api")
 local power         = require("backend.domain.power")
 local net           = require("backend.hardware.net")
 local system        = require("backend.app.system")
+local autostart     = require("backend.app.autostart")
 local render        = require("frontend.render")
 files.setRoot(appDir)
 trace.start(appDir, bootstrap.version())
@@ -80,6 +81,7 @@ if savedSettings and (savedSettings.priority == "high" or savedSettings.priority
 else
     state.system.priority = CONFIG.SYSTEM.PRIORITY_DEFAULT or "low"
 end
+autostart.refresh()
 net.setEnabled(CONFIG.NET.ENABLED == true)
 if net.register() then
     net.setSource(api.snapshot)
@@ -115,3 +117,6 @@ do
 end
 print("已退出：" .. tostring(runtime.quitReason() or "未说明"))
 print("运行痕迹：" .. tostring(trace.path()))
+if state.system.autostart then
+    print("已开启开机自启：下次开机会自动运行；现在要重开执行 lua " .. appDir .. "/main.lua")
+end

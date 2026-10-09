@@ -5,6 +5,7 @@ local runtime       = require("core.runtime")
 local scheduler     = require("core.scheduler")
 local jobs          = require("backend.jobs")
 local app           = require("backend.app.system")
+local autostart     = require("backend.app.autostart")
 local power         = require("backend.domain.power")
 local rules         = require("backend.domain.rules")
 local levels_config = require("backend.store.levels_config")
@@ -15,7 +16,10 @@ function api.read.system()
     return {
         running  = state.system.running == true,
         locked   = state.system.locked == true,
-        priority = state.system.priority
+        priority = state.system.priority,
+        autostart      = state.system.autostart == true,
+        autostartStale = state.system.autostartStale == true,
+        autostartPath  = state.system.autostartPath
     }
 end
 function api.read.hardware()
@@ -135,6 +139,10 @@ COMMANDS.system_stop = function()
 end
 COMMANDS.priority_toggle = function()
     app.onPriorityToggle()
+    return true, ""
+end
+COMMANDS.autostart_toggle = function()
+    autostart.toggle()
     return true, ""
 end
 COMMANDS.schedule_now = function()

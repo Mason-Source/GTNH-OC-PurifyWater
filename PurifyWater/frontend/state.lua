@@ -32,6 +32,7 @@ local fstate = {
     chartLevel     = 0,                        -- 0 = 全部（柱状图）｜ 1..8 = 单级（2 游戏日曲线）
     chartChips     = {},                       -- 图表标题行的等级按钮热区 { [level] = {x,y,w,h} }，level 0 = 全部
     logTitle       = nil,                      -- 日志面板标题热区（点它切 user/debug）
+    autostartRow   = nil,                      -- 配置页「运行设置」子项行热区（点它切开机自启）
     -- 配置页：点某级选中它 -> 用常驻虚拟键盘改阈值（物理键盘不输入）
     configRows     = {},                       -- 每级那一行的点击热区 { [level] = box }
     checkCells     = {},                       -- 勾选格热区 { [level] = box }（点它只切勾选，不算选中）
@@ -81,6 +82,7 @@ function fstate.clearHitboxes()
     fstate.checkCells, fstate.configRows, fstate.keyCells = {}, {}, {}
     fstate.levelRows = {}
     fstate.logTitle = nil
+    fstate.autostartRow = nil
 end
 
 --- 命中测试
