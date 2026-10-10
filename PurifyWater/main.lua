@@ -68,7 +68,7 @@ local CONFIG        = require("shared.config")
 local logs          = require("shared.logs")
 local state         = require("shared.state")
 local utils         = require("shared.utils")
-local scheduler     = require("core.scheduler")
+local models        = require("shared.models")
 local runtime       = require("core.runtime")
 
 local files         = require("backend.store.files")
@@ -76,6 +76,7 @@ local trace         = require("backend.store.trace")
 local log_file      = require("backend.store.log_file")
 local history       = require("backend.store.history")
 local levels_config = require("backend.store.levels_config")
+local rates_config  = require("backend.store.rates_config")
 local learning      = require("backend.domain.learning")
 local jobs          = require("backend.jobs")
 local handlers      = require("backend.handlers")
@@ -84,14 +85,36 @@ local power         = require("backend.domain.power")
 local net           = require("backend.hardware.net")
 local system        = require("backend.app.system")
 local autostart     = require("backend.app.autostart")
+local mode          = require("backend.domain.mode")
+local thresholdMode = require("backend.domain.modes.threshold")
+local rateMode      = require("backend.domain.modes.rate")
 local render        = require("frontend.render")
 
 files.setRoot(appDir) -- 数据文件（配置里的相对名）都相对应用目录解析
+
+-- 【调度模式先装再用】注册内置模式，再按 settings 里的 mode 选当前模式（未知值告警回退阈值）。
+--   必须早于任何 suggest()/evaluate()/audit() 调用 —— 也就是 jobs.register() 与 system.auditThresholds() 之前。
+local bootSettings = require("backend.store.settings").load() or {}
+mode.register("threshold", thresholdMode)
+mode.register("rate", rateMode)
+if mode.has(bootSettings.mode) then
+    state.system.mode = bootSettings.mode
+else
+    state.system.mode = "threshold"
+    if bootSettings.mode ~= nil and bootSettings.mode ~= "" then
+        logs.warn("未知调度模式 " .. tostring(bootSettings.mode) .. "，已回退阈值调度")
+    end
+end
+state.system.enforceThreshold = models.bool(bootSettings.enforce_threshold, true)
+
+-- 速率配置（权重 + T7 增产倍率）：缺键会补默认值并落盘；同样必须早于任何 suggest()/evaluate()/audit()
+rates_config.load()
 
 trace.start(appDir, bootstrap.version())
 if memwatch then memwatch.traceBoot(bootFree, bootTotal) end -- 两行内存读数只在 --debug 下写
 
 logs.system(bootstrap.versionLine())
+logs.system("调度模式：" .. mode.labelOf(state.system.mode))
 -- 下列都是排查信息（不是用户要看的东西）：应用目录、任务与事件条数、各数据文件的加载行数……
 logs.debug("[调试] 应用目录 " .. appDir
     .. (removed > 0 and ("（已清掉 " .. removed .. " 个旧模块缓存）") or ""))
@@ -110,6 +133,10 @@ logs.debug("[调试] " .. tostring(historyText))
 -- 【事件接线本身不能删】下面这行才是"把事件表挂上"的动作；条数只是排查信息
 local subCount = handlers.subscribe()
 logs.debug(string.format("[调试] 已订阅 %d 类事件", subCount))
+
+-- 首次发布"每级建议并行"：模式已注册、首扫已拿到功率与台数
+--   之后只在受控点重算（启动 / 功率变 / 台数变 / 权重·倍率变 / 模式切换 —— 见 domain/modes/*）
+mode.publish()
 system.auditThresholds()
 
 runtime.discardStaleInterrupts() -- 先丢掉上一个进程残留的 interrupted

@@ -13,7 +13,7 @@ local constants                   = {}
 -- OC 的 shell 会缓存已加载的模块：只重启程序不一定拿到新代码。
 -- 启动日志与 last_run 痕迹都写它，换完文件即可确认跑的是哪一份；改了需重启生效的东西就抬号。
 -- 跑 `--debug` 时显示成 `vX.Y-debug`：后缀在 `core/bootstrap.version()` 里拼（常量本身只有号）。
-constants.CODE_VERSION            = "v4.5"
+constants.CODE_VERSION            = "v4.6"
 
 -- 等级：1~8 级净水单元；0 级保留给净水主机
 constants.LEVEL_COUNT             = 8
@@ -34,6 +34,29 @@ constants.POWER_LEVELS            = {
     [7] = 1966080,
     [8] = 7864320
 }
+
+-- ============================ 速率模型（每并行每周期） ============================
+-- 【谁用】domain/rates（速率模式的算账）。数值来自实机口径：吃 1000L 上一级 / 成功产 900L 本级；
+--   回流等级额外吃 90L 本级水换 +15% 成功率（封顶 100%）；T7 可用超导粗胚增产（倍率档位见表）。
+-- 【只有比例有意义】权重只是相对值，绝对量级不影响结果。
+constants.RATE_PRODUCE            = 900   -- 成功时产出本级水（L/并行/周期）
+constants.RATE_CONSUME            = 1000  -- 消耗上一级水（L/并行/周期）
+constants.RATE_REFLUX             = 90    -- 回流额外吃本级水（L/并行/周期）
+constants.RATE_REFLUX_BONUS       = 0.15  -- 回流加成功率
+constants.RATE_SUCCESS            = { 0.7, 0.8, 1, 1, 0.99, 0.9, 1, 1 } -- 各级基础成功率（下标=等级）
+constants.RATE_REFLUX_LEVELS      = { [1] = true, [2] = true, [6] = true } -- 值得回流的等级
+constants.T7_BOOST_OPTIONS        = { 1, 1.25, 1.5, 1.75, 2 }             -- T7 增产倍率档位
+
+-- 各等级**单台并行上限**（两套模式共用的唯一夹取数字）：T1 = 2386092，T2~T8 = 2147483
+constants.PARALLEL_CAP_T1         = 2386092
+constants.PARALLEL_CAP_OTHER      = 2147483
+
+--- 某等级的单台并行上限
+-- @param level number
+-- @return number
+function constants.parallelCap(level)
+    return (level == 1) and constants.PARALLEL_CAP_T1 or constants.PARALLEL_CAP_OTHER
+end
 
 -- ============================ 流体 / 机器 ============================
 -- 等级 -> GT 流体注册名（净化水 grade1~grade8）

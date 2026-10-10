@@ -17,7 +17,4 @@ function log_file.flush()
     logs.markFlushed()
     return true, string.format("日志已落盘（+%d 行，共 %d 行）", #fresh, #lines)
 end
-function log_file.path()
-    return path()
-end
 return log_file

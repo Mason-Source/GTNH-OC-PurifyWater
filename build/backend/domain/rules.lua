@@ -13,63 +13,45 @@ function rules.lines(level)
     if rule and rule.enabled and (rule.threshold or 0) > 0 then
         user = rule.threshold
     end
-    local own  = rules.reserveLine(level)
-    local next = 0
+    local nextLine = 0
     if level < constants.LEVEL_COUNT then
-        next = rules.reserveLine(level + 1)
+        nextLine = rules.reserveLine(level + 1)
     end
     return {
-        own        = own,
-        next       = next,
+        next       = nextLine,
         user       = user,
-        actual     = math.max(user, next),
-        fromNext   = next > user,
-        overridden = user > 0 and user < next
+        actual     = math.max(user, nextLine),
+        overridden = user > 0 and user < nextLine
     }
 end
-function rules.evaluate(level)
-    local snap = state.plant(level)
-    if (snap.deployed or 0) <= 0 then
-        return { open = false, forced = false, reason = "未部署机器" }
+function rules.materialBlocked(level)
+    if level <= 1 then return false end
+    return state.fluids[level - 1] < rules.reserveLine(level)
+end
+function rules.belowThreshold(level)
+    return state.fluids[level] < rules.lines(level).actual
+end
+function rules.hasPositiveThreshold()
+    for level = 1, state.serviceTop() do
+        local rule = state.rules[level]
+        if rule and (rule.threshold or 0) > 0 then return true end
     end
-    local own = state.fluids[level]
-    local line = rules.lines(level)
-    if level > 1 then
-        local prev = state.fluids[level - 1]
-        if prev < line.own then
-            return {
-                open = false,
-                forced = false,
-                reason = string.format(
-                    "原料不足：%s 仅 %s，需 %s",
-                    constants.levelLabel(level - 1),
-                    utils.formatShortNumber(prev), utils.formatShortNumber(line.own))
-            }
+    return false
+end
+function rules.thresholdNotes()
+    local texts, sig = {}, {}
+    for level = 1, state.serviceTop() do
+        local line = rules.lines(level)
+        if line.overridden then
+            texts[#texts + 1] = string.format(
+                "%s 用户阈值 %s 低于下一级保供线 %s，实际按 %s 执行",
+                constants.levelLabel(level),
+                utils.formatShortNumber(line.user),
+                utils.formatShortNumber(line.next),
+                utils.formatShortNumber(line.actual))
+            sig[#sig + 1] = table.concat({ level, line.user, line.next }, ":")
         end
     end
-    if own < line.actual then
-        local why = line.fromNext
-            and ("保供下一级：低于 5 倍线 " .. utils.formatShortNumber(line.next))
-            or ("低于阈值：低于 " .. utils.formatShortNumber(line.actual))
-        return {
-            open = true,
-            forced = line.fromNext,
-            reason = string.format("%s（本级 %s）", why, utils.formatShortNumber(own))
-        }
-    end
-    return {
-        open = false,
-        forced = false,
-        reason = string.format(
-            "已达实际阈值：%s / %s",
-            utils.formatShortNumber(own), utils.formatShortNumber(line.actual))
-    }
-end
-function rules.refreshAll()
-    for level = 1, constants.LEVEL_COUNT do
-        local verdict                           = rules.evaluate(level)
-        local snap                              = state.plant(level)
-        snap.openable, snap.forced, snap.reason = verdict.open, verdict.forced, verdict.reason
-    end
+    return texts, table.concat(sig, "|")
 end
 return rules

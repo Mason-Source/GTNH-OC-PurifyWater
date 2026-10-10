@@ -1,30 +1,32 @@
 --------------------------------------------------------------------------------
 -- backend/store/levels_config.lua
 --------------------------------------------------------------------------------
--- 【职责】`data/levels.txt`（每级的阈值 + 勾选）的读写与变更检测
--- 【依赖】backend/store/files、shared/{config,models,state,constants}
--- 【被谁用】main（启动时 load）、jobs（T2 之前 load 一次检测文件变化）、前端（改阈值后写回）
+-- 【职责】1-8 级的**阈值 + 勾选**配置：读写 data/settings.txt，并做变更检测
+-- 【不做什么】不做业务判断、不认识旧版配置（旧实现的数据一律不管）
+-- 【依赖】shared/{config,constants,models,state}、backend/store/settings
+-- 【被谁用】main（启动 load）、jobs（T2 每 5 秒 load 一次做变更检测）、
+--           backend/api（界面改阈值后 set -> 立刻 load + 广播事件）
 --
--- 【文件】一行一级：`等级 阈值 勾选`    例：`3 1000000000000 true`
--- 【新装】文件不存在时 ensure() 生成一份：**每级阈值 0 + 全部勾选**（见 config.LEVELS_DEFAULT）。
---   阈值 0 = 不用用户阈值；实际阈值仍为下一级 N 倍线，最后一级没有下一级时为 0。
--- 【变更检测】记住上次读到的原文；文件内容变了才重新解析并返回 true
---   -> jobs 据此广播 level_rules_changed，而不是每 5 秒无脑重排
+-- 【键】threshold.N = 阈值（mB 整数）｜enabled.N = 该级是否受用户阈值管理（true/false），N = 1..8。
+--   缺键/写坏 -> 用 CONFIG.LEVELS_DEFAULT 兜底，并把默认值补写回 settings.txt（新装直接生成一份）。
+-- 【变更检测】把当前规则拼成一段规范文本当指纹（**只看这几个键**）：settings.txt 里别的键
+--   （运行模式/优先级/…）变了不会误触发重排；load() 返回内容是否变化，jobs 据此广播事件。
 --------------------------------------------------------------------------------
 
 local CONFIG        = require("shared.config")
 local constants     = require("shared.constants")
 local models        = require("shared.models")
 local state         = require("shared.state")
-local files         = require("backend.store.files")
+
+local settings      = require("backend.store.settings")
 
 local levels_config = {}
 
 local lastText      = nil
 
-local function path()
-    return files.path(CONFIG.FILES.LEVELS)
-end
+--- 阈值键 / 勾选键（键名只在这里拼）
+local function thresholdKey(level) return "threshold." .. tostring(level) end
+local function enabledKey(level)   return "enabled."   .. tostring(level) end
 
 --- 默认值（用户没给阈值时用；见 shared/config.LEVELS_DEFAULT）
 -- @param level number
@@ -34,49 +36,66 @@ local function defaultOf(level)
     return { threshold = d.threshold or 0, enabled = d.enabled ~= false }
 end
 
---- 文件不存在则按默认值生成一份（用户可直接编辑）
--- @return boolean 是否新建
-function levels_config.ensure()
-    if files.exists(path()) then return false end
-    local lines = {
-        "# 净水厂阈值配置：一行一级  格式 = 等级 阈值 是否勾选",
-        "# 勾选 true  = 该级受用户阈值管理",
-        "# 勾选 false = 忽略用户阈值；下一级 N 倍保供线仍然生效",
-        "# 实际阈值   = max(用户阈值, 下一级 N 倍线)",
-        "# 阈值 0     = 不使用用户阈值（**新装默认值**，请按需自己改）",
-        "# 阈值单位 = mB（1 桶 = 1000）"
-    }
+--- 规则表 -> 指纹文本（只覆盖阈值/勾选，用于变更检测）
+-- @param rules table
+-- @return string
+local function fingerprint(rules)
+    local lines = {}
     for level = 1, constants.LEVEL_COUNT do
-        local d = defaultOf(level)
-        lines[#lines + 1] = models.levelRuleLine(level, d.threshold, d.enabled)
+        local rule = rules[level] or defaultOf(level)
+        lines[#lines + 1] = string.format("%d|%d|%s", level,
+            math.floor(tonumber(rule.threshold) or 0), rule.enabled and "true" or "false")
     end
-    files.writeLines(path(), lines)
-    return true
+    return table.concat(lines, "\n")
 end
 
---- 读文件 -> state.rules
--- @return boolean 内容是否变化（false = 与上次一致，不必重排）
--- @return string 说明
-function levels_config.load()
-    levels_config.ensure()
-    local text = files.read(path()) or ""
-    if text == lastText then return false, "阈值配置未变化" end
-    lastText = text
-
-    local rules, count = {}, 0
-    for _, line in ipairs(files.readLines(path())) do
-        local level, threshold, enabled = models.levelRule(line)
-        if level then
-            rules[level] = { threshold = threshold or 0, enabled = enabled ~= false }
-            count = count + 1
+--- 缺键就补默认值（新装/手改删键都重新生成这几个键；已存在的值一律不动）
+-- @param snapshot table settings.load() 的结果
+-- @return table 补完后的快照（内存里合并，不再读盘）
+-- @return number 补了几个键（0 = 没写盘）
+local function ensureKeys(snapshot)
+    local pairsToSet, missing = {}, 0
+    for level = 1, constants.LEVEL_COUNT do
+        local d = defaultOf(level)
+        if snapshot[thresholdKey(level)] == nil then
+            pairsToSet[thresholdKey(level)] = math.floor(tonumber(d.threshold) or 0)
+            missing = missing + 1
+        end
+        if snapshot[enabledKey(level)] == nil then
+            pairsToSet[enabledKey(level)] = d.enabled and "true" or "false"
+            missing = missing + 1
         end
     end
-    -- 缺行的等级用默认值补齐（文件被手改坏也不至于整级消失）
+    if missing == 0 then return snapshot, 0 end
+
+    settings.setMany(pairsToSet)
+    for key, value in pairs(pairsToSet) do snapshot[key] = tostring(value) end
+    return snapshot, missing
+end
+
+--- 读配置 -> state.rules；返回内容是否变化（false = 与上次一致，不必重排）
+-- @param snapshot table|nil 已读好的 settings 表（周期扫描一次读全后共用；不传就自己读一次）
+-- @return boolean changed
+-- @return string 说明
+function levels_config.load(snapshot)
+    snapshot = ensureKeys(snapshot or settings.load() or {})
+
+    local rules = {}
     for level = 1, constants.LEVEL_COUNT do
-        if not rules[level] then rules[level] = defaultOf(level) end
+        local d         = defaultOf(level)
+        local threshold = tonumber(snapshot[thresholdKey(level)]) or d.threshold
+        rules[level] = {
+            threshold = threshold,
+            enabled   = models.bool(snapshot[enabledKey(level)], d.enabled)
+        }
     end
+
+    local text = fingerprint(rules)
+    if text == lastText then return false, "阈值配置未变化" end
+    lastText   = text
+
     state.rules = rules
-    return true, string.format("阈值配置已更新（%d 行）", count)
+    return true, string.format("阈值配置已更新（%d 级）", constants.LEVEL_COUNT)
 end
 
 --- 写入某级的阈值/勾选（界面改完调用；之后 load 会检测到变化）
@@ -84,6 +103,7 @@ end
 -- @param threshold number|nil 不改则传 nil
 -- @param enabled boolean|nil 不改则传 nil
 -- @return boolean ok
+-- @return string|nil 失败原因
 function levels_config.set(level, threshold, enabled)
     local current = state.rules[level] or defaultOf(level)
     state.rules[level] = {
@@ -93,17 +113,21 @@ function levels_config.set(level, threshold, enabled)
     return levels_config.saveAll()
 end
 
---- 把 state.rules 全量写回文件
+--- 把 state.rules 全量写回 settings.txt（只写阈值/勾选这几个键）
 -- @return boolean ok
+-- @return string|nil 失败原因
 function levels_config.saveAll()
-    local lines = { "# 净水厂阈值配置：一行一级  格式 = 等级 阈值 是否勾选" }
+    local pairsToSet = {}
     for level = 1, constants.LEVEL_COUNT do
         local rule = state.rules[level] or defaultOf(level)
-        lines[#lines + 1] = models.levelRuleLine(level, rule.threshold, rule.enabled)
+        pairsToSet[thresholdKey(level)] = math.floor(tonumber(rule.threshold) or 0)
+        pairsToSet[enabledKey(level)]   = rule.enabled and "true" or "false"
     end
-    local ok = files.writeLines(path(), lines)
-    if ok then lastText = table.concat(lines, "\n") .. "\n" end
-    return ok
+
+    local ok, err = settings.setMany(pairsToSet)
+    if not ok then return false, err end
+    lastText = fingerprint(state.rules)
+    return true
 end
 
 return levels_config

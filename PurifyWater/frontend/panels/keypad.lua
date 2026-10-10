@@ -62,15 +62,6 @@ local function keyEnabled(kind)
 end
 
 --- 一个键的文字颜色（功能键分色，一眼能找到）
-local function keyColor(kind)
-    if kind == "commit" then return theme.COLORS.TEXT_GREEN end
-    if kind == "cancel" then return theme.COLORS.TEXT_DISABLED end
-    if kind == "copy" then return theme.COLORS.TEXT_YELLOW end
-    if kind == "mul" or kind == "div" then return theme.COLORS.TEXT_YELLOW end
-    if kind == "set" then return theme.COLORS.TEXT_CYAN end
-    return theme.COLORS.TEXT
-end
-
 --- 一张键盘表要占多宽（不画，先量）
 -- @param rows table 行 × 列
 -- @return number
@@ -93,7 +84,7 @@ local function drawPad(x, y, rows)
                 local keyX     = x + (c - 1) * (KEY_W + KEY_GAP)
                 local keyY     = y + (r - 1)
                 local disabled = not keyEnabled(key[2])
-                widgets.drawButton(keyX, keyY, KEY_W, key[1], keyColor(key[2]), nil, disabled)
+                widgets.drawButton(keyX, keyY, KEY_W, key[1], theme.keyColor(key[2]), nil, disabled)
                 if not disabled then
                     -- 热区里直接带语义：input 不必认识键盘长什么样
                     fstate.keyCells[#fstate.keyCells + 1] = {

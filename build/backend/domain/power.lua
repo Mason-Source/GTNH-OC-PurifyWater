@@ -15,13 +15,14 @@ function power.levelPower(level)
     return power.levelParallel(level) * (constants.POWER_LEVELS[level] or 0)
 end
 function power.suggest(level)
-    local budget = state.power.all or 0
-    local count  = math.max(1, state.plant(level).deployed or 0)
-    local per    = constants.POWER_LEVELS[level] or 0
-    if per <= 0 or budget <= 0 then return 1 end
-    local limit   = (level == 1) and 2386092 or 2147483
-    local allowed = math.floor(budget / (per * count))
-    return math.max(1, math.min(limit, allowed))
+    return state.plant(level).suggest or 0
+end
+function power.suggestVector()
+    local out = {}
+    for level = 1, constants.LEVEL_COUNT do
+        out[level] = math.floor(tonumber(state.plant(level).suggest) or 0)
+    end
+    return out
 end
 function power.parallelMismatch()
     local out = {}

@@ -1,8 +1,9 @@
 --------------------------------------------------------------------------------
 -- backend/domain/power.lua
 --------------------------------------------------------------------------------
--- 【职责】并行 <-> 功率 的**唯一换算处**：单台并行、总并行、总功耗、建议并行
--- 【不做什么】不读组件（数字来自 state）、不下发（那是 actuator）、不写文件（store 的事）
+-- 【职责】并行 <-> 功率 的**唯一换算处**：单台并行、总并行、总功耗；`suggest()` 转调当前调度模式
+-- 【不做什么】不读组件（数字来自 state）、不下发（那是 actuator）、不写文件（store 的事）、
+--            不含任何模式的建议公式（那在 backend/domain/modes/*）
 -- 【依赖】shared/constants、shared/state
 -- 【被谁用】domain/rules（水位线）、domain/allocator（贪心预算）、app/watch（刷新）、前端显示
 --
@@ -15,6 +16,7 @@
 
 local constants = require("shared.constants")
 local state     = require("shared.state")
+
 
 local power     = {}
 
@@ -45,22 +47,24 @@ function power.levelPower(level)
     return power.levelParallel(level) * (constants.POWER_LEVELS[level] or 0)
 end
 
---- 建议并行（上限硬编码在本函数内）
--- 【公式】建议并行 = floor( 总功率 / 该级台数 / 该级每并行功耗 )，再按级别夹上限：
---   **T1 = 2386092，T2~T8 = 2147483**。
--- 上限写死在这里而不进常量表：这两个数只在本函数参与运算，放 constants 只会多一处需要同步。
--- 不平摊总预算：建议值只是**本轮尚未学习出并行时的种子**，开不开由 allocator 逐级扣预算决定。
+--- 建议并行（每台）—— **读 state 里的发布值**（由当前模式在受控点发布，见 mode.publish()）
+-- 【为什么是读】建议并行是"模式算账"的产物：贵的算一次、发布到 state，读侧（界面/功耗估算/锁定基线）
+--   一律只读，不再触发任何计算；阈值模式也走同一条路（数据结构统一）。
 -- @param level number
 -- @return number
 function power.suggest(level)
-    local budget = state.power.all or 0
-    local count  = math.max(1, state.plant(level).deployed or 0)
-    local per    = constants.POWER_LEVELS[level] or 0
-    if per <= 0 or budget <= 0 then return 1 end
+    return state.plant(level).suggest or 0
+end
 
-    local limit   = (level == 1) and 2386092 or 2147483
-    local allowed = math.floor(budget / (per * count))
-    return math.max(1, math.min(limit, allowed))
+--- 当前"每台建议并行"的整数向量（8 项，下标 = 等级）—— "建议变化 -> 锁定"的比较基线
+-- 【只比整数建议】不看实测并行与学习值（玩家调机器并行的过程中实测值会变，建议不该跟着变）。
+-- @return table 8 项整数数组
+function power.suggestVector()
+    local out = {}
+    for level = 1, constants.LEVEL_COUNT do
+        out[level] = math.floor(tonumber(state.plant(level).suggest) or 0)
+    end
+    return out
 end
 
 --- 当前并行与建议值不一致的等级（**只找出"不一致"，不下结论**）

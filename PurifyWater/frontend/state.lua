@@ -22,8 +22,8 @@ local fstate = {
     gpu            = nil,
     W              = 0,
     H              = 0,                        -- 当前分辨率
-    grid           = { rows = {}, cols = {} }, -- **网格**：布局的唯一坐标来源（layout 填）
-    areas          = {},                       -- 由网格派生：{ tabBar=, control=, status=, chart=, log=, config=, editline=, keypad= }
+    -- （网格只是 layout 的中间量，不存 fstate：面板要的矩形全在 areas 里）
+    areas          = {},                       -- 由网格派生：{ tabBar=, control=, status=, chart=, log=, config=, editline=, keypad=, rates=, settings= }
     currentTab     = "overview",               -- "overview" | "config"（详情不是页：它只是 status 面板换内容）
     tabs           = {},                       -- 页签热区 { [name] = { x, y, w, h } }
     buttons        = {},                       -- 按钮热区 { [name] = { x, y, w, h, action, label } }
@@ -33,6 +33,12 @@ local fstate = {
     chartChips     = {},                       -- 图表标题行的等级按钮热区 { [level] = {x,y,w,h} }，level 0 = 全部
     logTitle       = nil,                      -- 日志面板标题热区（点它切 user/debug）
     autostartRow   = nil,                      -- 配置页「运行设置」子项行热区（点它切开机自启）
+    -- 配置页「速率权重」卡：点某级选中 -> 用右侧键盘改权重（0..MAX 整数）
+    rateRows       = {},                       -- 每级那一行的热区 { [level] = box }
+    rateKeys       = {},                       -- 卡内键盘热区（数组；每项带 kind/value）
+    rateBoostRow   = nil,                      -- 「T7 增产倍率」子项行热区
+    rateSel        = nil,                      -- 选中的等级（nil = 未选中）
+    rateBuf        = nil,                      -- 权重输入缓冲（纯数字串）
     -- 配置页：点某级选中它 -> 用常驻虚拟键盘改阈值（物理键盘不输入）
     configRows     = {},                       -- 每级那一行的点击热区 { [level] = box }
     checkCells     = {},                       -- 勾选格热区 { [level] = box }（点它只切勾选，不算选中）
@@ -83,6 +89,8 @@ function fstate.clearHitboxes()
     fstate.levelRows = {}
     fstate.logTitle = nil
     fstate.autostartRow = nil
+    fstate.rateRows, fstate.rateKeys = {}, {}
+    fstate.rateBoostRow = nil
 end
 
 --- 命中测试

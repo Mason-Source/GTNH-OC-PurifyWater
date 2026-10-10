@@ -39,13 +39,14 @@ local CONFIG        = require("shared.config")
 local logs          = require("shared.logs")
 local state         = require("shared.state")
 local utils         = require("shared.utils")
-local scheduler     = require("core.scheduler")
+local models        = require("shared.models")
 local runtime       = require("core.runtime")
 local files         = require("backend.store.files")
 local trace         = require("backend.store.trace")
 local log_file      = require("backend.store.log_file")
 local history       = require("backend.store.history")
 local levels_config = require("backend.store.levels_config")
+local rates_config  = require("backend.store.rates_config")
 local learning      = require("backend.domain.learning")
 local jobs          = require("backend.jobs")
 local handlers      = require("backend.handlers")
@@ -54,11 +55,28 @@ local power         = require("backend.domain.power")
 local net           = require("backend.hardware.net")
 local system        = require("backend.app.system")
 local autostart     = require("backend.app.autostart")
+local mode          = require("backend.domain.mode")
+local thresholdMode = require("backend.domain.modes.threshold")
+local rateMode      = require("backend.domain.modes.rate")
 local render        = require("frontend.render")
 files.setRoot(appDir)
+local bootSettings = require("backend.store.settings").load() or {}
+mode.register("threshold", thresholdMode)
+mode.register("rate", rateMode)
+if mode.has(bootSettings.mode) then
+    state.system.mode = bootSettings.mode
+else
+    state.system.mode = "threshold"
+    if bootSettings.mode ~= nil and bootSettings.mode ~= "" then
+        logs.warn("未知调度模式 " .. tostring(bootSettings.mode) .. "，已回退阈值调度")
+    end
+end
+state.system.enforceThreshold = models.bool(bootSettings.enforce_threshold, true)
+rates_config.load()
 trace.start(appDir, bootstrap.version())
 if memwatch then memwatch.traceBoot(bootFree, bootTotal) end
 logs.system(bootstrap.versionLine())
+logs.system("调度模式：" .. mode.labelOf(state.system.mode))
 logs.debug("[调试] 应用目录 " .. appDir
     .. (removed > 0 and ("（已清掉 " .. removed .. " 个旧模块缓存）") or ""))
 local taskCount = jobs.register()
@@ -70,6 +88,7 @@ logs.debug("[调试] " .. tostring(ruleText))
 logs.debug("[调试] " .. tostring(historyText))
 local subCount = handlers.subscribe()
 logs.debug(string.format("[调试] 已订阅 %d 类事件", subCount))
+mode.publish()
 system.auditThresholds()
 runtime.discardStaleInterrupts()
 runtime.bindQuitKeys()

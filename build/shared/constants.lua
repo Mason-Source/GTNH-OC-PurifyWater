@@ -1,5 +1,5 @@
 local constants                   = {}
-constants.CODE_VERSION            = "v4.5"
+constants.CODE_VERSION            = "v4.6"
 constants.LEVEL_COUNT             = 8
 constants.HOST_LEVEL              = 0
 constants.STOCK_PER_PARALLEL      = 1000
@@ -14,6 +14,18 @@ constants.POWER_LEVELS            = {
     [7] = 1966080,
     [8] = 7864320
 }
+constants.RATE_PRODUCE            = 900
+constants.RATE_CONSUME            = 1000
+constants.RATE_REFLUX             = 90
+constants.RATE_REFLUX_BONUS       = 0.15
+constants.RATE_SUCCESS            = { 0.7, 0.8, 1, 1, 0.99, 0.9, 1, 1 }
+constants.RATE_REFLUX_LEVELS      = { [1] = true, [2] = true, [6] = true }
+constants.T7_BOOST_OPTIONS        = { 1, 1.25, 1.5, 1.75, 2 }
+constants.PARALLEL_CAP_T1         = 2386092
+constants.PARALLEL_CAP_OTHER      = 2147483
+function constants.parallelCap(level)
+    return (level == 1) and constants.PARALLEL_CAP_T1 or constants.PARALLEL_CAP_OTHER
+end
 constants.FLUID_NAMES             = {
     [1] = "grade1purifiedwater",
     [2] = "grade2purifiedwater",

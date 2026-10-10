@@ -1,10 +1,10 @@
 --------------------------------------------------------------------------------
 -- shared/utils.lua
 --------------------------------------------------------------------------------
--- 【职责】纯函数工具箱：数字格式化、GT 文本取值、流体名归一化、深拷贝、按键判据
+-- 【职责】纯函数工具箱：数字格式化（千分位 / 短单位）、流体名归一化、按键判据
 -- 【不做什么】不读组件、不读文件、不碰 state —— 全是"输入 -> 输出"
 -- 【依赖】shared/constants
--- 【被谁用】各层；数值取法 firstNumber 由传感器解析、阈值文件解析、界面显示共用
+-- 【被谁用】各层（格式化）、frontend/input（按键）、hardware/{fluid,machines}（流体名）
 --------------------------------------------------------------------------------
 
 local constants = require("shared.constants")
@@ -38,19 +38,6 @@ function utils.formatShortNumber(num)
         if math.abs(num) >= u[2] then return string.format("%.2f%s", num / u[2], u[1]) end
     end
     return tostring(math.floor(num))
-end
-
---- 取第一个**完整**数字（认 3000000 / 3,000,000 / 5.63e14 / 70%）
--- 千位分隔符先并回数字，否则 `3,000,000` 只会读到 3；只并夹在两位数字之间的逗号，
--- 坐标串 `22,8,14` 不受影响。
--- @param text string|nil
--- @return number|nil
-function utils.firstNumber(text)
-    if type(text) ~= "string" then return nil end
-    local cleaned = text:gsub("(%d),(%d)", "%1%2")
-    local numStr = cleaned:match("([%-%+]?%d+%.?%d*[eE]?[%-%+]?%d*)")
-    if not numStr then return nil end
-    return tonumber(numStr)
 end
 
 --- 归一化流体名：返回（去前缀小写名, 补全的完整名）

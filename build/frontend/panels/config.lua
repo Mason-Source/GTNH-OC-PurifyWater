@@ -26,8 +26,8 @@ function config.draw(data)
         local rowBg = sel and theme.COLORS.BTN_BG_HOVER or nil
         if sel then widgets.clearArea(inner.x, y, inner.w, 1, theme.COLORS.BTN_BG_HOVER) end
         widgets.drawText(cols[1].x, y, row.label, theme.COLORS.TEXT_CYAN, rowBg)
-        fstate.checkCells[level] = { x = cols[2].x, y = y, w = 4, h = 1 }
-        widgets.drawText(cols[2].x, y, row.rule.enabled and "[√]" or "[  ]",
+        fstate.checkCells[level] = { x = cols[2].x, y = y, w = 3, h = 1 }
+        widgets.drawText(cols[2].x, y, row.rule.enabled and "[√]" or "[ ]",
             row.rule.enabled and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED, rowBg)
         local thresholdColor = sel and theme.COLORS.TEXT_YELLOW
             or (row.thresholdOverridden and theme.COLORS.TEXT_RED or theme.COLORS.TEXT)

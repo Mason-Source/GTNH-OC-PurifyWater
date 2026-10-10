@@ -18,6 +18,7 @@ local function switchTab(tab)
     if fstate.currentTab == tab then return end
     fstate.currentTab = tab
     fstate.configSel, fstate.configBuf = nil, nil
+    fstate.rateSel, fstate.rateBuf = nil, nil
     fstate.invalidateAll()
 end
 local function selectLevel(level)
@@ -74,6 +75,44 @@ local function applyKey(key)
     fstate.configBuf = buf
     return nil
 end
+local function applyRateKey(key)
+    local limit = CONFIG.RATES.MAX_WEIGHT or 100
+    if key.kind == "cancel" then
+        fstate.rateSel, fstate.rateBuf = nil, nil
+        return nil
+    end
+    if not fstate.rateSel then return nil end
+    if key.kind == "commit" then
+        local value = tonumber(fstate.rateBuf or "")
+        if not value then
+            logs.ui("还没填数字，未保存")
+            return nil
+        end
+        if value < 0 or value > limit then
+            logs.ui(string.format("权重需为 0-%d 的整数，未保存", limit))
+            return nil
+        end
+        return "commit"
+    end
+    local buf = fstate.rateBuf or ""
+    if key.kind == "digit" then
+        if buf == "0" then buf = "" end
+        buf = buf .. key.value
+    elseif key.kind == "back" then
+        buf = buf:sub(1, math.max(0, #buf - 1))
+    elseif key.kind == "clear" then
+        buf = ""
+    end
+    if buf ~= "" then
+        local value = tonumber(buf)
+        if not value or value > limit then
+            logs.ui(string.format("权重上限 %d，这一下没生效", limit))
+            return nil
+        end
+    end
+    fstate.rateBuf = buf
+    return nil
+end
 local function setChartLevel(level)
     fstate.chartLevel = level
     viewmodel.expire()
@@ -86,8 +125,6 @@ local function onKey(char, code)
         else
             fire("system_toggle")
         end
-    elseif utils.isKey(char, code, "p") then
-        fire("priority_toggle")
     elseif utils.isKey(char, code, "r") then
         fire("refresh")
     elseif utils.isKey(char, code, "t") then
@@ -152,6 +189,31 @@ local function onClick(x, y)
         end
         if fstate.hit(fstate.autostartRow, x, y) then
             fire("autostart_toggle")
+            return
+        end
+        for _, box in ipairs(fstate.rateKeys or {}) do
+            if fstate.hit(box, x, y) then
+                local level = fstate.rateSel
+                if applyRateKey(box) == "commit" then
+                    local value = tonumber(fstate.rateBuf or "")
+                    if value and level then
+                        fire("weight_set", level, value)
+                        fstate.rateSel, fstate.rateBuf = nil, nil
+                    end
+                end
+                return
+            end
+        end
+        for level, box in pairs(fstate.rateRows or {}) do
+            if fstate.hit(box, x, y) then
+                local row = fstate.lastData and fstate.lastData.levels[level]
+                fstate.rateSel = level
+                fstate.rateBuf = tostring(math.floor(tonumber(row and row.weight) or 0))
+                return
+            end
+        end
+        if fstate.hit(fstate.rateBoostRow, x, y) then
+            fire("t7_boost_cycle")
             return
         end
         for level, box in pairs(fstate.configRows or {}) do

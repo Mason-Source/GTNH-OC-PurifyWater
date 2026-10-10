@@ -15,6 +15,7 @@ local configPanel   = require("frontend.panels.config")
 local editlinePanel = require("frontend.panels.editline")
 local keypadPanel   = require("frontend.panels.keypad")
 local settingsPanel = require("frontend.panels.settings")
+local ratesPanel    = require("frontend.panels.rates")
 local render        = {}
 local PANELS        = {
     tabBar   = { draw = tabBarPanel.draw, fingerprint = tabBarPanel.fingerprint },
@@ -25,11 +26,12 @@ local PANELS        = {
     config   = { draw = configPanel.draw, fingerprint = configPanel.fingerprint },
     editline = { draw = editlinePanel.draw, fingerprint = editlinePanel.fingerprint },
     keypad   = { draw = keypadPanel.draw, fingerprint = keypadPanel.fingerprint },
-    settings = { draw = settingsPanel.draw, fingerprint = settingsPanel.fingerprint }
+    settings = { draw = settingsPanel.draw, fingerprint = settingsPanel.fingerprint },
+    rates    = { draw = ratesPanel.draw, fingerprint = ratesPanel.fingerprint }
 }
 local TAB_PANELS    = {
     overview = { "tabBar", "control", "status", "chart", "log" },
-    config   = { "tabBar", "config", "editline", "keypad", "settings" }
+    config   = { "tabBar", "config", "editline", "keypad", "rates", "settings" }
 }
 function render.applyResolution()
     local gpu = fstate.gpu

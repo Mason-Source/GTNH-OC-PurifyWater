@@ -9,9 +9,11 @@
 -- 【载荷形态】外部事件（key_down / touch）派发过来的是 **event.pull 的原始数组**：
 --   key_down = { "key_down", 键盘地址, char, code, 玩家 }   <- char 是数字 ASCII 码
 --   touch    = { "touch", 屏幕地址, x, y, 玩家 }
--- 【分工】键盘：X 启停 / P 优先级 / R 刷新 / T 切页 / 数字（选曲线等级，0 = 全部）
+-- 【分工】键盘：X 启停 / R 刷新 / T 切页 / 数字（选曲线等级，0 = 全部）
+--   （优先级/阈值约束都是"当前模式的子参数"，只在总览页用按钮切，不再占快捷键）
 --         鼠标：页签、净水状态块（行→详情；详情态下点任意处→返回）、图表等级按钮、
---               配置页（点行选中 / 点勾选切换 / 点自启子项切换 / 点虚拟键盘改阈值）、日志标题、按钮
+--               配置页（点行选中 / 点勾选切换 / 点自启子项切换 / 点虚拟键盘改阈值 /
+--                       速率卡：点行选中+右侧键盘改权重 / 点子项切 T7 倍率）、日志标题、按钮
 --   Q 退出不在这里：退出语义归 core/runtime（runtime.bindQuitKeys）。
 -- 【阈值输入】物理键盘不进输入框：点某级**选中**它，再用常驻虚拟键盘改。键的语义（kind/value）
 --   由面板随热区带过来 —— 键盘长什么样归面板，按下去怎么改归这里；缓冲是 kL 整数串，
@@ -55,6 +57,7 @@ local function switchTab(tab)
     if fstate.currentTab == tab then return end
     fstate.currentTab = tab
     fstate.configSel, fstate.configBuf = nil, nil
+    fstate.rateSel, fstate.rateBuf = nil, nil
     fstate.invalidateAll()
 end
 
@@ -129,6 +132,53 @@ local function applyKey(key)
     return nil
 end
 
+--- 速率卡虚拟键盘：按下一个键（语义与阈值键盘同构，但只收 0..MAX 的整数）
+--   digit -> 追加（从 "0" 开始不粘 0）；back -> 删末位；clear -> 空；
+--   commit -> 交调用方发 weight_set；cancel -> 弃掉选中。
+-- @param key table { kind = , value = }
+-- @return string|nil "commit" = 该发 weight_set 了（值看 fstate.rateBuf）
+local function applyRateKey(key)
+    local limit = CONFIG.RATES.MAX_WEIGHT or 100
+
+    if key.kind == "cancel" then
+        fstate.rateSel, fstate.rateBuf = nil, nil
+        return nil
+    end
+    if not fstate.rateSel then return nil end
+    if key.kind == "commit" then
+        local value = tonumber(fstate.rateBuf or "")
+        if not value then
+            logs.ui("还没填数字，未保存")
+            return nil
+        end
+        if value < 0 or value > limit then
+            logs.ui(string.format("权重需为 0-%d 的整数，未保存", limit))
+            return nil
+        end
+        return "commit"
+    end
+
+    local buf = fstate.rateBuf or ""
+    if key.kind == "digit" then
+        if buf == "0" then buf = "" end
+        buf = buf .. key.value
+    elseif key.kind == "back" then
+        buf = buf:sub(1, math.max(0, #buf - 1))
+    elseif key.kind == "clear" then
+        buf = ""
+    end
+
+    if buf ~= "" then
+        local value = tonumber(buf)
+        if not value or value > limit then
+            logs.ui(string.format("权重上限 %d，这一下没生效", limit))
+            return nil
+        end
+    end
+    fstate.rateBuf = buf
+    return nil
+end
+
 --- 切换图表看的等级（0 = 全部）；窗口秒数由 viewmodel 按等级重算，所以要让它过期
 -- @param level number
 local function setChartLevel(level)
@@ -150,8 +200,6 @@ local function onKey(char, code)
         else
             fire("system_toggle")
         end
-    elseif utils.isKey(char, code, "p") then
-        fire("priority_toggle")
     elseif utils.isKey(char, code, "r") then
         fire("refresh")
     elseif utils.isKey(char, code, "t") then
@@ -208,7 +256,7 @@ local function onClick(x, y)
         end
     end
 
-    -- 配置页：从下往上判：键盘（最下）-> 勾选格 -> 选中整行
+    -- 配置页：按"细 -> 粗"判：阈值键盘 -> 勾选格 -> 自启行 -> 速率卡（键盘 -> 整行 -> T7 行）-> 阈值整行
     --   顺序理由：勾选格落在行内，整行热区会把它包住 —— 先判细的才点得准
     if fstate.currentTab == "config" then
         -- ① 虚拟键盘：按语义改缓冲；✔ 才真发命令（命令只有一个出口：fire）
@@ -239,7 +287,34 @@ local function onClick(x, y)
             fire("autostart_toggle")
             return
         end
-        -- ④ 整行：选中它（缓冲直接填当前值，"选中就能改"）
+        -- ④ 速率卡：卡内键盘最优先（键都在卡右半边），其次整行选择，最后 T7 倍率子项行
+        for _, box in ipairs(fstate.rateKeys or {}) do
+            if fstate.hit(box, x, y) then
+                local level = fstate.rateSel
+                if applyRateKey(box) == "commit" then
+                    local value = tonumber(fstate.rateBuf or "")
+                    if value and level then
+                        fire("weight_set", level, value)
+                        fstate.rateSel, fstate.rateBuf = nil, nil
+                    end
+                end
+                return
+            end
+        end
+        for level, box in pairs(fstate.rateRows or {}) do
+            if fstate.hit(box, x, y) then
+                local row = fstate.lastData and fstate.lastData.levels[level]
+                fstate.rateSel = level
+                fstate.rateBuf = tostring(math.floor(tonumber(row and row.weight) or 0))
+                return
+            end
+        end
+        if fstate.hit(fstate.rateBoostRow, x, y) then
+            fire("t7_boost_cycle")
+            return
+        end
+
+        -- ⑤ 整行：选中它（缓冲直接填当前值，"选中就能改"）
         for level, box in pairs(fstate.configRows or {}) do
             if fstate.hit(box, x, y) then
                 selectLevel(level)

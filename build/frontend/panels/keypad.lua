@@ -28,14 +28,6 @@ local function keyEnabled(kind)
     if kind == "copy" and fstate.configSel <= 1 then return false end
     return true
 end
-local function keyColor(kind)
-    if kind == "commit" then return theme.COLORS.TEXT_GREEN end
-    if kind == "cancel" then return theme.COLORS.TEXT_DISABLED end
-    if kind == "copy" then return theme.COLORS.TEXT_YELLOW end
-    if kind == "mul" or kind == "div" then return theme.COLORS.TEXT_YELLOW end
-    if kind == "set" then return theme.COLORS.TEXT_CYAN end
-    return theme.COLORS.TEXT
-end
 local function padWidth(rows)
     local cols = 0
     for _, row in ipairs(rows) do cols = math.max(cols, #row) end
@@ -51,7 +43,7 @@ local function drawPad(x, y, rows)
                 local keyX     = x + (c - 1) * (KEY_W + KEY_GAP)
                 local keyY     = y + (r - 1)
                 local disabled = not keyEnabled(key[2])
-                widgets.drawButton(keyX, keyY, KEY_W, key[1], keyColor(key[2]), nil, disabled)
+                widgets.drawButton(keyX, keyY, KEY_W, key[1], theme.keyColor(key[2]), nil, disabled)
                 if not disabled then
                     fstate.keyCells[#fstate.keyCells + 1] = {
                         x = keyX, y = keyY, w = KEY_W, h = 1, kind = key[2], value = key[3]

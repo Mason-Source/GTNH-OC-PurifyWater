@@ -57,8 +57,8 @@ function config.draw(data)
         widgets.drawText(cols[1].x, y, row.label, theme.COLORS.TEXT_CYAN, rowBg)
 
         -- 勾选格（点它只切换勾选，不选中这一级）
-        fstate.checkCells[level] = { x = cols[2].x, y = y, w = 4, h = 1 }
-        widgets.drawText(cols[2].x, y, row.rule.enabled and "[√]" or "[  ]",
+        fstate.checkCells[level] = { x = cols[2].x, y = y, w = 3, h = 1 }
+        widgets.drawText(cols[2].x, y, row.rule.enabled and "[√]" or "[ ]",
             row.rule.enabled and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED, rowBg)
 
         -- 阈值：选中行只换底色表示"正在改这级"，数字仍是当前值（正在敲的数在键盘块的编辑行）

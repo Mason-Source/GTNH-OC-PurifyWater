@@ -8,6 +8,10 @@ state.system = {
     running    = false,
     locked     = false,
     lockReason = nil,
+    mode       = "threshold", 
+    lastSuggest = nil,
+    enforceThreshold = true,
+    t7Boost    = 1,
     priority   = "low", 
     autostart      = false,
     autostartStale = false,
@@ -16,8 +20,21 @@ state.system = {
 state.chart = { points = {} }
 state.net = { enabled = false, frame = 0, warned = nil }
 state.rules = {}
+state.rates = {}
+state.planNotes = {}
 state.lastPlan = {}
 state.dirty = {}
+function state.serviceTop()
+    local top = 0
+    for level = 1, constants.LEVEL_COUNT do
+        if (state.plant(level).deployed or 0) > 0 then
+            top = level
+        else
+            break
+        end
+    end
+    return top
+end
 function state.plant(level)
     local p = state.plants[level]
     if not p then

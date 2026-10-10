@@ -2,51 +2,58 @@ local CONFIG        = require("shared.config")
 local constants     = require("shared.constants")
 local models        = require("shared.models")
 local state         = require("shared.state")
-local files         = require("backend.store.files")
+local settings      = require("backend.store.settings")
 local levels_config = {}
 local lastText      = nil
-local function path()
-    return files.path(CONFIG.FILES.LEVELS)
-end
+local function thresholdKey(level) return "threshold." .. tostring(level) end
+local function enabledKey(level)   return "enabled."   .. tostring(level) end
 local function defaultOf(level)
     local d = CONFIG.LEVELS_DEFAULT or {}
     return { threshold = d.threshold or 0, enabled = d.enabled ~= false }
 end
-function levels_config.ensure()
-    if files.exists(path()) then return false end
-    local lines = {
-        "# 净水厂阈值配置：一行一级  格式 = 等级 阈值 是否勾选",
-        "# 勾选 true  = 该级受用户阈值管理",
-        "# 勾选 false = 忽略用户阈值；下一级 N 倍保供线仍然生效",
-        "# 实际阈值   = max(用户阈值, 下一级 N 倍线)",
-        "# 阈值 0     = 不使用用户阈值（**新装默认值**，请按需自己改）",
-        "# 阈值单位 = mB（1 桶 = 1000）"
-    }
+local function fingerprint(rules)
+    local lines = {}
+    for level = 1, constants.LEVEL_COUNT do
+        local rule = rules[level] or defaultOf(level)
+        lines[#lines + 1] = string.format("%d|%d|%s", level,
+            math.floor(tonumber(rule.threshold) or 0), rule.enabled and "true" or "false")
+    end
+    return table.concat(lines, "\n")
+end
+local function ensureKeys(snapshot)
+    local pairsToSet, missing = {}, 0
     for level = 1, constants.LEVEL_COUNT do
         local d = defaultOf(level)
-        lines[#lines + 1] = models.levelRuleLine(level, d.threshold, d.enabled)
-    end
-    files.writeLines(path(), lines)
-    return true
-end
-function levels_config.load()
-    levels_config.ensure()
-    local text = files.read(path()) or ""
-    if text == lastText then return false, "阈值配置未变化" end
-    lastText = text
-    local rules, count = {}, 0
-    for _, line in ipairs(files.readLines(path())) do
-        local level, threshold, enabled = models.levelRule(line)
-        if level then
-            rules[level] = { threshold = threshold or 0, enabled = enabled ~= false }
-            count = count + 1
+        if snapshot[thresholdKey(level)] == nil then
+            pairsToSet[thresholdKey(level)] = math.floor(tonumber(d.threshold) or 0)
+            missing = missing + 1
+        end
+        if snapshot[enabledKey(level)] == nil then
+            pairsToSet[enabledKey(level)] = d.enabled and "true" or "false"
+            missing = missing + 1
         end
     end
+    if missing == 0 then return snapshot, 0 end
+    settings.setMany(pairsToSet)
+    for key, value in pairs(pairsToSet) do snapshot[key] = tostring(value) end
+    return snapshot, missing
+end
+function levels_config.load(snapshot)
+    snapshot = ensureKeys(snapshot or settings.load() or {})
+    local rules = {}
     for level = 1, constants.LEVEL_COUNT do
-        if not rules[level] then rules[level] = defaultOf(level) end
+        local d         = defaultOf(level)
+        local threshold = tonumber(snapshot[thresholdKey(level)]) or d.threshold
+        rules[level] = {
+            threshold = threshold,
+            enabled   = models.bool(snapshot[enabledKey(level)], d.enabled)
+        }
     end
+    local text = fingerprint(rules)
+    if text == lastText then return false, "阈值配置未变化" end
+    lastText   = text
     state.rules = rules
-    return true, string.format("阈值配置已更新（%d 行）", count)
+    return true, string.format("阈值配置已更新（%d 级）", constants.LEVEL_COUNT)
 end
 function levels_config.set(level, threshold, enabled)
     local current = state.rules[level] or defaultOf(level)
@@ -57,13 +64,15 @@ function levels_config.set(level, threshold, enabled)
     return levels_config.saveAll()
 end
 function levels_config.saveAll()
-    local lines = { "# 净水厂阈值配置：一行一级  格式 = 等级 阈值 是否勾选" }
+    local pairsToSet = {}
     for level = 1, constants.LEVEL_COUNT do
         local rule = state.rules[level] or defaultOf(level)
-        lines[#lines + 1] = models.levelRuleLine(level, rule.threshold, rule.enabled)
+        pairsToSet[thresholdKey(level)] = math.floor(tonumber(rule.threshold) or 0)
+        pairsToSet[enabledKey(level)]   = rule.enabled and "true" or "false"
     end
-    local ok = files.writeLines(path(), lines)
-    if ok then lastText = table.concat(lines, "\n") .. "\n" end
-    return ok
+    local ok, err = settings.setMany(pairsToSet)
+    if not ok then return false, err end
+    lastText = fingerprint(state.rules)
+    return true
 end
 return levels_config

@@ -3,7 +3,7 @@
 --------------------------------------------------------------------------------
 -- 【职责】先定**网格**（几行几列、每格坐标），再由网格派生出各面板矩形写进 `fstate.areas`
 -- 【不做什么】不画东西、不取数据
--- 【依赖】frontend/{state,widgets}、shared/logs
+-- 【依赖】frontend/state、shared/logs
 -- 【被谁用】frontend/render（boot 与分辨率变化时各调一次）；面板用 layout.cols 做列对齐
 --
 -- 【版面】无顶部标题栏，左右两列：
@@ -15,14 +15,13 @@
 --   ├────────────────┼──────────────────────────────────────────┤
 --   │ 系统日志        │ 水量监视（全部=近1日柱状 / Tn=近2日曲线）  │
 --   └────────────────┴──────────────────────────────────────────┘
---   配置页：一块占满内容区的 config 面板（三段表 + 常驻虚拟键盘）。
+--   配置页：从上往下三张卡（阈值配置 / 速率权重 / 运行设置），阈值的回显 + 虚拟键盘收在卡内。
 --
 -- 【网格的意义】旧版面板内部到处手算 x 偏移（+38、+72、+115 之类），改一列要重排一片；
 --   现在列位只由 `layout.cols()` 按权重切一次，谁都在网格线上。
 --------------------------------------------------------------------------------
 
 local fstate         = require("frontend.state")
-local widgets        = require("frontend.widgets")
 local logs           = require("shared.logs")
 
 local layout         = {}
@@ -34,17 +33,23 @@ layout.MIN_CONTROL_H = 11 -- 压缩时下限（按钮自动并排）
 layout.MIN_LOG_H     = 6
 layout.STATUS_TWO_H  = 19 -- 净水状态：每级 2 行（信息 + 进度条）；运行周期条已挤进标题行，故 19
 layout.STATUS_ONE_H  = 12 -- 装不下时每级 1 行
--- 【配置页两张卡片（大标题 + 子项）】阈值的键盘/回显收在**卡内**，不再漂在页面底部
+-- 【配置页三张卡片（大标题 + 子项）】从上往下贴：阈值配置 -> 速率权重 -> 运行设置；
+--   阈值的键盘/回显收在**卡内**，不再漂在页面底部
 --   （敲键时列表与键盘本体都不动：回显自己一行、键盘只认"选中了谁"）：
 --   ① 「阈值配置」卡 = 边框 2 + 标题 1 + 表头 1 + 8 级 + 回显 1 + 键盘 5（键盘自带 1 行空）= 18
 --   ② 空 1 行
---   ③ 「运行设置」卡 = 边框 2 + 标题 1 + 子项 1 + 说明 1 = 5
+--   ③ 「速率权重」卡 = 边框 2 + 标题 1 + 表头 1 + 8 级 + 子项 2（子项前空 1 行）= 14
+--   ④ 空 1 行
+--   ⑤ 「运行设置」卡 = 边框 2 + 标题 1 + 子项 1 + 说明 1 = 5
 layout.CONFIG_HEAD_H = 11 -- 阈值卡上半：边框 2 + 标题 1 + 表头 1 + 8 级（config 面板只清/画这一段）
 layout.EDITLINE_H    = 1  -- 回显行（卡内）
 layout.KEYPAD_H      = 5  -- 键盘区（自带 1 行空 + 4 行键）
 layout.CONFIG_CARD_H = 18 -- 阈值卡整高 = HEAD 11 + 回显 1 + 键盘 5 + 下边框 1
-layout.CARD_GAP      = 1  -- 两张卡之间空一行
+layout.CARD_GAP      = 1  -- 卡片之间空一行
 layout.SETTINGS_CARD_H = 5 -- 运行设置卡：边框 2 + 标题 1 + 子项 1 + 说明 1
+layout.RATES_CARD_H    = 14 -- 速率权重卡：边框 2 + 标题 1 + 表头 1 + 8 级 + 子项 2 = 14
+                            --   （左表格 / 右键盘都在卡内：本机运行分辨率 128×40，
+                            --    18 + 1 + 14 + 1 + 5 = 39 行体区正好排满，末行是运行设置的底边框）
 layout.MIN_CHART_H   = 10 -- 水量监视最小高度（标题 + 画布 + 刻度）
 layout.SIDE_PAD      = 1  -- 左右页边距
 layout.COL_GAP       = 1  -- 两列之间的空隙
@@ -90,7 +95,6 @@ function layout.calculate()
     local rightW       = W - leftW - layout.SIDE_PAD * 2 - layout.COL_GAP
     grid.cols.left     = { x = 1 + layout.SIDE_PAD, w = leftW }
     grid.cols.right    = { x = 1 + layout.SIDE_PAD + leftW + layout.COL_GAP, w = rightW }
-    fstate.grid        = grid
 
     local bodyY        = grid.rows.body.y
     local bodyH        = grid.rows.body.h
@@ -129,13 +133,17 @@ function layout.calculate()
         w = grid.cols.right.w,
         h = chartH
     }
-    -- 配置页：两张卡片（大标题 + 子项）从上往下贴；阈值卡的键盘/回显收在**卡内、贴卡底**
+    -- 配置页：三张卡片（大标题 + 子项）从上往下贴（阈值配置 -> 速率权重 -> 运行设置）；
+    --   阈值卡的键盘/回显收在**卡内、贴卡底**；屏幕放不下时**先丢最下面的卡**
     local configX   = 1 + layout.SIDE_PAD
     local configW   = W - layout.SIDE_PAD * 2
     local configH   = math.min(layout.CONFIG_CARD_H, bodyH)
-    local settingsY = bodyY + configH + layout.CARD_GAP
-    local settingsH = math.min(layout.SETTINGS_CARD_H,
+    local ratesY    = bodyY + configH + layout.CARD_GAP
+    local ratesH    = math.min(layout.RATES_CARD_H,
         math.max(0, bodyH - configH - layout.CARD_GAP))
+    local settingsY = ratesY + ratesH + layout.CARD_GAP
+    local settingsH = math.min(layout.SETTINGS_CARD_H,
+        math.max(0, bodyH - configH - layout.CARD_GAP - ratesH - layout.CARD_GAP))
     -- 卡内自下而上：下边框(1) -> 键盘 -> 回显；宽度左右各缩进 2，两个面板都不碰边框
     local innerX    = configX + 2
     local innerW    = math.max(0, configW - 4)
@@ -146,6 +154,7 @@ function layout.calculate()
     fstate.areas.config   = { x = configX, y = bodyY, w = configW, h = configH }
     fstate.areas.editline = { x = innerX, y = editY, w = innerW, h = layout.EDITLINE_H }
     fstate.areas.keypad   = { x = innerX, y = keypadY, w = innerW, h = keypadH }
+    fstate.areas.rates    = { x = configX, y = ratesY, w = configW, h = ratesH }
     fstate.areas.settings = { x = configX, y = settingsY, w = configW, h = settingsH }
 
     -- 缓冲上限与"面板能画几行"无关：内存固定留 CONFIG.LOG.MAX_LINES（超出删最前面的），

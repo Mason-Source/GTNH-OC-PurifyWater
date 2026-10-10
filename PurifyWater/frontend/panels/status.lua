@@ -11,7 +11,7 @@
 -- 【点击】每级那两行登记热区（levelRows）-> 进详情；详情态下点任意处 -> 返回。
 -- 【显示什么】
 --   ① **标题行**：各级净水状态 + 运行周期条（主机报的，各级同步）+ 百分比 + 点击提示
---   ② 每级两行：第一行 = 等级/台数/勾选/开关 + **水量（左）** + **成功率（右）**；
+--   ② 每级两行：第一行 = 等级/台数/勾选（**只有阈值模式画**）/开关 + **水量（左）** + **成功率（右）**；
 --      第二行 = 水量进度条 + 当前并行-建议并行
 --   判定理由不上屏（只进系统日志）。
 -- 【本级只留一个数】多台机器时并行与成功率在 T3 就取**最低并行 / 最小成功率**，
@@ -122,9 +122,12 @@ function status.draw(data)
 
         -- ① 名称 + 台数（**等级已经在名称里**："T1澄清"，所以不再重复写一遍 "T1"）
         local name                   = string.format("%s %s", row.label, row.deployText)
-        -- ② 勾选 + 开关状态
+        -- ② 勾选 + 开关状态：勾选只在阈值模式生效（速率模式忽略它）—— 速率模式这一格不画勾选框
         local switchTxt, switchColor = switchText(row)
-        local mark                   = row.rule.enabled and "[√]" or "[  ]"
+        local mark                   = ""
+        if data.system.mode ~= "rate" then
+            mark = row.rule.enabled and "[√]" or "[ ]"
+        end
         -- ③ 水量（左对齐）+ 成功率（右对齐，占原来水量那个位置；多台时是 T3 汇总的最小值）
         local rateW                  = math.max(4, unicode.wlen(row.rateText))
         local waterW                 = math.max(8, cols[3].w - rateW - 1)
@@ -148,7 +151,7 @@ function status.draw(data)
 
         -- 【这一级自己一格】指纹 = 这一格画出来的每一样东西（含坐标；换行位也要重画）
         local rowFp = table.concat({
-            y, rowH, name, switchTxt, mark,
+            y, rowH, name, switchTxt, mark, tostring(data.system.mode),
             tostring(row.running), tostring(row.rule.enabled),
             waterText, row.rateText,
             tostring(barW2 or ""), tostring((rowH == 2) and math.floor((row.ratio or 0) * barW2) or ""),
@@ -162,9 +165,12 @@ function status.draw(data)
 
             widgets.drawText(cols[1].x, y, name,
                 row.running and theme.COLORS.TEXT or theme.COLORS.TEXT_DISABLED)
-            widgets.drawText(cols[2].x, y, mark,
-                row.rule.enabled and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED)
-            widgets.drawText(cols[2].x + 5, y, switchTxt, switchColor)
+            -- 没有勾选框（速率模式）时开关文案贴列首，别留一截空档
+            if mark ~= "" then
+                widgets.drawText(cols[2].x, y, mark,
+                    row.rule.enabled and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED)
+            end
+            widgets.drawText(mark ~= "" and (cols[2].x + 4) or cols[2].x, y, switchTxt, switchColor)
             widgets.drawText(cols[3].x, y, waterText, theme.COLORS.TEXT)
             widgets.drawTextRight(cols[3].x, cols[3].w, y, row.rateText, theme.COLORS.TEXT_CYAN)
 
@@ -178,10 +184,6 @@ function status.draw(data)
     end
 end
 
---- 指纹：当前是不是详情态 + 边框色依据 + 面板尺寸 + 每级显示字段 + 周期条
--- detailLevel 必须进指纹：详情态与列表态是同一格位的两套内容，切换要触发局部重画。
--- priority 决定边框色（高级水优先 = 红框）：
---   指纹不含它就等于“画了红框但不知道红框算自己的一部分”，切换时边框不会变。
 --- 指纹（**面板级开关**）：指纹没变就整块不画；子区域的指纹再决定"这一块里哪几格重画"。
 -- 【必须盖住子区域】面板级指纹要是漏了某样东西，子区域就等于永远不会被评估
 --   -> 那一格永远不更新（比多画几次严重得多）。这里比子区域更"宽"：
@@ -189,11 +191,13 @@ end
 -- detailLevel 必须进指纹：详情态与列表态是同一格位的两套内容，切换要触发局部重画。
 -- priority 决定边框色（高级水优先 = 红框）：
 --   指纹不含它就等于“画了红框但不知道红框算自己的一部分”，切换时边框不会变。
+-- mode 决定每级那格画不画勾选框（速率模式不画）：**面板级**指纹漏了它，draw 根本不会被调用，
+--   行级指纹再准也没机会重画。
 function status.fingerprint(data)
     if fstate.detailLevel then
         return "detail\x1f" .. detail.fingerprint(data)
     end
-    local parts = { tostring(data.system.priority),
+    local parts = { tostring(data.system.priority), tostring(data.system.mode),
         tostring(data.cycleText), tostring(math.floor((data.cycleRatio or 0) * 100)),
         tostring(fstate.areas.status and fstate.areas.status.h or 0),
         tostring(fstate.areas.status and fstate.areas.status.w or 0) }

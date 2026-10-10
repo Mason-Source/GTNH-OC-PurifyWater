@@ -79,6 +79,17 @@ function theme.seriesColor(level)
     return theme.SERIES[level] or theme.CHART_WATER
 end
 
+--- 虚拟键盘"键 -> 颜色"（阈值卡与速率卡共用同一套规则）
+-- @param kind string commit / cancel / copy / mul / div / set / digit / back / clear
+-- @return number
+function theme.keyColor(kind)
+    if kind == "commit" then return theme.COLORS.TEXT_GREEN end
+    if kind == "cancel" then return theme.COLORS.TEXT_DISABLED end
+    if kind == "copy" or kind == "mul" or kind == "div" then return theme.COLORS.TEXT_YELLOW end
+    if kind == "set" then return theme.COLORS.TEXT_CYAN end
+    return theme.COLORS.TEXT
+end
+
 --- 面板边框色（高级水优先时红框提示）
 -- @param highFirst boolean
 -- @return number

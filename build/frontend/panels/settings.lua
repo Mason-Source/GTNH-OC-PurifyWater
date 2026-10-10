@@ -17,7 +17,7 @@ function settings.draw(data)
     if area.h < 4 then return end
     local rowY = area.y + 2
     fstate.autostartRow = { x = area.x + 2, y = rowY, w = area.w - 4, h = 1 }
-    widgets.drawText(area.x + 2, rowY, on and "[√] 开机自启动" or "[  ] 开机自启动",
+    widgets.drawText(area.x + 2, rowY, on and "[√] 开机自启动" or "[ ] 开机自启动",
         on and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED)
     if area.h < 5 then return end
     local hint, color

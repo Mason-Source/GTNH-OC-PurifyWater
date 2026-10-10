@@ -7,7 +7,7 @@ local TABS    = {
     { key = "overview", label = "总览" },
     { key = "config", label = "配置" }
 }
-local HINT    = "X 启停 · P 优先级 · R 刷新 · T 切页 · Q 退出 · 阈值在配置页"
+local HINT    = "X 启停 · R 刷新 · T 切页 · Q 退出 · 阈值在配置页"
 function tabbar.draw()
     local area = fstate.areas.tabBar
     widgets.clearArea(area.x, area.y, area.w, area.h, theme.COLORS.BTN_BG)

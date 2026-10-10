@@ -46,6 +46,13 @@ theme.SERIES      = {
 function theme.seriesColor(level)
     return theme.SERIES[level] or theme.CHART_WATER
 end
+function theme.keyColor(kind)
+    if kind == "commit" then return theme.COLORS.TEXT_GREEN end
+    if kind == "cancel" then return theme.COLORS.TEXT_DISABLED end
+    if kind == "copy" or kind == "mul" or kind == "div" then return theme.COLORS.TEXT_YELLOW end
+    if kind == "set" then return theme.COLORS.TEXT_CYAN end
+    return theme.COLORS.TEXT
+end
 function theme.borderColor(highFirst)
     return highFirst and theme.COLORS.BORDER_ALERT or theme.COLORS.BORDER
 end

@@ -40,7 +40,7 @@ local function hostText(sw)
 end
 
 --- kL 文本（阈值以 mB 存盘，界面一律按 kL 显示）：全量 + 三位逗号
--- 不直接整除：`levels.txt` 可以手改，若填了非整千的 mB，floor 会把 500 显示成 0
+-- 不直接整除：`settings.txt` 可以手改，若填了非整千的 mB，floor 会把 500 显示成 0
 --   （看着像没设阈值）—— 所以有余数就保留小数。
 -- @param milli number|nil
 -- @return string
@@ -70,6 +70,11 @@ function vm.build(force)
         host     = api.read.host(),
         logs     = api.read.logs(CONFIG.LOG.MAX_LINES) -- 内存里就这么多行（盘上那份更全）
     }
+
+    -- 运行模式一行（总览页控制面板用）：**只留模式名**
+    --   子参数（优先级 / 阈值约束）在"模式"行右侧的按钮上，不在这里重复
+    local modeId     = data.system.mode or "threshold"
+    data.runModeText = (modeId == "rate") and "速率调度" or "阈值调度"
 
     -- 主数据：逐级补上"能直接画"的字段
     local machineTotal = 0

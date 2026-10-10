@@ -67,7 +67,10 @@ function status.draw(data)
         fstate.levelRows[level]      = { x = area.x, y = y, w = area.w, h = rowH }
         local name                   = string.format("%s %s", row.label, row.deployText)
         local switchTxt, switchColor = switchText(row)
-        local mark                   = row.rule.enabled and "[√]" or "[  ]"
+        local mark                   = ""
+        if data.system.mode ~= "rate" then
+            mark = row.rule.enabled and "[√]" or "[ ]"
+        end
         local rateW                  = math.max(4, unicode.wlen(row.rateText))
         local waterW                 = math.max(8, cols[3].w - rateW - 1)
         local waterText              = string.format("水量 %s", row.waterOfText)
@@ -85,7 +88,7 @@ function status.draw(data)
                 or string.format("并行 %s%s / 建议 %s", row.sampleText, stale, row.suggestText)
         end
         local rowFp = table.concat({
-            y, rowH, name, switchTxt, mark,
+            y, rowH, name, switchTxt, mark, tostring(data.system.mode),
             tostring(row.running), tostring(row.rule.enabled),
             waterText, row.rateText,
             tostring(barW2 or ""), tostring((rowH == 2) and math.floor((row.ratio or 0) * barW2) or ""),
@@ -96,9 +99,11 @@ function status.draw(data)
             widgets.clearArea(inner.x, y, inner.w, rowH)
             widgets.drawText(cols[1].x, y, name,
                 row.running and theme.COLORS.TEXT or theme.COLORS.TEXT_DISABLED)
-            widgets.drawText(cols[2].x, y, mark,
-                row.rule.enabled and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED)
-            widgets.drawText(cols[2].x + 5, y, switchTxt, switchColor)
+            if mark ~= "" then
+                widgets.drawText(cols[2].x, y, mark,
+                    row.rule.enabled and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED)
+            end
+            widgets.drawText(mark ~= "" and (cols[2].x + 4) or cols[2].x, y, switchTxt, switchColor)
             widgets.drawText(cols[3].x, y, waterText, theme.COLORS.TEXT)
             widgets.drawTextRight(cols[3].x, cols[3].w, y, row.rateText, theme.COLORS.TEXT_CYAN)
             if rowH == 2 then
@@ -112,7 +117,7 @@ function status.fingerprint(data)
     if fstate.detailLevel then
         return "detail\x1f" .. detail.fingerprint(data)
     end
-    local parts = { tostring(data.system.priority),
+    local parts = { tostring(data.system.priority), tostring(data.system.mode),
         tostring(data.cycleText), tostring(math.floor((data.cycleRatio or 0) * 100)),
         tostring(fstate.areas.status and fstate.areas.status.h or 0),
         tostring(fstate.areas.status and fstate.areas.status.w or 0) }

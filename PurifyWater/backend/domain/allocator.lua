@@ -1,62 +1,49 @@
 --------------------------------------------------------------------------------
 -- backend/domain/allocator.lua
 --------------------------------------------------------------------------------
--- 【职责】按优先级做一轮**贪心调度**：预算够就开、不够就关，并给出每级的理由
--- 【依赖】shared/state、domain/rules、domain/power
+-- 【职责】**模式无关的通用分配**：按当前模式给的顺序做一轮贪心调度（预算够就开、不够就关）
+-- 【依赖】shared/state、domain/mode、domain/power
 -- 【被谁用】backend/app/plan（唯一调度入口）
 --
--- 【算法】按 state.priorityOrder() 的顺序（两种运行模式只差这个顺序）逐级：
---   规则说不能开              -> 关（理由来自 rules）
---   规则说能开但剩余预算不够   -> 关（理由 = 功率不足：需 X / 剩 Y）
+-- 【算法】按**当前模式的顺序**（mode.order()；阈值模式 = 低级/高级优先）逐级：
+--   模式判定说不能开           -> 关
+--   模式说能开但剩余预算不够   -> 关
 --   否则                     -> 开，并从剩余预算里扣掉这一级的功耗
--- 副产物：把 openable / forced / reason 写回 state.plants[level] 供界面显示
 --------------------------------------------------------------------------------
 
 local constants = require("shared.constants")
-local utils     = require("shared.utils")
 local state     = require("shared.state")
 local power     = require("backend.domain.power")
-local rules     = require("backend.domain.rules")
+local mode      = require("backend.domain.mode")
 
 local allocator = {}
 
 --- 算一轮方案
 -- @param order table|nil 等级顺序（默认按当前优先级）
--- @return table { plan = {[level]=boolean}, reasons = {[level]=string}, used = number,
+-- @return table { plan = {[level]=boolean}, used = number,
 --                 budget = number, opened = table(等级数组), warn = string|nil }
 function allocator.plan(order)
-    order           = order or state.priorityOrder()
+    order           = order or mode.order()
     local budget    = state.power.all or 0
     local remaining = budget
-    local result    = { plan = {}, reasons = {}, used = 0, budget = budget, opened = {}, warn = nil }
+    local result    = { plan = {}, used = 0, budget = budget, opened = {}, warn = nil }
 
     if budget <= 0 then
         result.warn = "[警告] 全厂可用功率为 0（能量仓没读到？）—— 本轮不开启任何等级"
     end
 
     for _, level in ipairs(order) do
-        local verdict      = rules.evaluate(level)
-        local cost         = power.levelPower(level)
-        local open, reason = verdict.open, verdict.reason
+        local open = mode.evaluate(level)
+        local cost = power.levelPower(level)
 
-        if open and cost > remaining then
-            open   = false
-            reason = string.format("功率不足：需 %s，剩 %s",
-                utils.formatShortNumber(cost), utils.formatShortNumber(remaining))
-        end
+        -- 判定说能开但剩余预算不够 -> 本轮不开（差额看 [调度] 行的"功率 X / Y"）
+        if open and cost > remaining then open = false end
 
-        result.plan[level]    = open
-        result.reasons[level] = reason
+        result.plan[level] = open
         if open then
             remaining = remaining - cost
             result.opened[#result.opened + 1] = level
         end
-
-        -- 写回快照，界面/日志统一读这一处
-        local snap    = state.plant(level)
-        snap.openable = verdict.open
-        snap.forced   = verdict.forced
-        snap.reason   = reason
     end
 
     result.used = budget - remaining

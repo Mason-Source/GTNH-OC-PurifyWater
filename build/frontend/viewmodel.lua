@@ -33,6 +33,8 @@ function vm.build(force)
         host     = api.read.host(),
         logs     = api.read.logs(CONFIG.LOG.MAX_LINES)
     }
+    local modeId     = data.system.mode or "threshold"
+    data.runModeText = (modeId == "rate") and "速率调度" or "阈值调度"
     local machineTotal = 0
     for level = 1, constants.LEVEL_COUNT do
         local row          = data.levels[level]

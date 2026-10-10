@@ -2,7 +2,6 @@ local fstate = {
     gpu            = nil,
     W              = 0,
     H              = 0,
-    grid           = { rows = {}, cols = {} },
     areas          = {},
     currentTab     = "overview",               
     tabs           = {},
@@ -13,6 +12,11 @@ local fstate = {
     chartChips     = {},
     logTitle       = nil,
     autostartRow   = nil,
+    rateRows       = {},
+    rateKeys       = {},
+    rateBoostRow   = nil,
+    rateSel        = nil,
+    rateBuf        = nil,
     configRows     = {},
     checkCells     = {},
     keyCells       = {},
@@ -45,6 +49,8 @@ function fstate.clearHitboxes()
     fstate.levelRows = {}
     fstate.logTitle = nil
     fstate.autostartRow = nil
+    fstate.rateRows, fstate.rateKeys = {}, {}
+    fstate.rateBoostRow = nil
 end
 function fstate.hit(box, x, y)
     if not box then return false end

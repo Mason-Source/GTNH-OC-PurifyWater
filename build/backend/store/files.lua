@@ -59,7 +59,4 @@ function files.writeLines(path, lines)
     for _, line in ipairs(lines) do out[#out + 1] = tostring(line) end
     return files.write(path, table.concat(out, "\n") .. "\n")
 end
-function files.remove(path)
-    return pcall(filesystem.remove, path) ~= nil
-end
 return files

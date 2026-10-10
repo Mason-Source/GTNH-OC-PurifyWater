@@ -23,7 +23,8 @@ local scheduler       = require("core.scheduler")
 local actuator        = require("backend.domain.actuator")
 local tracker         = require("backend.domain.tracker")
 local learning        = require("backend.domain.learning")
-local rules           = require("backend.domain.rules")
+local mode            = require("backend.domain.mode")
+local power           = require("backend.domain.power")
 local plan            = require("backend.app.plan")
 
 -- 主机总开关被关时用的锁定原因（只写一处）
@@ -31,55 +32,83 @@ local HOST_OFF_REASON = "主机开关已关"
 
 local system          = {}
 local lastWarnSig     = nil
-local warnedAllZero   = false
+local lastZeroWarn    = nil   -- "全 0"这类整块提示：文本变了才再报一次，没有就复位
 
---- 统一调度请求：先过系统活动状态，再交给 plan
+--- 统一调度请求：先过系统活动状态 -> 建议基线检查 -> 再交给 plan
 -- @param reason string
 -- @return boolean
 function system.requestPlan(reason)
     if not state.isActive() then return false end
+    if system.checkSuggestionChange() then return false end -- 建议变了：已全关+锁定，本轮不排计划
     return plan.run(reason)
 end
 
---- 检查用户阈值是否低于实际执行阈值；同一状态只警告一次
-function system.auditThresholds()
-    local texts, sig = {}, {}
-    local hasPositive = false
-    for level = 1, constants.LEVEL_COUNT do
-        local rule = state.rules[level]
-        local line = rules.lines(level)
-        if rule and (rule.threshold or 0) > 0 then hasPositive = true end
-        if line.overridden then
-            texts[#texts + 1] = string.format(
-                "%s 用户阈值 %s 低于下一级保供线 %s，实际按 %s 执行",
-                constants.levelLabel(level),
-                utils.formatShortNumber(line.user),
-                utils.formatShortNumber(line.next),
-                utils.formatShortNumber(line.actual))
-            sig[#sig + 1] = table.concat({ level, line.user, line.next }, ":")
-        end
+--- 把"建议并行基线"设为当前建议（启动会话时调用：以当前建议为基准，不触发锁定）
+function system.resetSuggestBaseline()
+    state.system.lastSuggest = power.suggestVector()
+end
+
+--- 检查"建议并行"是否相对本次会话基线变了；变了就**全关 + 锁定**（明细只进 debug）
+-- 【只比整数建议】不看实测并行/学习值 —— 玩家按建议调机器时不会被反复锁。
+-- 【首建不锁】没有基线时只记基线；【停机/锁定期间不锁】只更新基线（启动会话时还会再重置一次）。
+-- @return boolean 是否因此锁定（true = 调用方本轮不要再排计划）
+function system.checkSuggestionChange()
+    local now = power.suggestVector()
+    local was = state.system.lastSuggest
+
+    if not was then
+        state.system.lastSuggest = now
+        return false
     end
 
-    if not hasPositive then
-        if not warnedAllZero then
-            logs.warn("所有等级的用户阈值均为 0，暂按低保线执行；请前往【配置】页面设置阈值")
-            warnedAllZero = true
+    local changed = {}
+    for level = 1, constants.LEVEL_COUNT do
+        local a, b = tonumber(was[level]) or 0, tonumber(now[level]) or 0
+        if a ~= b then changed[#changed + 1] = { level = level, from = a, to = b } end
+    end
+    if #changed == 0 then return false end
+
+    state.system.lastSuggest = now
+    if not state.isActive() then return false end -- 停机/锁定期间：只更新基线，不锁
+
+    local texts = {}
+    for _, item in ipairs(changed) do
+        texts[#texts + 1] = string.format("%s %s→%s", constants.levelLabel(item.level),
+            tostring(item.from), tostring(item.to))
+    end
+    logs.debug("[调试] 建议并行变化（已锁定）：" .. table.concat(texts, "、"))
+
+    system.enterSafeState("建议并行已变化", true, "请按新建议调好机器并行，再点【启动系统】")
+    return true
+end
+
+--- 检查"一次性提示"（阈值低于保供线 / 全 0 / 速率模式备注…）
+-- 【模式化】文本/指纹/整块提示都由当前模式给（mode.audit），"只报一次"的哨兵留在这里（通用机制）
+function system.auditThresholds()
+    local texts, signature, warnText, debugTexts = mode.audit()
+    texts     = texts or {}
+    signature = signature or ""
+    debugTexts = debugTexts or {}
+
+    if warnText then
+        if warnText ~= lastZeroWarn then
+            logs.warn(warnText)
+            lastZeroWarn = warnText
         end
     else
-        warnedAllZero = false
+        lastZeroWarn = nil
     end
 
-    local signature = table.concat(sig, "|")
     if signature == lastWarnSig then return end
     lastWarnSig = signature
     for _, text in ipairs(texts) do logs.warn(text) end
+    for _, text in ipairs(debugTexts) do logs.debug(text) end
 end
 
 --- 清空本轮并行学习与采样确认器
 function system.resetLearning(why)
     tracker.resetAll()
     learning.forgetAll()
-    rules.refreshAll()
     scheduler.emit("rules_audit", { reason = why })
 end
 
@@ -88,6 +117,7 @@ local function beginSession(reason)
     system.resetLearning(reason)
     state.system.running = true
     plan.forget()
+    system.resetSuggestBaseline() -- 启动会话：以"当前建议"为基线（用户刚按建议调好机器才点的启动）
     logs.system("并行学习已重置：本轮将从建议值重新学习真实并行")
 end
 
@@ -212,21 +242,12 @@ function system.onParallelWrite(payload)
     logs.system(string.format("%s 本次实际并行 = %s（来源：%s）",
         constants.levelLabel(payload.level), utils.formatShortNumber(payload.parallel),
         tostring(payload.by or "传感器确认")))
-    rules.refreshAll()
     system.auditThresholds()
     system.requestPlan("并行更新")
     return true
 end
 
 -- 命令入口
-
-function system.onSystemStart(payload)
-    system.start(payload and payload.reason)
-end
-
-function system.onSystemStop(payload)
-    system.stop(payload and payload.reason)
-end
 
 function system.onPriorityToggle()
     plan.togglePriority()

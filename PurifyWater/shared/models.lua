@@ -1,44 +1,28 @@
 --------------------------------------------------------------------------------
 -- shared/models.lua
 --------------------------------------------------------------------------------
--- 【职责】把"原始文本行"变成规范数据 / 变回去（**纯函数**，不读写文件、不碰组件）
+-- 【职责】把"原始文本"变成规范数据 / 变回去（**纯函数**，不读写文件、不碰组件）
 -- 【不做什么】不做 IO（那是 backend/store/files），不做判断（那是 domain/*）
--- 【依赖】shared/constants
--- 【被谁用】backend/store/*（文件行 <-> 表）、frontend/viewmodel（显示）
+-- 【依赖】无（纯文本转换）
+-- 【被谁用】backend/store/*（配置文件取值）、frontend/viewmodel（显示）
 --
--- 阈值文件的行格式只在这里定义一次：`level threshold enabled`，例：`3 1000000000000 true`
+-- 【键=值配置的取值容错】手改 `settings.txt` 是常规操作：数字用 tonumber 兜默认值，
+--   布尔一律走 `models.bool()`（true/false、1/0、yes/no、on/off 都认）。
 --------------------------------------------------------------------------------
-
-local constants = require("shared.constants")
 
 local models    = {}
 
---- 解析阈值文件的一行
--- 容错：行内多余空格、`#` 注释行、enabled 写成 1/0/yes/no 都接受
--- @param line string
--- @return number|nil level
--- @return number|nil threshold
--- @return boolean|nil enabled
-function models.levelRule(line)
-    local s = tostring(line or ""):gsub("^%s+", "")
-    if s == "" or s:sub(1, 1) == "#" then return nil end
-    local lv, threshold, enabled = s:match("^(%d+)%s+([%d%.eE%+%-]+)%s*(%S*)")
-    lv = tonumber(lv)
-    if not lv or lv < 1 or lv > constants.LEVEL_COUNT then return nil end
-    local on = true
-    local e = tostring(enabled or ""):lower()
-    if e == "false" or e == "0" or e == "no" or e == "off" then on = false end
-    return lv, tonumber(threshold), on
-end
-
---- 生成阈值文件的一行
--- @param level number
--- @param threshold number
--- @param enabled boolean
--- @return string
-function models.levelRuleLine(level, threshold, enabled)
-    return string.format("%d %d %s", level, math.floor(tonumber(threshold) or 0),
-        enabled and "true" or "false")
+--- 文本 -> 布尔（配置手改容错）
+-- 认得出的一律按字面（false/0/no/off 为假）；认不出的按"真"（与旧勾选口径一致）；空值用默认
+-- @param value any 配置文件里的原值
+-- @param default boolean|nil 默认 true
+-- @return boolean
+function models.bool(value, default)
+    if type(value) == "boolean" then return value end
+    local s = tostring(value or ""):lower()
+    if s == "" then return default ~= false end
+    if s == "false" or s == "0" or s == "no" or s == "off" then return false end
+    return true
 end
 
 --------------------------------------------------------------------------------
@@ -50,12 +34,12 @@ end
 --   S 运行|锁定|优先级|主机总开关
 --   H 主机|单元|能量仓|缺失清单
 --   P 可用功率|已用功率|开着的等级
---   L 等级|台数|开关|在跑台数|水量|实际阈值|可开|强制|理由
--- 【只送镜像端真正要画的字段】每秒一条、OC 的无线收发与解析都不便宜：L 行从 15 域减到 9 域
---   （8 级就是每帧少 48 个域）；F 行（水位读法）已删（那是调试信息）—— SNAP_VERSION = 6。
+--   L 等级|台数|开关|在跑台数|水量|实际阈值
+-- 【只送镜像端真正要画的字段】每秒一条、OC 的无线收发与解析都不便宜：L 行从 15 域减到 6 域
+--   （8 级就是每帧少 72 个域）；F 行（水位读法）已删（那是调试信息）—— SNAP_VERSION = 8。
 -- 文本字段里的 `|` 与换行会被换成 `/`；解析遇到坏行直接跳过。
 
-models.SNAP_VERSION = 7
+models.SNAP_VERSION = 8
 
 --- 文本字段清理（分隔符/换行会让整帧解析崩掉）
 -- @param value any
@@ -125,8 +109,7 @@ function models.snapshot(payload)
         lines[#lines + 1] = table.concat({
             "L", numOf(row.level), numOf(row.deployed), flagOf(row.switch),
             numOf(row.active), numOf(row.water),
-            numOf(row.rule and (row.rule.effectiveThreshold or row.rule.threshold)),
-            flagOf(row.openable), flagOf(row.forced), clean(row.reason)
+            numOf(row.rule and (row.rule.effectiveThreshold or row.rule.threshold))
         }, "|")
     end
     return table.concat(lines, "\n") .. "\n"
@@ -192,10 +175,7 @@ function models.parseSnapshot(text)
                     switch = readFlag(f[4]),
                     active = tonumber(f[5]),
                     water = tonumber(f[6]),
-                    rule = { threshold = tonumber(f[7]) or 0 },
-                    openable = readFlag(f[8]),
-                    forced = readFlag(f[9]),
-                    reason = f[10]
+                    rule = { threshold = tonumber(f[7]) or 0 }
                 }
             end
         end

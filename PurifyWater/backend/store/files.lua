@@ -122,11 +122,4 @@ function files.writeLines(path, lines)
     return files.write(path, table.concat(out, "\n") .. "\n")
 end
 
---- 删除文件（不存在也算成功）
--- @param path string
--- @return boolean
-function files.remove(path)
-    return pcall(filesystem.remove, path) ~= nil
-end
-
 return files
