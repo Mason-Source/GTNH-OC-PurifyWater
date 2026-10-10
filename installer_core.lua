@@ -3,6 +3,8 @@
 --------------------------------------------------------------------------------
 -- 【职责】下载应用代码到 staging，按 manifest 同步到 <当前目录>/PurifyWater。
 -- 【不做什么】不碰 data/ 中的用户数据；不删除清单外文件。
+-- 【通道策略】一轮用一个通道；**某个文件失败就立刻换另一个通道**（失败的那个 + 本轮还没试的
+--   一起在新通道重试）。首选通道 = 参数 --mirror 或引导器传入的实际通道。
 -- 【参数】--mirror/-m 首选镜像；--debug/-d 写 installer.log；--source=build|PurifyWater。
 --------------------------------------------------------------------------------
 
@@ -230,30 +232,37 @@ local function downloadAll()
     for i, rel in ipairs(FILE_LIST) do pending[i] = rel end
     local reasons, ch, round = {}, PREFER, 0
 
+    -- 【失败即换通道】一轮用一个通道；某个文件失败就立刻中止本轮、换另一个通道，
+    --   把"失败的那个"与"本轮还没试的"一起放到下一轮重试（一次失败只多花 1 次 wget）。
     while true do
         print(string.format("── 第 %d 轮：%s 通道，待下 %d 个", round + 1, CH_NAME[ch], #pending))
-        local failed, okRound = {}, 0
+        local failed = {}
         for i, rel in ipairs(pending) do
             local dir = rel:match("^(.*)/[^/]*$")
             if dir then ensureDir(STAGE_DIR .. "/" .. dir) end
             local url = urlFor(ch, rel)
             local ok, info = fetch(url, STAGE_DIR .. "/" .. rel)
             if ok then
-                okRound = okRound + 1
                 print(string.format("  [%2d/%2d] %-36s OK (%s 字节)", i, #pending, rel, info))
+                log(string.format("第 %d 轮 %s %s -> OK (%s 字节)", round + 1, CH_NAME[ch], rel, info))
             else
                 failed[#failed + 1] = rel
                 reasons[rel] = tostring(info)
                 print(string.format("  [%2d/%2d] %-36s 失败（%s）", i, #pending, rel, info))
+                print(string.format("  → 立刻换到另一通道，把剩下的 %d 个（含这个）放下一轮重试",
+                    #pending - i + 1))
+                log(string.format("第 %d 轮 %s %s -> %s", round + 1, CH_NAME[ch], rel, info))
+                -- 本轮还没试的文件全部顺延到下一轮（用另一个通道）
+                for k = i + 1, #pending do failed[#failed + 1] = pending[k] end
+                if MIRROR_PREFIX ~= "" then ch = (ch == 1) and 2 or 1 end
+                break
             end
-            log(string.format("第 %d 轮 %s %s -> %s", round + 1, CH_NAME[ch], rel, ok and "OK" or info))
         end
 
         pending = failed
         if #pending == 0 then return true end
         if round >= RETRY_ROUNDS then break end
         round = round + 1
-        if okRound == 0 and MIRROR_PREFIX ~= "" then ch = (ch == 1) and 2 or 1 end
     end
 
     local lines = { "下载失败：" }
