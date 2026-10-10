@@ -10,7 +10,7 @@ local plan         = require("backend.app.plan")
 local system       = require("backend.app.system")
 local app          = {}
 local function afterChange(reason)
-    mode.publish()
+    system.publish()
     plan.forget()
     system.auditThresholds()
     system.requestPlan(reason)

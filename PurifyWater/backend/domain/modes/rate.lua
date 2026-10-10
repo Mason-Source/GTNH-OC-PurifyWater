@@ -13,6 +13,7 @@
 
 local constants = require("shared.constants")
 local state     = require("shared.state")
+local utils     = require("shared.utils")
 
 local rules     = require("backend.domain.rules")
 local rates     = require("backend.domain.rates")
@@ -22,7 +23,34 @@ local rate      = {}
 --- 模式名字（界面/日志用；id 由 main 注册处给）
 function rate.label() return "速率调度" end
 
---- 发布：算一次速率方案，把"每级建议并行"与审计明细写进 state（读侧只读 state）
+--- "功率利用不充分"警告：所需台数（= 用满功率需要几台）与现有台数
+-- 【口径】所需台数ₙ = ceil(功率λ × 期望总并行ₙ ÷ 单机上限ₙ)
+-- 【唯一条件】功率λ > 上限λ —— 即"功率有富余、却被单机上限卡住"；
+--   此时必然至少一级"所需台数 > 现有台数"（同一个不等式的两边），不需要再判一次台数。
+-- 【顶替】原来审计里那句"Tn 已达单机并行上限，整体并行由它决定"。
+-- 【每次生成都出】发布是受控点触发（次数少），由 app 层直接 logs.warn，不参与"文本相同只报一次"。
+-- @param plan table rates.plan() 的返回
+-- @return string|nil
+local function limitText(plan)
+    local top   = state.serviceTop()
+    local limit = plan.limit
+    if top <= 0 or limit.lambdaPower <= 0 then return nil end
+    if limit.lambdaCap >= limit.lambdaPower then return nil end   -- 功率才是瓶颈：不报（加机器没用）
+
+    local need, have = {}, {}
+    for level = 1, top do
+        local want = plan.want[level] or 0
+        local cap  = constants.parallelCap(level)
+        need[#need + 1] = utils.formatShortNumber(math.ceil(limit.lambdaPower * want / cap))
+        have[#have + 1] = utils.formatShortNumber(state.plant(level).deployed or 0)
+    end
+
+    return string.format("速率模式：功率利用不充分，建议 T1-%d 所需台数 %s，现有台数 %s",
+        top, table.concat(need, " "), table.concat(have, " "))
+end
+
+--- 发布：算一次速率方案，把"每级建议并行"与审计明细写进 state（读侧只读 state）；
+--   返回"扩产建议"一行（无方案 = nil）—— 由 app/system 打日志，模式层自己不写日志
 -- 【唯一调用点】mode.publish()（受控触发：启动 / 功率变 / 台数变 / 权重·倍率变 / 模式切换）
 function rate.publish()
     local plan = rates.plan()
@@ -30,6 +58,7 @@ function rate.publish()
         state.plant(level).suggest = plan.suggest[level] or 0
     end
     state.planNotes = plan.notes or {}
+    return limitText(plan)
 end
 
 --- 可开启性判定
@@ -83,9 +112,6 @@ function rate.audit()
         if note.kind == "too_small" then
             texts[#texts + 1] = string.format(
                 "速率模式：功率不足，%s 按比例分不到 1 并行（本轮不开）", label)
-        elseif note.kind == "cap_bound" then
-            texts[#texts + 1] = string.format(
-                "速率模式：%s 已达单机并行上限，整体并行由它决定（其余等级按同一比例缩小）", label)
         elseif note.kind == "clip" then
             texts[#texts + 1] = string.format(
                 "速率模式：%s 建议并行被单机上限夹取（比例会失真）", label)

@@ -34,6 +34,15 @@ local system          = {}
 local lastWarnSig     = nil
 local lastZeroWarn    = nil   -- "全 0"这类整块提示：文本变了才再报一次，没有就复位
 
+--- 重新生成建议并发布（**受控点专用**）：调 mode.publish()，把返回的"功率利用不充分"警告打出去
+-- 【级别】警告（logs.warn）—— 不是调度信息
+-- 【为什么不走 auditThresholds】那套按"文本相同只报一次"合并；这行要求**每次生成都显示**，
+--   所以直接在这里打，不参与去重。
+function system.publish()
+    local text = mode.publish()
+    if text and text ~= "" then logs.warn(text) end
+end
+
 --- 统一调度请求：先过系统活动状态 -> 建议基线检查 -> 再交给 plan
 -- @param reason string
 -- @return boolean

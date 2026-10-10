@@ -1,15 +1,32 @@
 local constants = require("shared.constants")
 local state     = require("shared.state")
+local utils     = require("shared.utils")
 local rules     = require("backend.domain.rules")
 local rates     = require("backend.domain.rates")
 local rate      = {}
 function rate.label() return "速率调度" end
+local function limitText(plan)
+    local top   = state.serviceTop()
+    local limit = plan.limit
+    if top <= 0 or limit.lambdaPower <= 0 then return nil end
+    if limit.lambdaCap >= limit.lambdaPower then return nil end
+    local need, have = {}, {}
+    for level = 1, top do
+        local want = plan.want[level] or 0
+        local cap  = constants.parallelCap(level)
+        need[#need + 1] = utils.formatShortNumber(math.ceil(limit.lambdaPower * want / cap))
+        have[#have + 1] = utils.formatShortNumber(state.plant(level).deployed or 0)
+    end
+    return string.format("速率模式：功率利用不充分，建议 T1-%d 所需台数 %s，现有台数 %s",
+        top, table.concat(need, " "), table.concat(have, " "))
+end
 function rate.publish()
     local plan = rates.plan()
     for level = 1, constants.LEVEL_COUNT do
         state.plant(level).suggest = plan.suggest[level] or 0
     end
     state.planNotes = plan.notes or {}
+    return limitText(plan)
 end
 function rate.evaluate(level)
     local snap = state.plant(level)
@@ -35,9 +52,6 @@ function rate.audit()
         if note.kind == "too_small" then
             texts[#texts + 1] = string.format(
                 "速率模式：功率不足，%s 按比例分不到 1 并行（本轮不开）", label)
-        elseif note.kind == "cap_bound" then
-            texts[#texts + 1] = string.format(
-                "速率模式：%s 已达单机并行上限，整体并行由它决定（其余等级按同一比例缩小）", label)
         elseif note.kind == "clip" then
             texts[#texts + 1] = string.format(
                 "速率模式：%s 建议并行被单机上限夹取（比例会失真）", label)

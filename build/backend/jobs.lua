@@ -17,7 +17,6 @@ local rates_config     = require("backend.store.rates_config")
 local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
 local power            = require("backend.domain.power")
-local mode             = require("backend.domain.mode")
 local system           = require("backend.app.system")
 local jobs             = {}
 local last             = {
@@ -58,7 +57,7 @@ function jobs.scanHardware()
     last.meOk, last.missing = meProxy ~= nil, missing
     if state.power.all ~= totalPower then
         state.power.all = totalPower
-        mode.publish()
+        system.publish()
     end
     local warnParts         = {}
     for _, item in ipairs(power.parallelMismatch()) do
@@ -95,7 +94,7 @@ function jobs.scanSettings()
     local ratesChanged, ratesWhy = rates_config.load(snapshot)
     if ratesChanged then
         scheduler.emit("rates_changed", { why = ratesWhy })
-        mode.publish()
+        system.publish()
     end
 end
 function jobs.readFluids()
@@ -109,6 +108,7 @@ function jobs.observePlants()
     local samples, runningTotal = 0, 0
     local hostAllowed = nil
     local hostProgress, hostProgressMax
+    local deployedChanged = false
     for level = constants.HOST_LEVEL, constants.LEVEL_COUNT do
         local list                 = machines.of(level)
         local snap                 = state.plant(level)
@@ -164,8 +164,8 @@ function jobs.observePlants()
             end
         end
         if snap.deployed ~= total then
-            snap.deployed = total
-            mode.publish()
+            snap.deployed    = total
+            deployedChanged  = true
         end
         snap.switch   = observed
         snap.active   = (total > 0 and actFail == 0) and running or nil
@@ -184,6 +184,7 @@ function jobs.observePlants()
             })
         end
     end
+    if deployedChanged then system.publish() end
     logs.debug(string.format("[调试] 观测：单元在跑 %d 台，本轮采样 %d 条", runningTotal, samples))
 end
 function jobs.schedule()

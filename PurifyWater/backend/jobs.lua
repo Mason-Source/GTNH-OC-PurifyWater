@@ -42,7 +42,6 @@ local rates_config     = require("backend.store.rates_config")
 local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
 local power            = require("backend.domain.power")
-local mode             = require("backend.domain.mode")
 local system           = require("backend.app.system")
 
 local jobs             = {}
@@ -118,7 +117,7 @@ function jobs.scanHardware()
     -- 功率是"建议并行"的输入之一：**值真变**时重算并发布（受控触发，见 domain/modes/*）
     if state.power.all ~= totalPower then
         state.power.all = totalPower
-        mode.publish()
+        system.publish()
     end
 
     -- 【当前并行 vs 建议并行】有任一等级不一致就写一行警告。
@@ -173,7 +172,7 @@ function jobs.scanSettings()
     local ratesChanged, ratesWhy = rates_config.load(snapshot)
     if ratesChanged then
         scheduler.emit("rates_changed", { why = ratesWhy })
-        mode.publish()   -- 权重/倍率是速率模式建议的输入
+        system.publish()   -- 权重/倍率是速率模式建议的输入
     end
 end
 
@@ -215,6 +214,9 @@ function jobs.observePlants()
     --   是每轮 2×机器数 次白费调用；主机自己报这个数，读一次够用。它只有两个去处：
     --   进主机快照（界面周期条）与交给 tracker 判周期边界 —— T1-8 不记进度。
     local hostProgress, hostProgressMax
+    -- 【发布粒度】台数变了几级都只算"这一轮变过"：整轮观测结束后统一发布一次，
+    --   避免逐级发布（循环中途 top 逐级增长，会连打出 T1-3→T1-8 那种一串）
+    local deployedChanged = false
 
     for level = constants.HOST_LEVEL, constants.LEVEL_COUNT do
         local list                 = machines.of(level)
@@ -288,10 +290,10 @@ function jobs.observePlants()
             end
         end
 
-        -- 台数是"建议并行"的另一个输入：**值真变**时重算并发布
+        -- 台数是"建议并行"的另一个输入：这里只记"这一轮变过"，整轮跑完再统一发布
         if snap.deployed ~= total then
-            snap.deployed = total
-            mode.publish()
+            snap.deployed    = total
+            deployedChanged  = true
         end
         snap.switch   = observed
         snap.active   = (total > 0 and actFail == 0) and running or nil
@@ -317,6 +319,9 @@ function jobs.observePlants()
             })
         end
     end
+
+    -- 一轮观测结束：台数变过才重新生成建议（每轮最多一次，且此时的快照已完整）
+    if deployedChanged then system.publish() end
 
     logs.debug(string.format("[调试] 观测：单元在跑 %d 台，本轮采样 %d 条", runningTotal, samples))
 end

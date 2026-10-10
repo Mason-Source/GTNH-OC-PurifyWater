@@ -69,8 +69,9 @@ function mode.labelOf(id)
 end
 
 --- 发布"每级建议并行"到 state —— 由当前模式实现（受控调用，见 domain/modes/* 的 publish）
+-- @return string|nil 给用户看的"扩产建议"一行（阈值模式返回 nil）；日志由 app 层打
 function mode.publish()
-    mode.current().publish()
+    return mode.current().publish()
 end
 
 --- 可开启性判定 —— 由当前模式给

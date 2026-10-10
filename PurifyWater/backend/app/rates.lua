@@ -32,7 +32,7 @@ local app          = {}
 -- 【顺序】publish 必须在 audit 之前：审计（rate.audit）读的是发布出来的明细
 -- @param reason string
 local function afterChange(reason)
-    mode.publish()
+    system.publish()
     plan.forget()
     system.auditThresholds()
     system.requestPlan(reason)

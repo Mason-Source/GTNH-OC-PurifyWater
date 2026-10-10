@@ -95,7 +95,9 @@ end
 --- 一轮速率算账（**纯算、无缓存**；只在 rate.publish() 里被调用）
 ---@return table { suggest = {[level]=number}, notes = {...} }
 --   suggest = 每台建议并行（floor 后 + 单向收紧；在役前缀外恒 0）—— 由 rate.publish() 发布到 state
---   notes   = 审计明细 { {level=, kind="too_small"|"cap_bound"|"clip"|"trimmed", ...}, ... }
+--   notes   = 审计明细 { {level=, kind="too_small"|"clip"|"trimmed", ...}, ... }
+--   want    = {[level]=number}        -- 每级期望总并行（链条目标，未缩放）
+--   limit   = { lambdaPower, lambdaCap }  -- 谁更小：功率λ < 上限λ = 受功率限制；反之 = 被单机上限卡住
 function rates.plan()
     local top = state.serviceTop()
 
@@ -139,13 +141,12 @@ function rates.plan()
     end
     local lambdaPower = (unitPower > 0 and power > 0) and (power / unitPower) or 0
 
-    local lambdaCap, capLevel = math.huge, nil
+    -- 上限λ = 最小的"单机上限×台数 ÷ 期望总并行"（谁最紧谁决定整体缩放）
+    local lambdaCap = math.huge
     for level = 1, top do
         if unitQ[level] > 0 and counts[level] > 0 then
             local ratio = (constants.parallelCap(level) * counts[level]) / unitQ[level]
-            if ratio < lambdaCap then
-                lambdaCap, capLevel = ratio, level
-            end
+            if ratio < lambdaCap then lambdaCap = ratio end
         end
     end
     if lambdaCap == math.huge then lambdaCap = 0 end
@@ -195,12 +196,14 @@ function rates.plan()
         end
     end
 
-    -- 上限先撞时记一条（供审计写成 user 级一行）
-    if capLevel ~= nil and lambdaCap < lambdaPower then
-        notes[#notes + 1] = { level = capLevel, kind = "cap_bound" }
-    end
-
-    return { suggest = suggest, notes = notes }
+    -- want  = 每级"期望总并行"（链条目标，未缩放）—— 发布侧据此算"用满功率所需台数"
+    -- limit = 这次是谁在限制：功率λ / 上限λ / 决定 λ 的那一级（供发布侧写归因）
+    return {
+        suggest = suggest,
+        notes   = notes,
+        want    = unitQ,
+        limit   = { lambdaPower = lambdaPower, lambdaCap = lambdaCap },
+    }
 end
 
 return rates

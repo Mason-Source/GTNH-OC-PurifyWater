@@ -134,9 +134,7 @@ logs.debug("[调试] " .. tostring(historyText))
 local subCount = handlers.subscribe()
 logs.debug(string.format("[调试] 已订阅 %d 类事件", subCount))
 
--- 首次发布"每级建议并行"：模式已注册、首扫已拿到功率与台数
---   之后只在受控点重算（启动 / 功率变 / 台数变 / 权重·倍率变 / 模式切换 —— 见 domain/modes/*）
-mode.publish()
+-- 【首轮建议】由 jobs.register() 的首轮观测发布（台数 0→N 会触发），这里不重复发布
 system.auditThresholds()
 
 runtime.discardStaleInterrupts() -- 先丢掉上一个进程残留的 interrupted

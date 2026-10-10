@@ -25,7 +25,7 @@ function mode.labelOf(id)
     return impl and impl.label() or tostring(id)
 end
 function mode.publish()
-    mode.current().publish()
+    return mode.current().publish()
 end
 function mode.evaluate(level)
     return mode.current().evaluate(level)

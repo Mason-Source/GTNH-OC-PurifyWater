@@ -68,13 +68,11 @@ function rates.plan()
         unitPower = unitPower + unitQ[level] * (constants.POWER_LEVELS[level] or 0)
     end
     local lambdaPower = (unitPower > 0 and power > 0) and (power / unitPower) or 0
-    local lambdaCap, capLevel = math.huge, nil
+    local lambdaCap = math.huge
     for level = 1, top do
         if unitQ[level] > 0 and counts[level] > 0 then
             local ratio = (constants.parallelCap(level) * counts[level]) / unitQ[level]
-            if ratio < lambdaCap then
-                lambdaCap, capLevel = ratio, level
-            end
+            if ratio < lambdaCap then lambdaCap = ratio end
         end
     end
     if lambdaCap == math.huge then lambdaCap = 0 end
@@ -110,9 +108,11 @@ function rates.plan()
             notes[#notes + 1]  = { level = level + 1, kind = "trimmed", from = from, to = pMax }
         end
     end
-    if capLevel ~= nil and lambdaCap < lambdaPower then
-        notes[#notes + 1] = { level = capLevel, kind = "cap_bound" }
-    end
-    return { suggest = suggest, notes = notes }
+    return {
+        suggest = suggest,
+        notes   = notes,
+        want    = unitQ,
+        limit   = { lambdaPower = lambdaPower, lambdaCap = lambdaCap },
+    }
 end
 return rates

@@ -14,6 +14,10 @@ local HOST_OFF_REASON = "主机开关已关"
 local system          = {}
 local lastWarnSig     = nil
 local lastZeroWarn    = nil
+function system.publish()
+    local text = mode.publish()
+    if text and text ~= "" then logs.warn(text) end
+end
 function system.requestPlan(reason)
     if not state.isActive() then return false end
     if system.checkSuggestionChange() then return false end
