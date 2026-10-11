@@ -21,6 +21,7 @@ function api.read.system()
         mode             = state.system.mode,
         enforceThreshold = state.system.enforceThreshold == true,
         t7Boost          = state.system.t7Boost,
+        effect           = app.effect(),
         autostart      = state.system.autostart == true,
         autostartStale = state.system.autostartStale == true,
         autostartPath  = state.system.autostartPath
@@ -148,8 +149,8 @@ COMMANDS.weight_set = function(level, weight)
     if not ok then return false, text end
     return true, ""
 end
-COMMANDS.t7_boost_cycle = function()
-    local ok, text = ratesApp.cycleT7Boost()
+COMMANDS.t7_boost_set = function(value)
+    local ok, text = ratesApp.setT7Boost(value)
     if not ok then return false, text end
     return true, ""
 end
@@ -176,11 +177,13 @@ COMMANDS.level_rules_set = function(level, threshold, enabled)
     })
     return true, "已保存"
 end
-COMMANDS.level_enabled_toggle = function(level)
+COMMANDS.level_enabled_set = function(level, enabled)
     level = tonumber(level)
-    local rule = state.rules[level]
-    if not rule then return false, "无该级配置" end
-    return COMMANDS.level_rules_set(level, rule.threshold, not rule.enabled)
+    if not level or level < 1 or level > constants.LEVEL_COUNT then
+        return false, "等级无效"
+    end
+    if type(enabled) ~= "boolean" then return false, "勾选值无效" end
+    return COMMANDS.level_rules_set(level, nil, enabled)
 end
 COMMANDS.net_toggle = function()
     return true, net.toggle()

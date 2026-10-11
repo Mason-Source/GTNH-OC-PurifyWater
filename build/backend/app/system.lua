@@ -18,6 +18,16 @@ function system.publish()
     local text = mode.publish()
     if text and text ~= "" then logs.warn(text) end
 end
+function system.effect()
+    local rate   = state.system.mode == "rate"
+    local gated  = (not rate) or (state.system.enforceThreshold == true)
+    return {
+        enabled   = gated,
+        threshold = gated,
+        weight    = rate,
+        boost     = rate
+    }
+end
 function system.requestPlan(reason)
     if not state.isActive() then return false end
     if system.checkSuggestionChange() then return false end

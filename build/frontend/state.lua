@@ -12,16 +12,11 @@ local fstate = {
     chartChips     = {},
     logTitle       = nil,
     autostartRow   = nil,
-    rateRows       = {},
-    rateKeys       = {},
-    rateBoostRow   = nil,
-    rateSel        = nil,
-    rateBuf        = nil,
-    configRows     = {},
-    checkCells     = {},
-    keyCells       = {},
-    configSel      = nil,
-    configBuf      = nil,
+    cells          = {},
+    keys           = {},
+    editLevel      = nil,
+    editField      = nil,
+    editBuf        = nil,
     lastData       = nil,
     baseResolution = nil,
     render         = { fingerprints = {}, forceAll = true, subs = {} }
@@ -45,12 +40,10 @@ function fstate.invalidateAll()
 end
 function fstate.clearHitboxes()
     fstate.buttons, fstate.tabs, fstate.chartChips = {}, {}, {}
-    fstate.checkCells, fstate.configRows, fstate.keyCells = {}, {}, {}
+    fstate.cells, fstate.keys = {}, {}
     fstate.levelRows = {}
     fstate.logTitle = nil
     fstate.autostartRow = nil
-    fstate.rateRows, fstate.rateKeys = {}, {}
-    fstate.rateBoostRow = nil
 end
 function fstate.hit(box, x, y)
     if not box then return false end

@@ -5,9 +5,9 @@ local state        = require("shared.state")
 local settings     = require("backend.store.settings")
 local rates_config = require("backend.store.rates_config")
 local mode         = require("backend.domain.mode")
-local rates        = require("backend.domain.rates")
 local plan         = require("backend.app.plan")
 local system       = require("backend.app.system")
+local IDLE_NOTE    = "（当前模式不生效，已保存待用）"
 local app          = {}
 local function afterChange(reason)
     system.publish()
@@ -44,21 +44,24 @@ function app.setWeight(level, weight)
     end
     local ok, err = rates_config.setWeight(level, weight)
     if not ok then return false, "写配置失败（settings.txt）：" .. tostring(err) end
-    logs.system(string.format("%s 权重 = %d", constants.levelLabel(level), weight))
+    logs.system(string.format("%s 权重 = %d%s", constants.levelLabel(level), weight,
+        system.effect().weight and "" or IDLE_NOTE))
     afterChange("权重变更")
     return true, ""
 end
-function app.cycleT7Boost()
-    local options = constants.T7_BOOST_OPTIONS
-    local current = rates.acceptBoost(state.system.t7Boost)
-    local index = 1
-    for i, option in ipairs(options) do
-        if option == current then index = i end
+function app.setT7Boost(value)
+    value = tonumber(value)
+    local options, matched = constants.T7_BOOST_OPTIONS, false
+    for _, option in ipairs(options) do
+        if option == value then matched = true break end
     end
-    local nextBoost = options[(index % #options) + 1]
-    local ok, err = rates_config.setBoost(nextBoost)
+    if not matched then
+        return false, string.format("增产倍率只能是 %s", table.concat(options, " / "))
+    end
+    local ok, err = rates_config.setBoost(value)
     if not ok then return false, "写配置失败（settings.txt）：" .. tostring(err) end
-    logs.system(string.format("T7 增产倍率：×%s", tostring(nextBoost)))
+    logs.system(string.format("T7 增产倍率：×%s%s", tostring(value),
+        system.effect().boost and "" or IDLE_NOTE))
     afterChange("T7 增产倍率变更")
     return true, ""
 end

@@ -7,13 +7,11 @@ layout.MIN_CONTROL_H = 11
 layout.MIN_LOG_H     = 6
 layout.STATUS_TWO_H  = 19
 layout.STATUS_ONE_H  = 12
-layout.CONFIG_HEAD_H = 11
-layout.EDITLINE_H    = 1
-layout.KEYPAD_H      = 5
-layout.CONFIG_CARD_H = 18
-layout.CARD_GAP      = 1
+layout.CONFIG_HEAD_H   = 11
+layout.KEYPAD_H        = 6
+layout.CONFIG_CARD_H   = 18
+layout.CARD_GAP        = 1
 layout.SETTINGS_CARD_H = 5
-layout.RATES_CARD_H    = 14
 layout.MIN_CHART_H   = 10
 layout.SIDE_PAD      = 1
 layout.COL_GAP       = 1
@@ -80,22 +78,16 @@ function layout.calculate()
     local configX   = 1 + layout.SIDE_PAD
     local configW   = W - layout.SIDE_PAD * 2
     local configH   = math.min(layout.CONFIG_CARD_H, bodyH)
-    local ratesY    = bodyY + configH + layout.CARD_GAP
-    local ratesH    = math.min(layout.RATES_CARD_H,
-        math.max(0, bodyH - configH - layout.CARD_GAP))
-    local settingsY = ratesY + ratesH + layout.CARD_GAP
+    local settingsY = bodyY + configH + layout.CARD_GAP
     local settingsH = math.min(layout.SETTINGS_CARD_H,
-        math.max(0, bodyH - configH - layout.CARD_GAP - ratesH - layout.CARD_GAP))
+        math.max(0, bodyH - configH - layout.CARD_GAP))
     local innerX    = configX + 2
     local innerW    = math.max(0, configW - 4)
     local keypadH   = math.min(layout.KEYPAD_H,
-        math.max(0, configH - layout.CONFIG_HEAD_H - layout.EDITLINE_H - 1))
+        math.max(0, configH - layout.CONFIG_HEAD_H - 1))
     local keypadY   = bodyY + configH - 1 - keypadH
-    local editY     = keypadY - layout.EDITLINE_H
     fstate.areas.config   = { x = configX, y = bodyY, w = configW, h = configH }
-    fstate.areas.editline = { x = innerX, y = editY, w = innerW, h = layout.EDITLINE_H }
     fstate.areas.keypad   = { x = innerX, y = keypadY, w = innerW, h = keypadH }
-    fstate.areas.rates    = { x = configX, y = ratesY, w = configW, h = ratesH }
     fstate.areas.settings = { x = configX, y = settingsY, w = configW, h = settingsH }
     logs.debug(string.format("[调试] 布局 控制 %dx%d@%d,%d 状态 %dx%d@%d,%d 图表 %dx%d@%d,%d 日志 %dx%d@%d,%d",
         fstate.areas.control.w, fstate.areas.control.h, fstate.areas.control.x, fstate.areas.control.y,

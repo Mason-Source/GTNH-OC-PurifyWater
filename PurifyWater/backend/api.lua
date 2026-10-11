@@ -44,10 +44,13 @@ function api.read.system()
         running  = state.system.running == true,
         locked   = state.system.locked == true,
         priority = state.system.priority,
-        -- 调度模式：阈值 / 速率；速率模式的子参数与 T7 增产倍率（Step 5 的界面读它们）
+        -- 调度模式：阈值 / 速率；速率模式的子参数与 T7 增产倍率（配置页读它们）
         mode             = state.system.mode,
         enforceThreshold = state.system.enforceThreshold == true,
         t7Boost          = state.system.t7Boost,
+        -- 配置表格各列算不算数（勾选/阈值/权重/增产）：判定只有一处（app/system.effect），
+        --   界面照着灰显与写日志（不生效的照样能改，只是"已保存待用"）
+        effect           = app.effect(),
         -- 开机自启：真源 = $HOME/.shrc 里那段标记块（见 backend/store/autostart）
         autostart      = state.system.autostart == true,
         autostartStale = state.system.autostartStale == true,
@@ -228,8 +231,10 @@ COMMANDS.weight_set = function(level, weight)
     return true, ""
 end
 
-COMMANDS.t7_boost_cycle = function()
-    local ok, text = ratesApp.cycleT7Boost()
+--- 设定 T7 增产倍率（配置页「增产」列的选项键盘，点即提交）
+-- @param value number|string 只能是 constants.T7_BOOST_OPTIONS 里的档位
+COMMANDS.t7_boost_set = function(value)
+    local ok, text = ratesApp.setT7Boost(value)
     if not ok then return false, text end
     return true, ""
 end
@@ -263,11 +268,16 @@ COMMANDS.level_rules_set = function(level, threshold, enabled)
     return true, "已保存"
 end
 
-COMMANDS.level_enabled_toggle = function(level)
+--- 直接设定某级勾选（配置页「勾选」格点一下 = 切换；取反由界面算，后端只认"设成什么"）
+-- @param level number
+-- @param enabled boolean
+COMMANDS.level_enabled_set = function(level, enabled)
     level = tonumber(level)
-    local rule = state.rules[level]
-    if not rule then return false, "无该级配置" end
-    return COMMANDS.level_rules_set(level, rule.threshold, not rule.enabled)
+    if not level or level < 1 or level > constants.LEVEL_COUNT then
+        return false, "等级无效"
+    end
+    if type(enabled) ~= "boolean" then return false, "勾选值无效" end
+    return COMMANDS.level_rules_set(level, nil, enabled)
 end
 
 COMMANDS.net_toggle = function()

@@ -38,7 +38,7 @@ function rates.plan()
     local net, weights, counts = {}, {}, {}
     for level = 1, constants.LEVEL_COUNT do
         local gross = constants.RATE_PRODUCE * rates.successOf(level)
-        if level == 7 then gross = gross * boost end
+        if level == constants.T7_LEVEL then gross = gross * boost end
         net[level]     = gross - (refluxOf(level) and constants.RATE_REFLUX or 0)
         weights[level] = rates.weightOf(level)
         counts[level]  = math.max(0, state.plant(level).deployed or 0)

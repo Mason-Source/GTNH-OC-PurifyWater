@@ -28,10 +28,8 @@ local statusPanel   = require("frontend.panels.status")
 local chartPanel    = require("frontend.panels.chart")
 local logPanel      = require("frontend.panels.log")
 local configPanel   = require("frontend.panels.config")
-local editlinePanel = require("frontend.panels.editline")
 local keypadPanel   = require("frontend.panels.keypad")
 local settingsPanel = require("frontend.panels.settings")
-local ratesPanel    = require("frontend.panels.rates")
 
 local render        = {}
 
@@ -45,18 +43,15 @@ local PANELS        = {
     chart    = { draw = chartPanel.draw, fingerprint = chartPanel.fingerprint },
     log      = { draw = logPanel.draw, fingerprint = logPanel.fingerprint },
     config   = { draw = configPanel.draw, fingerprint = configPanel.fingerprint },
-    editline = { draw = editlinePanel.draw, fingerprint = editlinePanel.fingerprint },
     keypad   = { draw = keypadPanel.draw, fingerprint = keypadPanel.fingerprint },
-    settings = { draw = settingsPanel.draw, fingerprint = settingsPanel.fingerprint },
-    rates    = { draw = ratesPanel.draw, fingerprint = ratesPanel.fingerprint }
+    settings = { draw = settingsPanel.draw, fingerprint = settingsPanel.fingerprint }
 }
 
--- 每个页由哪些面板组成
--- 配置页：三张卡从上往下 —— 阈值卡（列表 / 回显 / 键盘各管各的指纹，敲键只重画回显那一行）
---   + 速率权重卡 + 运行设置卡（绘制顺序 = 版面顺序）。
+-- 每个页由哪些面板组成（绘制顺序 = 版面顺序）
+-- 配置页：两张卡 —— 「调度配置」（表格段 config + 卡内键盘槽 keypad，各管各的指纹）+「运行设置」settings。
 local TAB_PANELS    = {
     overview = { "tabBar", "control", "status", "chart", "log" },
-    config   = { "tabBar", "config", "editline", "keypad", "rates", "settings" }
+    config   = { "tabBar", "config", "keypad", "settings" }
 }
 
 --------------------------------------------------------------------------------

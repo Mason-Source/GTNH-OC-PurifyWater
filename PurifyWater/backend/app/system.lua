@@ -43,6 +43,24 @@ function system.publish()
     if text and text ~= "" then logs.warn(text) end
 end
 
+--- 配置表格各列的"生效性"（唯一判定处：`api.read.system` 与 `app/rates` 共用）
+-- 【为什么放后端】生效性 = 模式判定，界面只照着灰显/写日志，不自己算：
+--   阈值调度：勾选 + 阈值生效（权重 / 增产只存不生效，切到速率模式才用）；
+--   速率调度：权重 + 增产生效；再受阈值约束时，勾选 + 阈值也生效。
+-- 【与 domain/modes/rate 的关系】那边读 `state.system.enforceThreshold` 决定"开不开"；
+--   这里只回答"这一列算不算数"，两处判据都只有一份（模式 + 阈值约束）。
+-- @return table { enabled = boolean, threshold = boolean, weight = boolean, boost = boolean }
+function system.effect()
+    local rate   = state.system.mode == "rate"
+    local gated  = (not rate) or (state.system.enforceThreshold == true)
+    return {
+        enabled   = gated,
+        threshold = gated,
+        weight    = rate,
+        boost     = rate
+    }
+end
+
 --- 统一调度请求：先过系统活动状态 -> 建议基线检查 -> 再交给 plan
 -- @param reason string
 -- @return boolean

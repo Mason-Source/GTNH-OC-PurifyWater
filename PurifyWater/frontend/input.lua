@@ -12,12 +12,13 @@
 -- 【分工】键盘：X 启停 / R 刷新 / T 切页 / 数字（选曲线等级，0 = 全部）
 --   （优先级/阈值约束都是"当前模式的子参数"，只在总览页用按钮切，不再占快捷键）
 --         鼠标：页签、净水状态块（行→详情；详情态下点任意处→返回）、图表等级按钮、
---               配置页（点行选中 / 点勾选切换 / 点自启子项切换 / 点虚拟键盘改阈值 /
---                       速率卡：点行选中+右侧键盘改权重 / 点子项切 T7 倍率）、日志标题、按钮
+--               配置页（点表格里某一格 = 选中它 -> 键盘槽换成那一列自己的键盘；
+--                       点「运行设置」的自启子项行 = 切开机自启）、日志标题、按钮
 --   Q 退出不在这里：退出语义归 core/runtime（runtime.bindQuitKeys）。
--- 【阈值输入】物理键盘不进输入框：点某级**选中**它，再用常驻虚拟键盘改。键的语义（kind/value）
---   由面板随热区带过来 —— 键盘长什么样归面板，按下去怎么改归这里；缓冲是 kL 整数串，
---   只在提交那一刻 ×1000 变 mB。
+-- 【配置页输入】物理键盘不进输入框：点表格里某一格**选中**它，卡内键盘槽换成那一列的键盘。
+--   键的语义（kind/value）由面板随热区带过来 —— 键盘长什么样归面板，按下去怎么改归这里。
+--   数字列（阈值 / 权重）先改缓冲再点 ✔ 提交；增产是选项键盘（点哪个键就提交哪个）；勾选点格子直接切换。
+--   阈值缓冲是 kL 整数串，只在提交那一刻 ×1000 变 mB。
 -- 【不弹提示】命令结果只写系统日志（省掉那个几秒后消失的提示条）。
 --------------------------------------------------------------------------------
 
@@ -56,127 +57,133 @@ end
 local function switchTab(tab)
     if fstate.currentTab == tab then return end
     fstate.currentTab = tab
-    fstate.configSel, fstate.configBuf = nil, nil
-    fstate.rateSel, fstate.rateBuf = nil, nil
+    fstate.editLevel, fstate.editField, fstate.editBuf = nil, nil, nil
     fstate.invalidateAll()
 end
 
---- 选中某一级开始编辑：缓冲 = 它当前的阈值（kL 整数串，界面一律 kL）
+--- 点表格里的某一格 = 选中它（键盘槽随即换成那一列的键盘）
+-- 数字列（阈值 / 权重）的缓冲直接填当前值 —— "选中就能改"；选项列（增产）用不着缓冲。
+-- 勾选不在这一路：它是**点一下直接切换**（见 applyCell），不选中、不开键盘。
 -- @param level number
-local function selectLevel(level)
-    local row        = fstate.lastData and fstate.lastData.levels[level]
-    local milli      = row and (row.rule.threshold or 0) or 0
-    fstate.configSel = level
-    fstate.configBuf = tostring(math.floor(milli / 1000))
+-- @param field string "threshold" / "weight" / "boost"
+local function selectCell(level, field)
+    local row = fstate.lastData and fstate.lastData.levels[level]
+    fstate.editLevel, fstate.editField = level, field
+
+    if field == "threshold" then
+        local milli    = (row and row.rule.threshold) or 0
+        fstate.editBuf = tostring(math.floor(milli / 1000))
+    elseif field == "weight" then
+        fstate.editBuf = tostring(math.floor(tonumber(row and row.weight) or 0))
+    else
+        fstate.editBuf = nil
+    end
 end
 
---- 配置页虚拟键盘：按下一个键
--- 【语义表（面板只负责画和带 value，怎么改在这里）】
---   digit -> 追加（从 "0" 开始时不粘 0）；mul / div -> 乘 / 整除（倍数键，如 x10、/100）；
---   set -> 覆盖成档位值；back -> 删末位；clear -> 空；copy -> 抄上一级的阈值；
---   cancel -> 弃掉选中；commit -> 交给调用方发命令
--- 上界按"运算后的**数值**"判：≥ 1e14 kL 一律不响应（**含等于**）——
---   空串是合法中间态（清空后接着敲），所以空串放行、其余一律按数值判。
+--- 放下没提交的东西（保存完 / 点 ✘ / 切页都走这里）
+local function clearEdit()
+    fstate.editLevel, fstate.editField, fstate.editBuf = nil, nil, nil
+end
+
+--- 点表格里的某一格
+-- 勾选格 = **点一下直接切换**（老习惯，不开键盘）；其它可编辑格 = 选中它，键盘槽换成那一列的键盘。
+-- 取反是界面语义：后端只认"设成什么"（level_enabled_set(level, enabled)），不做读-改-写。
+-- @param level number
+-- @param field string "enabled" / "threshold" / "weight" / "boost"
+local function applyCell(level, field)
+    if field ~= "enabled" then
+        selectCell(level, field)
+        return
+    end
+    local row = fstate.lastData and fstate.lastData.levels[level]
+    if not row then return end
+    fire("level_enabled_set", level, not (row.rule.enabled == true))
+end
+
+--- 键盘槽：按下一个键（键盘长什么样归面板，按下去怎么改归这里）
+-- 【阈值 / 权重】数字列，要点 ✔ 才提交：
+--   digit -> 追加（从 "0" 开始不粘 0）；mul / div -> 乘 / 整除；set -> 覆盖成档位值；
+--   back -> 删末位；clear -> 空；copy -> 抄上一级阈值；commit -> 提交；cancel -> 弃掉选中。
+-- 【增产】选项列，点哪个键就发哪个命令（没有"确定"这一步）；勾选不走键盘（点格子直接切换）。
+-- 上界按"运算后的**数值**"判：阈值 ≥ 1e14 kL、权重 > MAX 一律不响应（空串是合法中间态，放行）——
 --   按位数判会漏：倍数键是"先算后判"，一步就能跨过位数边界。
 -- @param key table { kind = , value = }
--- @return string|nil "commit" = 该发 level_rules_set 了（值看 fstate.configBuf）
 local function applyKey(key)
-    local limit = CONFIG.UI.MAX_THRESHOLD_KILO or 100000000000000
+    local field, level = fstate.editField, fstate.editLevel
+    if not field or not level then return end
+    local kind = key.kind
 
-    if key.kind == "cancel" then
-        fstate.configSel, fstate.configBuf = nil, nil
+    if kind == "cancel" then
         logs.debug("[调试] 退出编辑（用户点了 ✘）")
-        return nil
+        clearEdit()
+        return
     end
-    if not fstate.configSel then return nil end
-    if key.kind == "commit" then
-        local value = tonumber(fstate.configBuf or "")
+
+    -- ① 选项列（增产）：点哪个键就发哪个命令
+    if field == "boost" then
+        if kind == "set_boost" then
+            fire("t7_boost_set", tonumber(key.value))
+            clearEdit()
+        end
+        return
+    end
+
+    -- ② 数字列（阈值 / 权重）：改缓冲，点 ✔ 才提交
+    local isThreshold = (field == "threshold")
+    local limit       = isThreshold and (CONFIG.UI.MAX_THRESHOLD_KILO or 100000000000000)
+        or (CONFIG.RATES.MAX_WEIGHT or 100)
+
+    if kind == "commit" then
+        local value = tonumber(fstate.editBuf or "")
         if not value then
             logs.ui("还没填数字，未保存")
-            return nil
+            return
         end
-        if value >= limit then
-            logs.ui("超过上限（≥ 1e14 kL），未保存")
-            return nil
+        if isThreshold then
+            if value >= limit then
+                logs.ui("超过上限（≥ 1e14 kL），未保存")
+                return
+            end
+            fire("level_rules_set", level, value * 1000, nil)
+        else
+            if value < 0 or value > limit then
+                logs.ui(string.format("权重需为 0-%d 的整数，未保存", limit))
+                return
+            end
+            fire("weight_set", level, value)
         end
-        return "commit"
+        clearEdit()
+        return
     end
 
-    local buf = fstate.configBuf or ""
-    if key.kind == "digit" then
+    local buf = fstate.editBuf or ""
+    if kind == "digit" then
         if buf == "0" then buf = "" end -- 从 0 开始就别再粘 0（否则 "0" + "5" 变成 "05"）
         buf = buf .. key.value
-    elseif key.kind == "mul" or key.kind == "div" then
+    elseif kind == "mul" or kind == "div" then
         local n     = tonumber(buf) or 0
         local scale = tonumber(key.value) or 1
-        buf         = tostring((key.kind == "mul") and (n * scale) or math.floor(n / scale))
-    elseif key.kind == "set" then
+        buf         = tostring((kind == "mul") and (n * scale) or math.floor(n / scale))
+    elseif kind == "set" then
         buf = key.value
-    elseif key.kind == "back" then
+    elseif kind == "back" then
         buf = buf:sub(1, math.max(0, #buf - 1))
-    elseif key.kind == "clear" then
+    elseif kind == "clear" then
         buf = ""
-    elseif key.kind == "copy" then
-        local row = fstate.lastData and fstate.lastData.levels[fstate.configSel - 1]
-        if row then buf = tostring(math.floor((row.rule.threshold or 0) / 1000)) end
+    elseif kind == "copy" then
+        local prev = fstate.lastData and fstate.lastData.levels[level - 1]
+        if prev then buf = tostring(math.floor((prev.rule.threshold or 0) / 1000)) end
     end
 
     if buf ~= "" then
         local value = tonumber(buf)
         if not value or value >= limit then
-            logs.ui("超过上限（≥ 1e14 kL），这一下没生效")
-            return nil
+            logs.ui(isThreshold and "超过上限（≥ 1e14 kL），这一下没生效"
+                or string.format("权重上限 %d，这一下没生效", limit))
+            return
         end
     end
-    fstate.configBuf = buf
-    return nil
-end
-
---- 速率卡虚拟键盘：按下一个键（语义与阈值键盘同构，但只收 0..MAX 的整数）
---   digit -> 追加（从 "0" 开始不粘 0）；back -> 删末位；clear -> 空；
---   commit -> 交调用方发 weight_set；cancel -> 弃掉选中。
--- @param key table { kind = , value = }
--- @return string|nil "commit" = 该发 weight_set 了（值看 fstate.rateBuf）
-local function applyRateKey(key)
-    local limit = CONFIG.RATES.MAX_WEIGHT or 100
-
-    if key.kind == "cancel" then
-        fstate.rateSel, fstate.rateBuf = nil, nil
-        return nil
-    end
-    if not fstate.rateSel then return nil end
-    if key.kind == "commit" then
-        local value = tonumber(fstate.rateBuf or "")
-        if not value then
-            logs.ui("还没填数字，未保存")
-            return nil
-        end
-        if value < 0 or value > limit then
-            logs.ui(string.format("权重需为 0-%d 的整数，未保存", limit))
-            return nil
-        end
-        return "commit"
-    end
-
-    local buf = fstate.rateBuf or ""
-    if key.kind == "digit" then
-        if buf == "0" then buf = "" end
-        buf = buf .. key.value
-    elseif key.kind == "back" then
-        buf = buf:sub(1, math.max(0, #buf - 1))
-    elseif key.kind == "clear" then
-        buf = ""
-    end
-
-    if buf ~= "" then
-        local value = tonumber(buf)
-        if not value or value > limit then
-            logs.ui(string.format("权重上限 %d，这一下没生效", limit))
-            return nil
-        end
-    end
-    fstate.rateBuf = buf
-    return nil
+    fstate.editBuf = buf
 end
 
 --- 切换图表看的等级（0 = 全部）；窗口秒数由 viewmodel 按等级重算，所以要让它过期
@@ -256,69 +263,27 @@ local function onClick(x, y)
         end
     end
 
-    -- 配置页：按"细 -> 粗"判：阈值键盘 -> 勾选格 -> 自启行 -> 速率卡（键盘 -> 整行 -> T7 行）-> 阈值整行
-    --   顺序理由：勾选格落在行内，整行热区会把它包住 —— 先判细的才点得准
+    -- 配置页：先键盘槽（细），再表格的每一格 —— 键盘槽在表格外面，格子之间不重叠
     if fstate.currentTab == "config" then
-        -- ① 虚拟键盘：按语义改缓冲；✔ 才真发命令（命令只有一个出口：fire）
-        for _, box in ipairs(fstate.keyCells or {}) do
+        -- ① 键盘槽：按语义改缓冲 / 选项列直接提交（命令只有一个出口：fire）
+        for _, box in ipairs(fstate.keys or {}) do
             if fstate.hit(box, x, y) then
-                local level = fstate.configSel
-                if applyKey(box) == "commit" then
-                    local kilo = tonumber(fstate.configBuf or "")
-                    if kilo and level then
-                        fire("level_rules_set", level, kilo * 1000, nil)
-                        -- 保存完不再吊着那一行的选中：回显行回到"未选中"、键盘随之变灰
-                        --   （想改再点一次即可）。
-                        fstate.configSel, fstate.configBuf = nil, nil
-                    end
-                end
+                applyKey(box)
                 return
             end
         end
-        -- ② 勾选格：只切勾选，不算选中
-        for level, box in pairs(fstate.checkCells or {}) do
-            if fstate.hit(box, x, y) then
-                fire("level_enabled_toggle", level)
-                return
-            end
-        end
-        -- ③ 「运行设置」卡的自启子项行：点它切开机自启（不选中、不涉及键盘）
+        -- ② 「运行设置」卡的自启子项行：整行都是热区（说明行不登记，免得读个字就碰反）
         if fstate.hit(fstate.autostartRow, x, y) then
             fire("autostart_toggle")
             return
         end
-        -- ④ 速率卡：卡内键盘最优先（键都在卡右半边），其次整行选择，最后 T7 倍率子项行
-        for _, box in ipairs(fstate.rateKeys or {}) do
-            if fstate.hit(box, x, y) then
-                local level = fstate.rateSel
-                if applyRateKey(box) == "commit" then
-                    local value = tonumber(fstate.rateBuf or "")
-                    if value and level then
-                        fire("weight_set", level, value)
-                        fstate.rateSel, fstate.rateBuf = nil, nil
-                    end
+        -- ③ 表格：勾选格点一下直接切换；阈值 / 权重 / 增产格 = 选中它（"增产"只有 T7 那一行登记热区）
+        for level, cell in pairs(fstate.cells or {}) do
+            for field, box in pairs(cell) do
+                if fstate.hit(box, x, y) then
+                    applyCell(level, field)
+                    return
                 end
-                return
-            end
-        end
-        for level, box in pairs(fstate.rateRows or {}) do
-            if fstate.hit(box, x, y) then
-                local row = fstate.lastData and fstate.lastData.levels[level]
-                fstate.rateSel = level
-                fstate.rateBuf = tostring(math.floor(tonumber(row and row.weight) or 0))
-                return
-            end
-        end
-        if fstate.hit(fstate.rateBoostRow, x, y) then
-            fire("t7_boost_cycle")
-            return
-        end
-
-        -- ⑤ 整行：选中它（缓冲直接填当前值，"选中就能改"）
-        for level, box in pairs(fstate.configRows or {}) do
-            if fstate.hit(box, x, y) then
-                selectLevel(level)
-                return
             end
         end
         return

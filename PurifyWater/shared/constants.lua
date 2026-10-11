@@ -18,6 +18,7 @@ constants.CODE_VERSION            = "v4.6"
 -- 等级：1~8 级净水单元；0 级保留给净水主机
 constants.LEVEL_COUNT             = 8
 constants.HOST_LEVEL              = 0
+constants.T7_LEVEL                = 7    -- 支持增产（超导粗胚倍率）的那一级
 
 -- ============================ 水位/并行 ============================
 constants.STOCK_PER_PARALLEL      = 1000 -- 每并行预留的水量（mB）
