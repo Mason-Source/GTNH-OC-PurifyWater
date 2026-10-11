@@ -20,22 +20,23 @@ function energy.powerOf(item, euMax)
     local name = tostring(item and item.name or "")
     local gtnltier, gtnlamps = name:match("wirelessenergyhatch(%a+)(%d+)a$")
     local tier = tonumber(name:match("tier%.(%d+)"))
+    local head = name:match("^hatch%.([^.]+)") or name
+    local voltage, amps, tunnel
     if gtnltier then
-        local voltage = tierVoltage(gtnltier)
+        voltage = tierVoltage(gtnltier)
         if not voltage then return 0 end
         amps = tonumber(gtnlamps)
     elseif tier then
-        local head   = name:match("^hatch%.([^.]+)") or ""
-        local amps   = 1
-        local multi  = tonumber(head:match("multi(%d+)"))
-        local tunnel = tonumber(head:match("tunnel(%d+)"))
+        local multi = tonumber(head:match("multi(%d+)"))
+        tunnel = tonumber(head:match("tunnel(%d+)"))
+        amps = 1
         if multi then
             amps = multi
         elseif tunnel then
             amps = 64 * (4 ^ tunnel)
         end
-        local voltage = 8 * (4 ^ tier)
-    else 
+        voltage = 8 * (4 ^ tier)
+    else
         return 0
     end
     local nominal = voltage * amps

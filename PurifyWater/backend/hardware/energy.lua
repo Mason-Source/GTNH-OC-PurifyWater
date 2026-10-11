@@ -39,7 +39,7 @@ local function tierVoltage(word)
 end
 
 -- 激光仓的"缓冲倍数"K：容量 = 吞吐量 × K（实测：普通激光 24、无线激光和GTNL无线多安仓 4000）
--- @param head string `hatch.` 后的第一段（如 energywirelesstunnel7）
+-- @param head string 机器名 `hatch.` 后的第一段（如 energywirelesstunnel7）；没有 `hatch.` 前缀（GTNL）时是整名
 -- @return number|nil
 local function bufferK(head)
     if head:find("wirelesstunnel", 1, true) then return 4000 end -- 必须先判它：名字里也含 "tunnel"
@@ -70,17 +70,19 @@ function energy.powerOf(item, euMax)
 
     local gtnltier, gtnlamps = name:match("wirelessenergyhatch(%a+)(%d+)a$")
     local tier = tonumber(name:match("tier%.(%d+)"))
+    -- 只看 `hatch.` 后的第一段（如 energywirelesstunnel7），别让 tier 段混进系数识别；
+    -- GTNL 的名字没有 `hatch.` 前缀（如 wirelessenergyhatchuev256a），整段当 head 给 bufferK 认
+    local head = name:match("^hatch%.([^.]+)") or name
+    -- 【必须在这里声明】下面两个分支都要写 voltage/amps，出了分支还要用；声明在分支里会退化成全局 nil
+    local voltage, amps, tunnel
     if gtnltier then -- GTNL无线能源仓（名字档）：电压名 + `<安>a`，没有 `tier.<N>` 段，故必须在数字档之前判
-        local voltage = tierVoltage(gtnltier)
+        voltage = tierVoltage(gtnltier)
         if not voltage then return 0 end
         amps = tonumber(gtnlamps)
     elseif tier then
-        -- 只看 `hatch.` 后的第一段（如 energywirelesstunnel7），别让 tier 段混进系数识别
-        local head   = name:match("^hatch%.([^.]+)") or ""
-
-        local amps   = 1
-        local multi  = tonumber(head:match("multi(%d+)"))
-        local tunnel = tonumber(head:match("tunnel(%d+)"))
+        local multi = tonumber(head:match("multi(%d+)"))
+        tunnel = tonumber(head:match("tunnel(%d+)"))
+        amps = 1
         if multi then
             amps = multi
         elseif tunnel then
@@ -88,8 +90,8 @@ function energy.powerOf(item, euMax)
         end
 
         -- 用 ^ 而不是 math.pow（Lua 5.3+ 已移除 math.pow）
-        local voltage = 8 * (4 ^ tier)
-    else 
+        voltage = 8 * (4 ^ tier)
+    else
         return 0
     end
     local nominal = voltage * amps -- 名字值：电流拉满时
