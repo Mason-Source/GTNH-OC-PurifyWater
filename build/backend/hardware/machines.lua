@@ -6,7 +6,8 @@ local energyItem      = nil
 local otherReg        = {}
 local ENERGY_PATTERNS = {
     "hatch.energytunnel", "hatch.energywirelesstunnel",
-    "hatch.energymulti", "hatch.energywirelessmulti"
+    "hatch.energymulti", "hatch.energywirelessmulti",
+    "wirelessenergyhatch"
 }
 local function isEnergy(name)
     for _, pattern in ipairs(ENERGY_PATTERNS) do

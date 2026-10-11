@@ -23,10 +23,11 @@ local energyItem      = nil
 -- 非净水厂的 gt_machine（只计数，便于排查接线错）
 local otherReg        = {}
 
--- 能量仓的机器名特征（四类；**只认出名字就算功率**，公式见 energy.lua）
+-- 能量仓的机器名特征（五类；**只认出名字就算功率**，公式见 energy.lua，最后适配GTNL的wirelessenergyhatchuev256a格式的能量仓）
 local ENERGY_PATTERNS = {
     "hatch.energytunnel", "hatch.energywirelesstunnel",
-    "hatch.energymulti", "hatch.energywirelessmulti"
+    "hatch.energymulti", "hatch.energywirelessmulti",
+    "wirelessenergyhatch"
 }
 
 --- 是否能量仓（按机器名）
