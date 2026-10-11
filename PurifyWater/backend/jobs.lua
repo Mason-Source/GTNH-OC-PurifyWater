@@ -9,7 +9,9 @@
 --
 -- 【任务清单（ARCHITECTURE.md §3）】
 --   T1 scanHardware  10 s  硬件 + 功率 + 拓扑清单         -> hardware_missing / hardware_changed / power_changed
---   T2 readFluids     5 s  1-8 级水量 + 阈值文件变更       -> fluid_state / level_rules_changed（**读不到按 0**）
+--   T2s scanSettings  5 s  settings.txt **一次读全**，各配置模块比对
+--                                                       -> level_rules_changed / rates_changed（谁变发谁）
+--   T2 readFluids     5 s  1-8 级水量                    -> 无事件（写 state.fluids；**读不到按 0**）
 --   T3 observePlants  5 s  T0-8 开关与活动；在运行的读传感器
 --                                                       -> plant_observed ×N / parallel_sample ×N
 --                                                       （边沿、归因、不一致判定在 app/watch）
@@ -34,7 +36,9 @@ local energy           = require("backend.hardware.energy")
 local fluid            = require("backend.hardware.fluid")
 
 local inventory        = require("backend.store.inventory")
+local settings         = require("backend.store.settings")
 local levels_config    = require("backend.store.levels_config")
+local rates_config     = require("backend.store.rates_config")
 local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
 local power            = require("backend.domain.power")
@@ -110,7 +114,11 @@ function jobs.scanHardware()
     last.scanCount          = last.scanCount + 1
     last.summary            = summary
     last.meOk, last.missing = meProxy ~= nil, missing
-    state.power.all         = totalPower
+    -- 功率是"建议并行"的输入之一：**值真变**时重算并发布（受控触发，见 domain/modes/*）
+    if state.power.all ~= totalPower then
+        state.power.all = totalPower
+        system.publish()
+    end
 
     -- 【当前并行 vs 建议并行】有任一等级不一致就写一行警告。
     --   当前并行 = snap.sample（本周期读到、**未确认**）；学习并行 = snap.parallel（连续 N 周期确认）。
@@ -147,26 +155,41 @@ function jobs.scanHardware()
 end
 
 --------------------------------------------------------------------------------
--- T2 水位读取（5 秒）：1-8 级 + 阈值文件变更检测
+-- T2s 设置扫描（5 秒）：**一次读全 settings.txt**，交给各配置模块比对；
+--   谁的内容变了就发谁的事件（阈值/勾选 -> level_rules_changed；权重/T7 倍率 -> rates_changed）。
+-- 【为什么集中在这里】周期任务只注册一个"设置扫描"：以后再加可手改的配置，只要在下面多喊一次
+--   对应模块的 load(snapshot) 即可 —— 不必新增定时任务，也不会把 settings.txt 读好几遍。
 --------------------------------------------------------------------------------
 
-function jobs.readFluids()
-    -- 阈值文件变更检测（用户可能刚在电脑上改过）：变了就广播，让调度立刻按新阈值来
-    local changed, why = levels_config.load()
+function jobs.scanSettings()
+    local snapshot = settings.load() or {}
+
+    local changed, why = levels_config.load(snapshot)
     if changed then
         scheduler.emit("level_rules_changed", { why = why })
     end
 
+    local ratesChanged, ratesWhy = rates_config.load(snapshot)
+    if ratesChanged then
+        scheduler.emit("rates_changed", { why = ratesWhy })
+        system.publish()   -- 权重/倍率是速率模式建议的输入
+    end
+end
+
+--------------------------------------------------------------------------------
+-- T2 水位读取（5 秒）：1-8 级
+--------------------------------------------------------------------------------
+
+function jobs.readFluids()
     local amounts, ok, err = fluid.readAll()
     last.fluidOk, last.fluidErr = ok, err
 
     -- 【读不到按 0】网络里暂时还没水缓存是**正常态**，不是故障：按 0 判定的结果天然是
     --   "只强开源头那一级（T1）、L2-T8 被原料线挡住"——已经是安全退化，不必停机、更不必锁定。
     --   长期取 0 而网络里有水，用户看水量列/曲线会自己察觉。ok/err 只留作排查（退出摘要那行）。
+    -- 【没有下游事件】水位只是快照里的一个数：调度每拍（T4）本来就会用最新水位现算可开启性。
     for level = 1, constants.LEVEL_COUNT do
-        local amount = (ok and amounts[level]) or 0
-        state.fluids[level] = amount
-        scheduler.emit("fluid_state", { level = level, amount = amount })
+        state.fluids[level] = (ok and amounts[level]) or 0
     end
 end
 
@@ -191,6 +214,9 @@ function jobs.observePlants()
     --   是每轮 2×机器数 次白费调用；主机自己报这个数，读一次够用。它只有两个去处：
     --   进主机快照（界面周期条）与交给 tracker 判周期边界 —— T1-8 不记进度。
     local hostProgress, hostProgressMax
+    -- 【发布粒度】台数变了几级都只算"这一轮变过"：整轮观测结束后统一发布一次，
+    --   避免逐级发布（循环中途 top 逐级增长，会连打出 T1-3→T1-8 那种一串）
+    local deployedChanged = false
 
     for level = constants.HOST_LEVEL, constants.LEVEL_COUNT do
         local list                 = machines.of(level)
@@ -264,7 +290,11 @@ function jobs.observePlants()
             end
         end
 
-        snap.deployed = total
+        -- 台数是"建议并行"的另一个输入：这里只记"这一轮变过"，整轮跑完再统一发布
+        if snap.deployed ~= total then
+            snap.deployed    = total
+            deployedChanged  = true
+        end
         snap.switch   = observed
         snap.active   = (total > 0 and actFail == 0) and running or nil
         snap.machines = facts -- 逐台原始读数（详情页直接用）
@@ -289,6 +319,9 @@ function jobs.observePlants()
             })
         end
     end
+
+    -- 一轮观测结束：台数变过才重新生成建议（每轮最多一次，且此时的快照已完整）
+    if deployedChanged then system.publish() end
 
     logs.debug(string.format("[调试] 观测：单元在跑 %d 台，本轮采样 %d 条", runningTotal, samples))
 end
@@ -340,6 +373,7 @@ function jobs.register()
     end
 
     add("scanHardware", CONFIG.INTERVAL.HARDWARE, jobs.scanHardware)  -- T1
+    add("scanSettings", CONFIG.INTERVAL.SETTINGS, jobs.scanSettings)  -- T2s（注册在 T2 之前：设置先落，再按新设置读水位）
     add("readFluids", CONFIG.INTERVAL.FLUID, jobs.readFluids)         -- T2
     add("observePlants", CONFIG.INTERVAL.OBSERVE, jobs.observePlants) -- T3
     add("schedule", CONFIG.INTERVAL.SCHEDULE, jobs.schedule)          -- T4

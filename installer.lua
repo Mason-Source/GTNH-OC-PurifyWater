@@ -2,7 +2,8 @@
 -- bootstrap_installer.lua —— PurifyWater 稳定引导器
 --------------------------------------------------------------------------------
 -- 用户入口固定为 installer.lua。本文件每次运行都重新下载最新 installer_core.lua，
--- 原样传递全部命令行参数，并在 core 成功后删除本次下载的 core。
+-- 传递全部命令行参数（**若直连失败、改用备用镜像才拿到 core，则额外补一个 --mirror**，
+-- 让 core 不要从直连重来一遍），并在 core 成功后删除本次下载的 core。
 --------------------------------------------------------------------------------
 
 local component  = require("component")
@@ -70,18 +71,25 @@ local function main()
     end
 
     local tryOrder = (PREFER == 2) and { 2, 1 } or { 1, 2 }
-    local chunk, why
+    local chunk, why, usedCh
     for _, tryCh in ipairs(tryOrder) do
         local url = (tryCh == 2 and MIRROR_PREFIX ~= "") and (MIRROR_PREFIX .. CORE_URL) or CORE_URL
         print(string.format("下载安装器核心：%s", tryCh == 2 and "备用" or "直连"))
         local ok
         ok, chunk = fetch(url, CORE_PATH)
         log(string.format("下载 core：%s -> %s", url, ok and "OK" or tostring(chunk)))
-        if ok then break end
+        if ok then usedCh = tryCh break end
         why = chunk
         chunk = nil
     end
     if not chunk then error("无法下载最新安装器：" .. tostring(why)) end
+
+    -- 【把实际通道告诉 core】直连失败、改用备用才拿到 core 时，给 core 补一个 --mirror
+    --   （否则 core 会自己从直连重新试一遍全部文件）
+    if usedCh == 2 and PREFER ~= 2 then
+        ARGS[#ARGS + 1] = "--mirror"
+        print("（直连不可用，已让安装器核心首选备用通道）")
+    end
 
     print("执行安装器核心：" .. CORE_NAME)
     local ok, result, err = xpcall(function()

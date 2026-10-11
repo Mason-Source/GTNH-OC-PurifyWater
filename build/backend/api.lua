@@ -5,6 +5,8 @@ local runtime       = require("core.runtime")
 local scheduler     = require("core.scheduler")
 local jobs          = require("backend.jobs")
 local app           = require("backend.app.system")
+local autostart     = require("backend.app.autostart")
+local ratesApp      = require("backend.app.rates")
 local power         = require("backend.domain.power")
 local rules         = require("backend.domain.rules")
 local levels_config = require("backend.store.levels_config")
@@ -15,7 +17,14 @@ function api.read.system()
     return {
         running  = state.system.running == true,
         locked   = state.system.locked == true,
-        priority = state.system.priority
+        priority = state.system.priority,
+        mode             = state.system.mode,
+        enforceThreshold = state.system.enforceThreshold == true,
+        t7Boost          = state.system.t7Boost,
+        effect           = app.effect(),
+        autostart      = state.system.autostart == true,
+        autostartStale = state.system.autostartStale == true,
+        autostartPath  = state.system.autostartPath
     }
 end
 function api.read.hardware()
@@ -55,11 +64,7 @@ function api.read.levels()
             sample = snap.sample,
             success = snap.success,
             parallel = snap.parallel,
-            source = snap.source,
             machines = perMachine,
-            openable = snap.openable,
-            forced = snap.forced,
-            reason = snap.reason,
             water = state.fluids[level],
             rule = {
                 threshold           = rule.threshold or 0,
@@ -68,9 +73,8 @@ function api.read.levels()
                 effectiveThreshold  = line.actual,
                 thresholdOverridden = line.overridden
             },
-            reserveLine     = rules.reserveLine(level),
-            nextReserveLine = line.next,
-            suggest         = power.suggest(level)
+            suggest         = power.suggest(level),
+            weight          = state.rates[level] or 0
         }
     end
     return out
@@ -78,8 +82,7 @@ end
 function api.read.power()
     return {
         all = state.power.all or 0,
-        used = (state.power.all or 0) - (state.power.budget or 0),
-        budget = state.power.budget or 0
+        used = (state.power.all or 0) - (state.power.budget or 0)
     }
 end
 function api.read.plan()
@@ -125,20 +128,30 @@ COMMANDS.system_toggle = function()
     local running = app.toggle("界面")
     return true, running and "已启动系统" or "已停机"
 end
-COMMANDS.system_start = function()
-    app.start("界面")
-    return true, "已启动系统"
-end
-COMMANDS.system_stop = function()
-    app.stop("界面")
-    return true, "已停机"
-end
 COMMANDS.priority_toggle = function()
     app.onPriorityToggle()
     return true, ""
 end
-COMMANDS.schedule_now = function()
-    if not app.requestPlan("界面") then return false, "系统没在跑、已锁定或方案没变" end
+COMMANDS.autostart_toggle = function()
+    autostart.toggle()
+    return true, ""
+end
+COMMANDS.mode_toggle = function()
+    ratesApp.toggleMode()
+    return true, ""
+end
+COMMANDS.threshold_enforce_toggle = function()
+    ratesApp.toggleEnforceThreshold()
+    return true, ""
+end
+COMMANDS.weight_set = function(level, weight)
+    local ok, text = ratesApp.setWeight(level, weight)
+    if not ok then return false, text end
+    return true, ""
+end
+COMMANDS.t7_boost_set = function(value)
+    local ok, text = ratesApp.setT7Boost(value)
+    if not ok then return false, text end
     return true, ""
 end
 COMMANDS.refresh = function()
@@ -156,7 +169,7 @@ COMMANDS.level_rules_set = function(level, threshold, enabled)
     threshold = tonumber(threshold)
     if threshold and threshold < 0 then return false, "阈值不能为负" end
     if not levels_config.set(level, threshold, enabled) then
-        return false, "写阈值文件失败"
+        return false, "写配置失败（settings.txt）"
     end
     levels_config.load()
     scheduler.emit("level_rules_changed", {
@@ -164,11 +177,13 @@ COMMANDS.level_rules_set = function(level, threshold, enabled)
     })
     return true, "已保存"
 end
-COMMANDS.level_enabled_toggle = function(level)
+COMMANDS.level_enabled_set = function(level, enabled)
     level = tonumber(level)
-    local rule = state.rules[level]
-    if not rule then return false, "无该级配置" end
-    return COMMANDS.level_rules_set(level, rule.threshold, not rule.enabled)
+    if not level or level < 1 or level > constants.LEVEL_COUNT then
+        return false, "等级无效"
+    end
+    if type(enabled) ~= "boolean" then return false, "勾选值无效" end
+    return COMMANDS.level_rules_set(level, nil, enabled)
 end
 COMMANDS.net_toggle = function()
     return true, net.toggle()

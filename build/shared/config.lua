@@ -1,14 +1,14 @@
 local CONFIG                     = {}
 CONFIG.FILES                     = {
-    LEVELS   = "data/levels.txt",   
+    SETTINGS = "data/settings.txt", 
     HARDWARE = "data/hardware.txt", 
     HISTORY  = "data/history.dat",  
     LOG      = "data/log.txt",      
-    SETTINGS = "data/settings.txt", 
     TRACE    = "data/last_run.txt"  
 }
 CONFIG.INTERVAL                  = {
     HARDWARE  = 10,
+    SETTINGS  = 5,
     FLUID     = 5,
     OBSERVE   = 5,
     SCHEDULE  = 5,
@@ -41,6 +41,12 @@ CONFIG.PARALLEL_FALLBACK_SAMPLES = 24
 CONFIG.LEVELS_DEFAULT            = {
     threshold = 0,
     enabled   = true
+}
+CONFIG.RATES                     = {
+    DEFAULT_WEIGHT   = 0,
+    MAX_WEIGHT       = 100,
+    DEFAULT_T7_BOOST = 1,
+    ZERO_MARGIN      = 0.05
 }
 CONFIG.SYSTEM                    = {
     PRIORITY_DEFAULT        = "low", 

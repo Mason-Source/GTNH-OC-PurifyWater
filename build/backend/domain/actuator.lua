@@ -1,5 +1,4 @@
 local constants = require("shared.constants")
-local state     = require("shared.state")
 local computer  = require("computer")
 local device    = require("backend.hardware.device")
 local machines  = require("backend.hardware.machines")

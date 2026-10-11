@@ -22,6 +22,8 @@ local scheduler     = require("core.scheduler")
 
 local jobs          = require("backend.jobs")
 local app           = require("backend.app.system")
+local autostart     = require("backend.app.autostart")
+local ratesApp      = require("backend.app.rates")
 local power         = require("backend.domain.power")
 local rules         = require("backend.domain.rules")
 
@@ -35,13 +37,24 @@ local api           = { read = {} }
 -- 只读
 --------------------------------------------------------------------------------
 
---- 系统状态（界面正文只需这三个）
+--- 系统状态（界面正文只需前三个；后三个给配置页「运行设置」）
 -- @return table
 function api.read.system()
     return {
         running  = state.system.running == true,
         locked   = state.system.locked == true,
-        priority = state.system.priority
+        priority = state.system.priority,
+        -- 调度模式：阈值 / 速率；速率模式的子参数与 T7 增产倍率（配置页读它们）
+        mode             = state.system.mode,
+        enforceThreshold = state.system.enforceThreshold == true,
+        t7Boost          = state.system.t7Boost,
+        -- 配置表格各列算不算数（勾选/阈值/权重/增产）：判定只有一处（app/system.effect），
+        --   界面照着灰显与写日志（不生效的照样能改，只是"已保存待用"）
+        effect           = app.effect(),
+        -- 开机自启：真源 = $HOME/.shrc 里那段标记块（见 backend/store/autostart）
+        autostart      = state.system.autostart == true,
+        autostartStale = state.system.autostartStale == true,
+        autostartPath  = state.system.autostartPath
     }
 end
 
@@ -89,11 +102,7 @@ function api.read.levels()
             sample = snap.sample,
             success = snap.success,
             parallel = snap.parallel,
-            source = snap.source,
             machines = perMachine,
-            openable = snap.openable,
-            forced = snap.forced,
-            reason = snap.reason,
             water = state.fluids[level],
             rule = {
                 threshold           = rule.threshold or 0,
@@ -102,21 +111,19 @@ function api.read.levels()
                 effectiveThreshold  = line.actual,
                 thresholdOverridden = line.overridden
             },
-            reserveLine     = rules.reserveLine(level),
-            nextReserveLine = line.next,
-            suggest         = power.suggest(level)
+            suggest         = power.suggest(level),
+            weight          = state.rates[level] or 0
         }
     end
     return out
 end
 
---- 功率（全厂可用 / 本轮已用 / 剩余 + 逐级预估）
+--- 功率（全厂可用 / 本轮已用）
 -- @return table
 function api.read.power()
     return {
         all = state.power.all or 0,
-        used = (state.power.all or 0) - (state.power.budget or 0),
-        budget = state.power.budget or 0
+        used = (state.power.all or 0) - (state.power.budget or 0)
     }
 end
 
@@ -193,24 +200,42 @@ COMMANDS.system_toggle = function()
     return true, running and "已启动系统" or "已停机"
 end
 
-COMMANDS.system_start = function()
-    app.start("界面")
-    return true, "已启动系统"
-end
-
-COMMANDS.system_stop = function()
-    app.stop("界面")
-    return true, "已停机"
-end
-
 COMMANDS.priority_toggle = function()
     -- 日志由 plan.togglePriority 写（含“是否保存成功”），重排由 system 统一发起
     app.onPriorityToggle()
     return true, ""
 end
 
-COMMANDS.schedule_now = function()
-    if not app.requestPlan("界面") then return false, "系统没在跑、已锁定或方案没变" end
+COMMANDS.autostart_toggle = function()
+    -- 日志由 backend/app/autostart.toggle 写（含写入失败那条）；这里只转发
+    autostart.toggle()
+    return true, ""
+end
+
+COMMANDS.mode_toggle = function()
+    -- 日志由 backend/app/rates.toggleMode 写（含"是否保存成功"）
+    ratesApp.toggleMode()
+    return true, ""
+end
+
+COMMANDS.threshold_enforce_toggle = function()
+    -- 日志由 backend/app/rates.toggleEnforceThreshold 写
+    ratesApp.toggleEnforceThreshold()
+    return true, ""
+end
+
+--- 改某级权重（0..MAX 的整数）；非法值由用例层拒绝并给一行提示
+COMMANDS.weight_set = function(level, weight)
+    local ok, text = ratesApp.setWeight(level, weight)
+    if not ok then return false, text end
+    return true, ""
+end
+
+--- 设定 T7 增产倍率（配置页「增产」列的选项键盘，点即提交）
+-- @param value number|string 只能是 constants.T7_BOOST_OPTIONS 里的档位
+COMMANDS.t7_boost_set = function(value)
+    local ok, text = ratesApp.setT7Boost(value)
+    if not ok then return false, text end
     return true, ""
 end
 
@@ -234,7 +259,7 @@ COMMANDS.level_rules_set = function(level, threshold, enabled)
     threshold = tonumber(threshold)
     if threshold and threshold < 0 then return false, "阈值不能为负" end
     if not levels_config.set(level, threshold, enabled) then
-        return false, "写阈值文件失败"
+        return false, "写配置失败（settings.txt）"
     end
     levels_config.load() -- 立刻生效（不等下一个 5 秒）
     scheduler.emit("level_rules_changed", {
@@ -243,11 +268,16 @@ COMMANDS.level_rules_set = function(level, threshold, enabled)
     return true, "已保存"
 end
 
-COMMANDS.level_enabled_toggle = function(level)
+--- 直接设定某级勾选（配置页「勾选」格点一下 = 切换；取反由界面算，后端只认"设成什么"）
+-- @param level number
+-- @param enabled boolean
+COMMANDS.level_enabled_set = function(level, enabled)
     level = tonumber(level)
-    local rule = state.rules[level]
-    if not rule then return false, "无该级配置" end
-    return COMMANDS.level_rules_set(level, rule.threshold, not rule.enabled)
+    if not level or level < 1 or level > constants.LEVEL_COUNT then
+        return false, "等级无效"
+    end
+    if type(enabled) ~= "boolean" then return false, "勾选值无效" end
+    return COMMANDS.level_rules_set(level, nil, enabled)
 end
 
 COMMANDS.net_toggle = function()

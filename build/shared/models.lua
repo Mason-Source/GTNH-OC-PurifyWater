@@ -1,21 +1,12 @@
-local constants = require("shared.constants")
 local models    = {}
-function models.levelRule(line)
-    local s = tostring(line or ""):gsub("^%s+", "")
-    if s == "" or s:sub(1, 1) == "#" then return nil end
-    local lv, threshold, enabled = s:match("^(%d+)%s+([%d%.eE%+%-]+)%s*(%S*)")
-    lv = tonumber(lv)
-    if not lv or lv < 1 or lv > constants.LEVEL_COUNT then return nil end
-    local on = true
-    local e = tostring(enabled or ""):lower()
-    if e == "false" or e == "0" or e == "no" or e == "off" then on = false end
-    return lv, tonumber(threshold), on
+function models.bool(value, default)
+    if type(value) == "boolean" then return value end
+    local s = tostring(value or ""):lower()
+    if s == "" then return default ~= false end
+    if s == "false" or s == "0" or s == "no" or s == "off" then return false end
+    return true
 end
-function models.levelRuleLine(level, threshold, enabled)
-    return string.format("%d %d %s", level, math.floor(tonumber(threshold) or 0),
-        enabled and "true" or "false")
-end
-models.SNAP_VERSION = 7
+models.SNAP_VERSION = 8
 local function clean(value)
     return (tostring(value == nil and "-" or value):gsub("[|\r\n]", "/"))
 end
@@ -59,8 +50,7 @@ function models.snapshot(payload)
         lines[#lines + 1] = table.concat({
             "L", numOf(row.level), numOf(row.deployed), flagOf(row.switch),
             numOf(row.active), numOf(row.water),
-            numOf(row.rule and (row.rule.effectiveThreshold or row.rule.threshold)),
-            flagOf(row.openable), flagOf(row.forced), clean(row.reason)
+            numOf(row.rule and (row.rule.effectiveThreshold or row.rule.threshold))
         }, "|")
     end
     return table.concat(lines, "\n") .. "\n"
@@ -120,10 +110,7 @@ function models.parseSnapshot(text)
                     switch = readFlag(f[4]),
                     active = tonumber(f[5]),
                     water = tonumber(f[6]),
-                    rule = { threshold = tonumber(f[7]) or 0 },
-                    openable = readFlag(f[8]),
-                    forced = readFlag(f[9]),
-                    reason = f[10]
+                    rule = { threshold = tonumber(f[7]) or 0 }
                 }
             end
         end

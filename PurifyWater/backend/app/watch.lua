@@ -1,16 +1,14 @@
 --------------------------------------------------------------------------------
 -- backend/app/watch.lua
 --------------------------------------------------------------------------------
--- 【职责】把**事实事件**变成**判断与动作**：开关边沿、归因、不一致、采样可信化、水位判定
--- 【依赖】domain/{rules,tracker}、app/system、shared/*
+-- 【职责】把**事实事件**变成**判断与动作**：开关边沿、归因、不一致、采样可信化
+-- 【依赖】domain/tracker、app/system、shared/*
 -- 【被谁用】backend/handlers.lua
 --
 -- 【事实 vs 判断】jobs 只报"读到了什么"，所有"这意味着什么"都在这里：
 --   plant_observed    -> 边沿(日志) + 偏离判定(switch_mismatch) + 主机开关对齐
 --   parallel_sample   -> tracker 连续确认 -> parallel_write / parallel_discarded
---   parallel_write    -> **不论谁在写**：写内存学习值 -> 重算规则 -> 立刻重排
---   fluid_state       -> 重判该级开启条件 -> 条件翻转就广播 level_openable_changed -> 重排
---                        （水位读不到 = 按 0：网络里暂时没水缓存是正常态，不停机、不锁定）
+--   level_rules_changed / rates_changed -> 审计提示 + 立刻重排
 --
 -- 【判定放在这里】实测开关 vs **读数那一刻的方案**（payload.want，随事实一起上来）：
 --   一致 -> 无事；**偏离 -> 只可能是人（或外部线路）动过机器** -> 停机 + 锁定，
@@ -26,7 +24,6 @@ local state     = require("shared.state")
 
 local scheduler = require("core.scheduler")
 
-local rules     = require("backend.domain.rules")
 local tracker   = require("backend.domain.tracker")
 
 local machines  = require("backend.hardware.machines")
@@ -35,40 +32,21 @@ local system    = require("backend.app.system")
 
 local watch     = {}
 
---- 水位读数（T2 -> 5 秒一次，1-8 级）
--- 【触发事件】各等级水的开启条件判定
--- @param payload table { level, amount }
-function watch.onFluidState(payload)
-    local level                             = payload.level
-    state.fluids[level]                     = payload.amount
-
-    local snap                              = state.plant(level)
-    local before                            = snap.openable
-    local verdict                           = rules.evaluate(level)
-    snap.openable, snap.forced, snap.reason = verdict.open, verdict.forced, verdict.reason
-
-    if before ~= nil and before ~= verdict.open then
-        logs.system(string.format("%s 开启条件%s：%s", constants.levelLabel(level),
-            verdict.open and "满足" or "不满足", verdict.reason))
-        scheduler.emit("level_openable_changed", {
-            level = level, open = verdict.open, forced = verdict.forced, reason = verdict.reason
-        })
-    end
-end
-
---- 阈值文件变更（T2 检测到 -> 重判全部等级并立刻重排）
+--- 阈值文件变更（T2 检测到 -> 审计提示 + 立刻重排）
 -- @param payload table { why }
 function watch.onLevelRulesChanged(payload)
     -- 行数统计属排查信息：改完阈值后，界面上的新值本身就是回执。
     logs.debug("[调试] " .. tostring(payload and payload.why or "阈值配置已更新"))
-    rules.refreshAll()
     system.auditThresholds()
     system.requestPlan("阈值变化")
 end
 
---- 某级开启条件翻转 -> 交给 system 的统一调度闸
-function watch.onLevelOpenableChanged()
-    system.requestPlan("开启条件变化")
+--- 速率配置变更（T2 检测到 -> 审计提示 + 立刻重排）
+-- @param payload table { why }
+function watch.onRatesChanged(payload)
+    logs.debug("[调试] " .. tostring(payload and payload.why or "速率配置已更新"))
+    system.auditThresholds()
+    system.requestPlan("权重变化")
 end
 
 --- 观测事实（T3 -> 5 秒一次，T0-8 每级一行）

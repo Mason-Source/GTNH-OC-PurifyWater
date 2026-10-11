@@ -21,13 +21,6 @@ function utils.formatShortNumber(num)
     end
     return tostring(math.floor(num))
 end
-function utils.firstNumber(text)
-    if type(text) ~= "string" then return nil end
-    local cleaned = text:gsub("(%d),(%d)", "%1%2")
-    local numStr = cleaned:match("([%-%+]?%d+%.?%d*[eE]?[%-%+]?%d*)")
-    if not numStr then return nil end
-    return tonumber(numStr)
-end
 function utils.normalizeFluidName(name)
     local clean = tostring(name or ""):lower():gsub("^gregtech:", ""):gsub("^%s+", ""):gsub("%s+$", "")
     return clean, "gregtech:" .. clean

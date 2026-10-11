@@ -92,8 +92,6 @@ local function buildView()
         row.switchText = (row.deployed == 0) and "未部署"
             or ((row.switch == nil) and "读不到" or (row.switch and "开" or "关"))
         row.running = (row.deployed > 0) and ((row.active or 0) > 0) or false
-        row.verdict = (row.forced and "保供开") or (row.openable and "开" or "关")
-        row.reasonText = row.reason or "-"
     end
     return data
 end
@@ -125,13 +123,13 @@ local function draw()
             hostText, data.hardware.me and "已连接" or "未连接",
             data.hardware.host or 0, data.hardware.units or 0, data.hardware.energy or 0),
         (hostSwitch == false) and theme.COLORS.TEXT_RED or theme.COLORS.TEXT)
-    widgets.drawText(2, 6, "级   开关   运行   水量            阈值            判定     理由",
+    widgets.drawText(2, 6, "级   开关   运行   水量            阈值",
         theme.COLORS.TEXT_DISABLED)
     for level = 1, 8 do
         local row = data.levels[level]
-        widgets.drawText(2, 6 + level, string.format("T%d  %-6s %-6s %-15s %-15s %-8s %s",
+        widgets.drawText(2, 6 + level, string.format("T%d  %-6s %-6s %-15s %-15s",
                 level, row.switchText, row.running and "运行" or "停",
-                row.waterText, row.thresholdText, row.verdict, tostring(row.reasonText)),
+                row.waterText, row.thresholdText),
             row.running and theme.COLORS.TEXT or theme.COLORS.TEXT_DISABLED)
     end
 end

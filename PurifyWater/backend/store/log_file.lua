@@ -44,10 +44,4 @@ function log_file.flush()
     return true, string.format("日志已落盘（+%d 行，共 %d 行）", #fresh, #lines)
 end
 
---- 日志文件实际路径（排查用）
--- @return string
-function log_file.path()
-    return path()
-end
-
 return log_file

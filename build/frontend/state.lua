@@ -2,7 +2,6 @@ local fstate = {
     gpu            = nil,
     W              = 0,
     H              = 0,
-    grid           = { rows = {}, cols = {} },
     areas          = {},
     currentTab     = "overview",               
     tabs           = {},
@@ -12,11 +11,12 @@ local fstate = {
     chartLevel     = 0,
     chartChips     = {},
     logTitle       = nil,
-    configRows     = {},
-    checkCells     = {},
-    keyCells       = {},
-    configSel      = nil,
-    configBuf      = nil,
+    autostartRow   = nil,
+    cells          = {},
+    keys           = {},
+    editLevel      = nil,
+    editField      = nil,
+    editBuf        = nil,
     lastData       = nil,
     baseResolution = nil,
     render         = { fingerprints = {}, forceAll = true, subs = {} }
@@ -40,9 +40,10 @@ function fstate.invalidateAll()
 end
 function fstate.clearHitboxes()
     fstate.buttons, fstate.tabs, fstate.chartChips = {}, {}, {}
-    fstate.checkCells, fstate.configRows, fstate.keyCells = {}, {}, {}
+    fstate.cells, fstate.keys = {}, {}
     fstate.levelRows = {}
     fstate.logTitle = nil
+    fstate.autostartRow = nil
 end
 function fstate.hit(box, x, y)
     if not box then return false end

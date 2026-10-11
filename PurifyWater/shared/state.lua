@@ -23,9 +23,8 @@ local state = {}
 --     parallel = number|nil,      -- **本轮学习并行**：连续 N 个运行周期一致 -> tracker 确认 -> 写这里
 --                                 --   （仅内存；power.adopted 优先用它，停机/暂停后清空）
 --     source   = "measured"|"suggest"|nil,
---     openable = true|false|nil,  -- 可开启性判定结果（domain/rules 写）
---     forced   = true|false|nil,  -- 是否由下一级保供线覆盖用户阈值而开启
---     reason   = string|nil       -- 没开的原因（给人看的一句话）
+--     suggest  = number              -- **每级建议并行**（当前模式的账算结果；由 mode.publish() 单点发布，
+--                                    --   读侧只读 —— 见 ARCHITECTURE R4；未部署 / 在役前缀外恒 0）
 -- }
 -- progress / progressMax：**只有主机（T0）这一行有**（T3 只读主机；各水厂周期同步，T1-8 不记进度）；界面画周期条用
 state.plants = {}
@@ -48,7 +47,15 @@ state.system = {
     running    = false, -- 自动控制系统是否在跑
     locked     = false, -- 进过安全状态：**不自动恢复**（硬锁时界面按钮还会变灰）
     lockReason = nil,   -- 锁定原因（**只记第一条**：谁先出事谁是真因）
-    priority   = "low"  -- "low" = 低级水优先 / "high" = 高级水优先
+    mode       = "threshold", -- 调度模式（domain/mode 注册 id；main 启动时按 settings 的 mode 键覆盖）
+    lastSuggest = nil,        -- 本次会话的"建议并行"基线（启动会话时重置；变了就全关+锁定，见 app/system）
+    enforceThreshold = true,  -- 速率模式子参数：是否仍受水位阈值约束（main 启动时按 settings 覆盖）
+    t7Boost    = 1,           -- 速率模型：T7 超导粗胚增产倍率（1 / 1.25 / 1.5 / 1.75 / 2）
+    priority   = "low", -- "low" = 低级水优先 / "high" = 高级水优先
+    -- 开机自启（真源 = $HOME/.shrc 里那段标记块，由 backend/store/autostart 读回）：
+    autostart      = false, -- 勾选 = 块在且指向当前应用目录
+    autostartStale = false, -- 块在但指向别的路径（界面显示未勾选 + 启动时警告）
+    autostartPath  = nil    -- 那个 .shrc 的完整路径（界面文案里显示）
 }
 
 -- 曲线（界面用；盘上的历史见 store/history）
@@ -58,8 +65,14 @@ state.chart = { points = {} }
 -- 无线广播状态（T7）：enabled = 总开关；frame = 分片帧号（接收端据此拼帧）；warned = 失败只报一次
 state.net = { enabled = false, frame = 0, warned = nil }
 
--- 阈值 + 勾选（由 store/levels_config 从文件读入）：rules[level] = { threshold = number, enabled = boolean }
+-- 阈值 + 勾选（由 store/levels_config 从 settings.txt 读入）：rules[level] = { threshold = number, enabled = boolean }
 state.rules = {}
+
+-- 速率模式权重（由 store/rates_config 从 settings.txt 读入）：rates[level] = number（0..MAX，净产出权重）
+state.rates = {}
+
+-- 速率模式发布的审计明细（{ {level=, kind=, ...}, ... }；由 rate.publish() 随方案一起发布，rate.audit 读）
+state.planNotes = {}
 
 -- 已下发过的方案（避免重复下发同一套指令）
 state.lastPlan = {}
@@ -68,6 +81,22 @@ state.lastPlan = {}
 state.dirty = {}
 
 -- ============================ 访问器 ============================
+
+--- **在役前缀**的最高等级：从 T1 起连续有机器（deployed > 0）的最后一级；T1 没机器 = 0
+-- 【两套模式共用口径】速率链条只覆盖这一段（断点之后要求"某级跑 N 并行"而它没有机器 = 无解），
+--   阈值审计也只统计这一段（更高级的阈值/权重属于**预填**，不算错、不报警）。
+-- @return number 0..LEVEL_COUNT
+function state.serviceTop()
+    local top = 0
+    for level = 1, constants.LEVEL_COUNT do
+        if (state.plant(level).deployed or 0) > 0 then
+            top = level
+        else
+            break
+        end
+    end
+    return top
+end
 
 --- 取某等级的快照（不存在就建一个空的）
 -- @param level number 0 = 主机

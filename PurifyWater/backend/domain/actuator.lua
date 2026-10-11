@@ -2,7 +2,7 @@
 -- backend/domain/actuator.lua
 --------------------------------------------------------------------------------
 -- 【职责】全工程**唯一**改机器开关的地方：算好的方案 -> setWorkAllowed
--- 【依赖】backend/hardware/{device,machines}、shared/{state,constants}
+-- 【依赖】backend/hardware/{device,machines}、shared/constants
 -- 【被谁用】backend/app/plan（正常调度）、backend/app/system（停机 / 急停）
 --
 -- 【只发不读】本文件不读回开关、也不记"我发过什么"：`setWorkAllowed` 立即写进机器的 `mWorks`、
@@ -13,7 +13,6 @@
 --------------------------------------------------------------------------------
 
 local constants = require("shared.constants")
-local state     = require("shared.state")
 local computer  = require("computer")
 local device    = require("backend.hardware.device")
 local machines  = require("backend.hardware.machines")

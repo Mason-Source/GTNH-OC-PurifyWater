@@ -1,36 +1,25 @@
 local constants = require("shared.constants")
-local utils     = require("shared.utils")
 local state     = require("shared.state")
 local power     = require("backend.domain.power")
-local rules     = require("backend.domain.rules")
+local mode      = require("backend.domain.mode")
 local allocator = {}
 function allocator.plan(order)
-    order           = order or state.priorityOrder()
+    order           = order or mode.order()
     local budget    = state.power.all or 0
     local remaining = budget
-    local result    = { plan = {}, reasons = {}, used = 0, budget = budget, opened = {}, warn = nil }
+    local result    = { plan = {}, used = 0, budget = budget, opened = {}, warn = nil }
     if budget <= 0 then
         result.warn = "[警告] 全厂可用功率为 0（能量仓没读到？）—— 本轮不开启任何等级"
     end
     for _, level in ipairs(order) do
-        local verdict      = rules.evaluate(level)
-        local cost         = power.levelPower(level)
-        local open, reason = verdict.open, verdict.reason
-        if open and cost > remaining then
-            open   = false
-            reason = string.format("功率不足：需 %s，剩 %s",
-                utils.formatShortNumber(cost), utils.formatShortNumber(remaining))
-        end
-        result.plan[level]    = open
-        result.reasons[level] = reason
+        local open = mode.evaluate(level)
+        local cost = power.levelPower(level)
+        if open and cost > remaining then open = false end
+        result.plan[level] = open
         if open then
             remaining = remaining - cost
             result.opened[#result.opened + 1] = level
         end
-        local snap    = state.plant(level)
-        snap.openable = verdict.open
-        snap.forced   = verdict.forced
-        snap.reason   = reason
     end
     result.used = budget - remaining
     state.power.budget = remaining

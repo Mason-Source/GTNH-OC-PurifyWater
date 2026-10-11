@@ -7,56 +7,87 @@ local scheduler       = require("core.scheduler")
 local actuator        = require("backend.domain.actuator")
 local tracker         = require("backend.domain.tracker")
 local learning        = require("backend.domain.learning")
-local rules           = require("backend.domain.rules")
+local mode            = require("backend.domain.mode")
+local power           = require("backend.domain.power")
 local plan            = require("backend.app.plan")
 local HOST_OFF_REASON = "主机开关已关"
 local system          = {}
 local lastWarnSig     = nil
-local warnedAllZero   = false
+local lastZeroWarn    = nil
+function system.publish()
+    local text = mode.publish()
+    if text and text ~= "" then logs.warn(text) end
+end
+function system.effect()
+    local rate   = state.system.mode == "rate"
+    local gated  = (not rate) or (state.system.enforceThreshold == true)
+    return {
+        enabled   = gated,
+        threshold = gated,
+        weight    = rate,
+        boost     = rate
+    }
+end
 function system.requestPlan(reason)
     if not state.isActive() then return false end
+    if system.checkSuggestionChange() then return false end
     return plan.run(reason)
 end
-function system.auditThresholds()
-    local texts, sig = {}, {}
-    local hasPositive = false
-    for level = 1, constants.LEVEL_COUNT do
-        local rule = state.rules[level]
-        local line = rules.lines(level)
-        if rule and (rule.threshold or 0) > 0 then hasPositive = true end
-        if line.overridden then
-            texts[#texts + 1] = string.format(
-                "%s 用户阈值 %s 低于下一级保供线 %s，实际按 %s 执行",
-                constants.levelLabel(level),
-                utils.formatShortNumber(line.user),
-                utils.formatShortNumber(line.next),
-                utils.formatShortNumber(line.actual))
-            sig[#sig + 1] = table.concat({ level, line.user, line.next }, ":")
-        end
+function system.resetSuggestBaseline()
+    state.system.lastSuggest = power.suggestVector()
+end
+function system.checkSuggestionChange()
+    local now = power.suggestVector()
+    local was = state.system.lastSuggest
+    if not was then
+        state.system.lastSuggest = now
+        return false
     end
-    if not hasPositive then
-        if not warnedAllZero then
-            logs.warn("所有等级的用户阈值均为 0，暂按低保线执行；请前往【配置】页面设置阈值")
-            warnedAllZero = true
+    local changed = {}
+    for level = 1, constants.LEVEL_COUNT do
+        local a, b = tonumber(was[level]) or 0, tonumber(now[level]) or 0
+        if a ~= b then changed[#changed + 1] = { level = level, from = a, to = b } end
+    end
+    if #changed == 0 then return false end
+    state.system.lastSuggest = now
+    if not state.isActive() then return false end
+    local texts = {}
+    for _, item in ipairs(changed) do
+        texts[#texts + 1] = string.format("%s %s→%s", constants.levelLabel(item.level),
+            tostring(item.from), tostring(item.to))
+    end
+    logs.debug("[调试] 建议并行变化（已锁定）：" .. table.concat(texts, "、"))
+    system.enterSafeState("建议并行已变化", true, "请按新建议调好机器并行，再点【启动系统】")
+    return true
+end
+function system.auditThresholds()
+    local texts, signature, warnText, debugTexts = mode.audit()
+    texts     = texts or {}
+    signature = signature or ""
+    debugTexts = debugTexts or {}
+    if warnText then
+        if warnText ~= lastZeroWarn then
+            logs.warn(warnText)
+            lastZeroWarn = warnText
         end
     else
-        warnedAllZero = false
+        lastZeroWarn = nil
     end
-    local signature = table.concat(sig, "|")
     if signature == lastWarnSig then return end
     lastWarnSig = signature
     for _, text in ipairs(texts) do logs.warn(text) end
+    for _, text in ipairs(debugTexts) do logs.debug(text) end
 end
 function system.resetLearning(why)
     tracker.resetAll()
     learning.forgetAll()
-    rules.refreshAll()
     scheduler.emit("rules_audit", { reason = why })
 end
 local function beginSession(reason)
     system.resetLearning(reason)
     state.system.running = true
     plan.forget()
+    system.resetSuggestBaseline()
     logs.system("并行学习已重置：本轮将从建议值重新学习真实并行")
 end
 local function endSession(reason)
@@ -147,16 +178,9 @@ function system.onParallelWrite(payload)
     logs.system(string.format("%s 本次实际并行 = %s（来源：%s）",
         constants.levelLabel(payload.level), utils.formatShortNumber(payload.parallel),
         tostring(payload.by or "传感器确认")))
-    rules.refreshAll()
     system.auditThresholds()
     system.requestPlan("并行更新")
     return true
-end
-function system.onSystemStart(payload)
-    system.start(payload and payload.reason)
-end
-function system.onSystemStop(payload)
-    system.stop(payload and payload.reason)
 end
 function system.onPriorityToggle()
     plan.togglePriority()

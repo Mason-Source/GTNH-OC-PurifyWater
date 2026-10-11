@@ -2,34 +2,19 @@ local constants = require("shared.constants")
 local logs      = require("shared.logs")
 local state     = require("shared.state")
 local scheduler = require("core.scheduler")
-local rules     = require("backend.domain.rules")
 local tracker   = require("backend.domain.tracker")
 local machines  = require("backend.hardware.machines")
 local system    = require("backend.app.system")
 local watch     = {}
-function watch.onFluidState(payload)
-    local level                             = payload.level
-    state.fluids[level]                     = payload.amount
-    local snap                              = state.plant(level)
-    local before                            = snap.openable
-    local verdict                           = rules.evaluate(level)
-    snap.openable, snap.forced, snap.reason = verdict.open, verdict.forced, verdict.reason
-    if before ~= nil and before ~= verdict.open then
-        logs.system(string.format("%s 开启条件%s：%s", constants.levelLabel(level),
-            verdict.open and "满足" or "不满足", verdict.reason))
-        scheduler.emit("level_openable_changed", {
-            level = level, open = verdict.open, forced = verdict.forced, reason = verdict.reason
-        })
-    end
-end
 function watch.onLevelRulesChanged(payload)
     logs.debug("[调试] " .. tostring(payload and payload.why or "阈值配置已更新"))
-    rules.refreshAll()
     system.auditThresholds()
     system.requestPlan("阈值变化")
 end
-function watch.onLevelOpenableChanged()
-    system.requestPlan("开启条件变化")
+function watch.onRatesChanged(payload)
+    logs.debug("[调试] " .. tostring(payload and payload.why or "速率配置已更新"))
+    system.auditThresholds()
+    system.requestPlan("权重变化")
 end
 function watch.onPlantObserved(payload)
     local level     = payload.level

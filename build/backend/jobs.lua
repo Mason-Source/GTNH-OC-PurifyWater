@@ -11,7 +11,9 @@ local probes           = require("backend.hardware.probes")
 local energy           = require("backend.hardware.energy")
 local fluid            = require("backend.hardware.fluid")
 local inventory        = require("backend.store.inventory")
+local settings         = require("backend.store.settings")
 local levels_config    = require("backend.store.levels_config")
+local rates_config     = require("backend.store.rates_config")
 local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
 local power            = require("backend.domain.power")
@@ -53,7 +55,10 @@ function jobs.scanHardware()
     last.scanCount          = last.scanCount + 1
     last.summary            = summary
     last.meOk, last.missing = meProxy ~= nil, missing
-    state.power.all         = totalPower
+    if state.power.all ~= totalPower then
+        state.power.all = totalPower
+        system.publish()
+    end
     local warnParts         = {}
     for _, item in ipairs(power.parallelMismatch()) do
         warnParts[#warnParts + 1] = string.format("%s 当前 %s / 建议 %s", constants.levelLabel(item.level),
@@ -80,23 +85,30 @@ function jobs.scanHardware()
         last.scanCount, summary.host, summary.unitTotal, hatch and hatch.name or "无", summary.other,
         utils.formatNumber(totalPower), (#missing > 0 and table.concat(missing, "/") or "无")))
 end
-function jobs.readFluids()
-    local changed, why = levels_config.load()
+function jobs.scanSettings()
+    local snapshot = settings.load() or {}
+    local changed, why = levels_config.load(snapshot)
     if changed then
         scheduler.emit("level_rules_changed", { why = why })
     end
+    local ratesChanged, ratesWhy = rates_config.load(snapshot)
+    if ratesChanged then
+        scheduler.emit("rates_changed", { why = ratesWhy })
+        system.publish()
+    end
+end
+function jobs.readFluids()
     local amounts, ok, err = fluid.readAll()
     last.fluidOk, last.fluidErr = ok, err
     for level = 1, constants.LEVEL_COUNT do
-        local amount = (ok and amounts[level]) or 0
-        state.fluids[level] = amount
-        scheduler.emit("fluid_state", { level = level, amount = amount })
+        state.fluids[level] = (ok and amounts[level]) or 0
     end
 end
 function jobs.observePlants()
     local samples, runningTotal = 0, 0
     local hostAllowed = nil
     local hostProgress, hostProgressMax
+    local deployedChanged = false
     for level = constants.HOST_LEVEL, constants.LEVEL_COUNT do
         local list                 = machines.of(level)
         local snap                 = state.plant(level)
@@ -151,7 +163,10 @@ function jobs.observePlants()
                 observed = false
             end
         end
-        snap.deployed = total
+        if snap.deployed ~= total then
+            snap.deployed    = total
+            deployedChanged  = true
+        end
         snap.switch   = observed
         snap.active   = (total > 0 and actFail == 0) and running or nil
         snap.machines = facts
@@ -169,6 +184,7 @@ function jobs.observePlants()
             })
         end
     end
+    if deployedChanged then system.publish() end
     logs.debug(string.format("[调试] 观测：单元在跑 %d 台，本轮采样 %d 条", runningTotal, samples))
 end
 function jobs.schedule()
@@ -193,6 +209,7 @@ function jobs.register()
         if scheduler.every(...) then n = n + 1 end
     end
     add("scanHardware", CONFIG.INTERVAL.HARDWARE, jobs.scanHardware)  
+    add("scanSettings", CONFIG.INTERVAL.SETTINGS, jobs.scanSettings)  
     add("readFluids", CONFIG.INTERVAL.FLUID, jobs.readFluids)         
     add("observePlants", CONFIG.INTERVAL.OBSERVE, jobs.observePlants) 
     add("schedule", CONFIG.INTERVAL.SCHEDULE, jobs.schedule)          

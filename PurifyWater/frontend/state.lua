@@ -22,8 +22,8 @@ local fstate = {
     gpu            = nil,
     W              = 0,
     H              = 0,                        -- 当前分辨率
-    grid           = { rows = {}, cols = {} }, -- **网格**：布局的唯一坐标来源（layout 填）
-    areas          = {},                       -- 由网格派生：{ tabBar=, control=, status=, chart=, log=, config=, editline=, keypad= }
+    -- （网格只是 layout 的中间量，不存 fstate：面板要的矩形全在 areas 里）
+    areas          = {},                       -- 由网格派生：{ tabBar=, control=, status=, chart=, log=, config=, keypad=, settings= }
     currentTab     = "overview",               -- "overview" | "config"（详情不是页：它只是 status 面板换内容）
     tabs           = {},                       -- 页签热区 { [name] = { x, y, w, h } }
     buttons        = {},                       -- 按钮热区 { [name] = { x, y, w, h, action, label } }
@@ -32,12 +32,13 @@ local fstate = {
     chartLevel     = 0,                        -- 0 = 全部（柱状图）｜ 1..8 = 单级（2 游戏日曲线）
     chartChips     = {},                       -- 图表标题行的等级按钮热区 { [level] = {x,y,w,h} }，level 0 = 全部
     logTitle       = nil,                      -- 日志面板标题热区（点它切 user/debug）
-    -- 配置页：点某级选中它 -> 用常驻虚拟键盘改阈值（物理键盘不输入）
-    configRows     = {},                       -- 每级那一行的点击热区 { [level] = box }
-    checkCells     = {},                       -- 勾选格热区 { [level] = box }（点它只切勾选，不算选中）
-    keyCells       = {},                       -- 虚拟键盘热区（数组；每项带 kind/value，语义在 input）
-    configSel      = nil,                      -- 选中的等级（1..8；nil = 未选中）
-    configBuf      = nil,                      -- 输入缓冲：**纯数字串**（kL），不带逗号不带单位
+    autostartRow   = nil,                      -- 配置页「运行设置」子项行热区（点它切开机自启）
+    -- 配置页「调度配置」大表：点某一格选中 -> 表格下方的固定键盘槽换成那一列自己的键盘
+    cells          = {},                       -- 每格热区 { [level] = { enabled=, threshold=, weight=, boost= } }
+    keys           = {},                       -- 键盘槽热区（数组；每项带 kind/value，语义在 input）
+    editLevel      = nil,                      -- 选中的等级（1..8；nil = 未选中）
+    editField      = nil,                      -- 选中的列（"threshold" / "weight" / "boost"；勾选不走选中）
+    editBuf        = nil,                      -- 数字列的输入缓冲（纯数字串；选项列用不着）
     lastData       = nil,                      -- 本帧视图数据（input 编辑时要读"当前值"）
     baseResolution = nil,                      -- 程序启动前的分辨率（退出时还原，见 render.restoreResolution）
     render         = { fingerprints = {}, forceAll = true, subs = {} }
@@ -78,9 +79,10 @@ end
 --- 清空所有热区（布局变化时必须清，否则会点到旧坐标）
 function fstate.clearHitboxes()
     fstate.buttons, fstate.tabs, fstate.chartChips = {}, {}, {}
-    fstate.checkCells, fstate.configRows, fstate.keyCells = {}, {}, {}
+    fstate.cells, fstate.keys = {}, {}
     fstate.levelRows = {}
     fstate.logTitle = nil
+    fstate.autostartRow = nil
 end
 
 --- 命中测试
