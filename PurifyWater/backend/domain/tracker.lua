@@ -8,11 +8,11 @@
 --
 -- 并行在配方周期内恒定、周期之间变：连续 N 个周期同值才稳定。
 -- 周期边界 = 进度回落；进度读不到 = 异常：不结算、不猜周期，等恢复。
--- 周期值取该周期最后一次读数。
+-- 结算用"进度回落那一拍"读到的值；并行在周期内恒定，与"周期最后一次读数"等价。
 --
--- tracker[address] = { progress, cycleValue, value, streak, confirmed }
---   progress 上次进度；cycleValue 本周期最后读数；value 上周期结算值；streak 连续同值数；
---   confirmed 已确认学习并行（详情页逐台展示）。
+-- tracker[address] = { progress, value, streak, confirmed }
+--   progress 上次进度；value 上周期结算值；streak 连续同值数；
+--   confirmed 已确认学习并行（详情页逐台展示；同值不再重复 write）。
 --------------------------------------------------------------------------------
 
 local CONFIG  = require("shared.config")
@@ -40,15 +40,13 @@ function tracker.feed(address, value, progress)
 
     local t = state.read.tracker()[address]
     if not t then
-        -- 首读：记代表值，等首周期结束
+        -- 首读：只记进度，等首周期结束
         state.write.trackerSet(address, {
-            progress   = tonumber(progress),
-            cycleValue = value
+            progress = tonumber(progress)
         })
         return "discard", string.format("首读 %d（待首周期结束）", value)
     end
 
-    t.cycleValue = value -- 本周期最后读数
 
     -- ① 周期结束？进度回落算结束。读不到进度 = 异常：不结算（等恢复，不猜周期）
     if type(progress) ~= "number" then
@@ -63,13 +61,15 @@ function tracker.feed(address, value, progress)
 
     -- ② 周期结算：连续同值？
     if t.value == value then
-        t.streak = (t.streak or 0) + 1
+        t.streak = math.min(limit(), (t.streak or 0) + 1) -- 计满即止，等值变化
     else
         t.value, t.streak = value, 1
     end
     if t.streak >= limit() then
-        -- 已确认；下次变再数
-        t.streak    = 0
+        if t.confirmed == value then
+            -- 已确认过的值：熄火（不重复 write；watch 的"与学习值相同"闸门是第二道防线）
+            return "discard", string.format("与已确认值相同（%d）", value)
+        end
         -- 逐台确认值（详情页展示）
         t.confirmed = value
         return "write", string.format("连续 %d 个运行周期均为 %d", limit(), value)

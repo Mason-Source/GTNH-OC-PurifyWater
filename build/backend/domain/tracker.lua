@@ -12,12 +12,10 @@ function tracker.feed(address, value, progress)
     local t = state.read.tracker()[address]
     if not t then
         state.write.trackerSet(address, {
-            progress   = tonumber(progress),
-            cycleValue = value
+            progress = tonumber(progress)
         })
         return "discard", string.format("首读 %d（待首周期结束）", value)
     end
-    t.cycleValue = value
     if type(progress) ~= "number" then
         return "discard", "进度不可读（不结算）"
     end
@@ -28,12 +26,14 @@ function tracker.feed(address, value, progress)
         return "discard", string.format("本周期读到 %d（周期未结束）", value)
     end
     if t.value == value then
-        t.streak = (t.streak or 0) + 1
+        t.streak = math.min(limit(), (t.streak or 0) + 1)
     else
         t.value, t.streak = value, 1
     end
     if t.streak >= limit() then
-        t.streak    = 0
+        if t.confirmed == value then
+            return "discard", string.format("与已确认值相同（%d）", value)
+        end
         t.confirmed = value
         return "write", string.format("连续 %d 个运行周期均为 %d", limit(), value)
     end

@@ -72,8 +72,8 @@ function watch.onParallelSample(payload)
         })
         return
     end
-    local snap = state.read.plant(payload.level)
-    if snap.source == "measured" and snap.parallel == payload.parallel then
+    local learned = state.read.learn(payload.level)
+    if learned and learned.source == "measured" and learned.parallel == payload.parallel then
         scheduler.emit("parallel_discarded", {
             level = payload.level, value = payload.parallel, why = "与学习值相同"
         })
