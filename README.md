@@ -34,9 +34,13 @@ GTNH 净水线自动控制程序（OpenComputers）。一台 OC 电脑接上 ME 
 
 ```bash
 wget -f https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/installer.lua installer.lua
-lua installer.lua              # 主控端（默认；不会装 monitor.lua）
-lua installer.lua --monitor    # 镜像端：只装公共 + 镜像端文件（不会出现 backend/ 与 main.lua）
+installer.lua              # 主控端（默认；不会装 monitor.lua）
+installer.lua --monitor    # 镜像端：只装公共 + 镜像端文件（不会出现 backend/ 与 main.lua）
 ```
+
+> **参数传法（OpenOS 特性）**：`lua` 命令在执行脚本前会先摘掉 `--xxx` / `-x` 参数（`shell.parse`），
+> 脚本收不到 —— 带参数时请**直接执行**程序（`./installer.lua --monitor`）；若必须用 `lua` 前缀，
+> 参数前要加 `--`：`lua installer.lua -- --monitor`。不带参数时两种写法等价。
 
 装到「当前目录/PurifyWater」，默认拉 `build/`（去注释版）。安装器参数：
 
@@ -52,8 +56,9 @@ lua installer.lua --monitor    # 镜像端：只装公共 + 镜像端文件（�
 
 ```bash
 cd PurifyWater
-lua main.lua          # 主控端（按 Q 退出）；--debug 打开调度/采样细节
-lua monitor.lua       # 镜像端（等控制端开了【无线广播】再跑；Q 退出）
+./main.lua            # 主控端（按 Q 退出）
+./main.lua --debug    # 打开调度/采样细节
+./monitor.lua [端口]  # 镜像端（等控制端开了【无线广播】再跑；Q 退出）
 ```
 
 
@@ -64,7 +69,7 @@ lua monitor.lua       # 镜像端（等控制端开了【无线广播】再跑�
 （两通道交替，默认最多 4 轮，不在单个文件上重复等待）。引导器下载核心时遵循同一规则，并将实际使用的
 通道传给核心，核心不再从直连重试。
 
-排查下载失败：加 `--debug` 重跑（`lua installer.lua --debug`），完整过程写入安装目录下的
+排查下载失败：加 `--debug` 重跑（`./installer.lua --debug`），完整过程写入安装目录下的
 `installer.log`（含轮次、网址与失败原因）；普通安装不写该日志。
 
 ### 手动放置
@@ -73,9 +78,9 @@ lua monitor.lua       # 镜像端（等控制端开了【无线广播】再跑�
 
 ```bash
 cd /home/PurifyWater
-lua main.lua              # 控制端（按 Q 退出）
-lua main.lua --debug      # 打开 debug 级日志（调度/采样细节）
-lua monitor.lua [端口]    # 镜像端（另一台电脑 + 无线网卡，不调度）
+./main.lua                # 控制端（按 Q 退出）
+./main.lua --debug        # 打开 debug 级日志（调度/采样细节）
+./monitor.lua [端口]      # 镜像端（另一台电脑 + 无线网卡，不调度）
 ```
 
 **首次启动不需要任何配置文件**：`data/settings.txt` 会按「阈值 0 + 全部勾选」自动生成
@@ -92,8 +97,8 @@ lua monitor.lua [端口]    # 镜像端（另一台电脑 + 无线网卡，不�
 
 - **硬件**：屏幕 + **Network Card / Wireless Network Card / Linked Card**（组件类型为 `modem` 或
   `tunnel`；）。两端须在同一网络内，端口一致（默认 `4096`）。
-- **安装**：`lua installer.lua --monitor`（不含 `backend/` 与 `main.lua`）。
-- **使用**：控制端打开【无线广播】后，在镜像端运行 `lua monitor.lua [端口]`。
+- **安装**：`./installer.lua --monitor`（不含 `backend/` 与 `main.lua`）。
+- **使用**：控制端打开【无线广播】后，在镜像端运行 `./monitor.lua [端口]`。
 - **界面**：复用控制端总览面板。控制按钮除【退出程序】外均禁用；该按钮只退出镜像端进程，不影响控制端。
   图表档位、各级详情可正常操作（均为本地视图动作，不发送命令）；配置页不可进入。
 - **数据范围**：曲线窗口固定为 1 游戏日（控制端单级曲线为 2 游戏日）；日志仅显示控制端当前级别已发送的行。

@@ -1,5 +1,5 @@
 local energy = {}
-local constants = require("shared.constants")
+local constants = require("shared.constants") 
 local function tierVoltage(word)
     local key = word:lower()
     for _, tier in ipairs(constants.VOLTAGE_TIERS) do
@@ -45,8 +45,11 @@ function energy.powerOf(item, euMax)
         if k and type(euMax) == "number" and euMax > 0 then
             local exact = euMax / k
             if exact ~= nominal then
-                return whole(exact), string.format("激光仓限流至 %.0f A（最高 %.0f A）",
-                    exact / voltage, amps)
+                return whole(exact), string.format(
+                    "激光仓限流至 %.0f A（最高 %.0f A）",
+                    exact / voltage,
+                    amps
+                )
             end
             return whole(exact)
         end
