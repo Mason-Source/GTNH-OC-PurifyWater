@@ -2,23 +2,15 @@
 -- core/runtime.lua
 --------------------------------------------------------------------------------
 -- 【职责】主循环：拉事件 -> 派发 -> 跑到期任务 -> 帧钩子；以及退出语义
--- 【不做什么】不注册任务、不订阅业务事件（那是 backend/jobs 与 backend/handlers）
+-- 【不做什么】不注册任务、不订阅业务事件（backend/jobs、backend/handlers）
 -- 【依赖】event / computer、core/scheduler、shared/{config,logs}
 -- 【被谁用】main.lua、monitor.lua
 --
--- 【一帧是什么】循环的一次迭代：
---     timeout = clamp(最近到期任务, LOOP_MIN_IDLE, LOOP_MAX_IDLE)
---     ev      = { event.pull(timeout) }   -- **必须包成表**，见下方警告
---     scheduler.emit(ev[1], ev)           -- 事件入队（ev 是完整事件数组）
---     scheduler.tick(now)                 -- 到期任务（每个最多一次）
---     scheduler.drain()                   -- 派发事件（含任务里刚 emit 的）
---     frame(帧钩子)                      -- 绘制与输入（只在脏时真画）
+-- 一帧：event.pull(clamp(最近到期, MIN, MAX)) -> emit -> tick -> drain -> frame。
 --
--- 【必须包成表】`event.pull` 返回**多个值**（事件名, 地址, char, code, 玩家名）；
---   `local ev = event.pull(...)` 只拿到事件名字符串 -> `ev[1]` 是 nil -> 事件以 nil 为名发出
---   -> 订阅全部静默失效（现象：按键与 Ctrl+C 无反应而帧计数照涨）。必须 `{ event.pull(...) }`。
+-- event.pull 返回多个值：必须包成表，否则只拿到事件名，订阅会静默失效。
 --
--- 【timeout 必须夹紧】不夹会忙等（到期时间已过）或界面不刷新（没有任务时永远睡）。
+-- timeout 必须夹紧：不夹会忙等或界面不刷新。
 --------------------------------------------------------------------------------
 
 local event      = require("event")
@@ -54,9 +46,7 @@ function runtime.quitReason() return quitReason end
 -- 主循环
 --------------------------------------------------------------------------------
 
---- 丢掉"上一个进程残留的 interrupted"
--- 上一个进程残留的 interrupted 会被新进程第一帧消费，表现为"刚启动就自动退出"。
--- 只丢 interrupted，其它事件照常入队派发。
+--- 丢掉上个进程残留的 interrupted（否则刚启动即退出）；其它事件照常入队。
 -- @return number 丢掉的条数
 function runtime.discardStaleInterrupts()
     local dropped = 0
@@ -70,7 +60,7 @@ function runtime.discardStaleInterrupts()
         end
     end
     if dropped > 0 then
-        logs.debug(string.format("[调试] 忽略启动瞬间的 %d 个 interrupted（上一个进程的残留）", dropped))
+        logs.debug(string.format("忽略启动瞬间的 %d 个 interrupted（上个进程残留）", dropped))
     end
     return dropped
 end
@@ -94,15 +84,15 @@ function runtime.frame(onFrame)
     local now  = computer.uptime()
     local wait = clampWait(scheduler.secondsUntilDue(now))
 
-    -- ① 等事件（超时也回来，不阻塞：这是"异步"的全部含义）
-    -- 【必须包成表】event.pull 返回多个值，直接接第一个只会得到事件名（详见文件头）
+    -- ① 等事件（超时也回来）
+    -- event.pull 返回多值，必须包成表（见文件头）
     local ev   = { event.pull(wait) }
     if ev[1] ~= nil then
         scheduler.emit(ev[1], ev)
     end
     if quitting then return true end
 
-    -- ② 跑到期任务 + 派发事件，最后刷新一帧界面
+    -- ② 跑到期任务、派发事件、刷一帧
     scheduler.tick(computer.uptime())
     scheduler.drain()
     if onFrame then onFrame() end
@@ -123,11 +113,8 @@ end
 -- 常用订阅：退出相关（各入口调用一次即可）
 --------------------------------------------------------------------------------
 
---- 订阅"退出"类事件：Ctrl+C(interrupted) 与 键盘 Q
--- 退出语义属主循环，不放业务层。
--- 【按键判据】`key_down` 的载荷排布是 (事件名, 键盘地址, char, code, 玩家名)；
---   char 是**数字 ASCII 码**（不是字符），某些布局下可能是 0，所以认 `utils.isKey`
---   （字符或扫描码两种判据），不要自己写 tostring(char) 比较。
+--- 订阅退出事件：Ctrl+C 与 Q。
+-- char 是 ASCII 码数字，部分布局为 0；用 utils.isKey 双判据。
 function runtime.bindQuitKeys()
     scheduler.on("interrupted", function()
         runtime.quit("Ctrl+C")

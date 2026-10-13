@@ -12,7 +12,7 @@ function settings.draw(data)
     local on    = sys.autostart == true
     local stale = sys.autostartStale == true
     local shrc  = tostring(sys.autostartPath or ".shrc")
-    widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(stale))
+    widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(stale or (data.system.priority == "high")))
     widgets.drawText(area.x + 2, area.y + 1, "运行设置", theme.COLORS.TEXT_CYAN)
     if area.h < 4 then return end
     local rowY = area.y + 2
@@ -22,13 +22,13 @@ function settings.draw(data)
     if area.h < 5 then return end
     local hint, color
     if stale then
-        hint  = string.format("检测到 %s 里的自启指向其它路径（勾选可更新为当前路径）", shrc)
+        hint  = string.format("自启指向其它路径：%s（勾选更新为当前路径）", shrc)
         color = theme.COLORS.TEXT_RED
     elseif on then
-        hint  = string.format("电脑开机后自动运行本程序（已写入 %s，下次开机生效）", shrc)
+        hint  = string.format("开机自动运行（已写入 %s）", shrc)
         color = theme.COLORS.TEXT_DISABLED
     else
-        hint  = string.format("电脑开机后需手动运行本程序（勾选后写入 %s，下次开机生效）", shrc)
+        hint  = string.format("开机需手动运行（勾选后写入 %s）", shrc)
         color = theme.COLORS.TEXT_DISABLED
     end
     widgets.drawText(area.x + 6, area.y + 3, hint, color)
@@ -39,7 +39,7 @@ function settings.fingerprint(data)
     return table.concat({
         tostring(area and area.x or 0), tostring(area and area.y or 0),
         tostring(area and area.w or 0), tostring(area and area.h or 0),
-        tostring(sys.autostart), tostring(sys.autostartStale), tostring(sys.autostartPath)
+        tostring(sys.autostart), tostring(sys.autostartStale), tostring(sys.autostartPath), tostring(sys.priority)
     }, "\x1f")
 end
 return settings

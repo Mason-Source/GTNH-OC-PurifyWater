@@ -6,12 +6,9 @@
 -- 【依赖】hardware/device、shared/{constants,utils}
 -- 【被谁用】backend/jobs（T2）
 --
--- 【读不到返回 nil，调用方按 0 处理】网络里暂时还没水缓存是**正常态**：按 0 判定的结果天然是
---   "只强开源头那一级"，不用停机、不用锁（见 jobs.readFluids 与 ARCHITECTURE 决策 36）。
--- 【语义】网络列表读成功时，**列表里没有这种流体 = 网络里就是 0**，不是"读不到"
---   （只有整份列表没拿到才算读不到）。
--- 【读法】一次拿回全网流体（`getFluidsInNetwork`，实机验证可用）。
--- 【调用约定】走 `device.invoke`（见 device.lua）。
+-- 读取失败返回 nil，调用方按 0：无缓存是正常态，只强开源头级。
+-- 列表读成功但无该流体 = 数量 0；整份列表失败才算读取失败。
+-- 走 device.invoke。
 --------------------------------------------------------------------------------
 
 local constants = require("shared.constants")
@@ -20,7 +17,7 @@ local device    = require("backend.hardware.device")
 
 local fluid     = {}
 
---- 从返回项里取数量（AE2 各版本字段名可能是 size 或 amount）
+--- 取数量（AE2 字段名 size/amount）
 -- @param item table|nil
 -- @return number
 local function amountOf(item)
@@ -29,7 +26,7 @@ local function amountOf(item)
 end
 
 --- 读 1-8 级水量
--- @return table { [level] = number }（读不到时该级为 nil）
+-- @return table { [level] = number }（读取失败时该级为 nil）
 -- @return boolean 本次是否读到
 -- @return string|nil 失败原因（成功为 nil）
 function fluid.readAll()
@@ -50,7 +47,7 @@ function fluid.readAll()
 
     local out = {}
     for level = 1, constants.LEVEL_COUNT do
-        -- 列表是权威：列表里没有 = 网络里就是 0（不是读不到）
+        -- 列表权威：无该项 = 0
         out[level] = byName[utils.normalizeFluidName(constants.FLUID_NAMES[level])] or 0
     end
     return out, true, nil

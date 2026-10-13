@@ -14,9 +14,9 @@ function mode.has(id)
     return id ~= nil and impls[tostring(id)] ~= nil
 end
 function mode.current()
-    local impl = impls[tostring(state.system.mode or "threshold")] or impls.threshold
+    local impl = impls[tostring(state.read.mode() or "threshold")] or impls.threshold
     if not impl then
-        error("没有注册任何调度模式（main.lua 里的 mode.register 漏了？）")
+        error("没有注册任何调度模式")
     end
     return impl
 end

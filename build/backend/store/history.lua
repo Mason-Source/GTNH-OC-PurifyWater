@@ -28,53 +28,60 @@ local function at(list, index)
 end
 local function sample()
     local water = {}
-    for level = 1, constants.LEVEL_COUNT do water[level] = state.fluids[level] or 0 end
+    for level = 1, constants.LEVEL_COUNT do water[level] = state.read.fluids()[level] or 0 end
     local opened = 0
     for level = 1, constants.LEVEL_COUNT do
-        if state.lastPlan[level] == true then opened = opened + 1 end
+        if state.read.lastPlan()[level] == true then opened = opened + 1 end
     end
     return {
         t = os.time(),
         w = water,
-        p = state.power.all or 0,
-        u = (state.power.all or 0) - (state.power.budget or 0),
+        p = state.read.powerAll(),
+        u = state.read.powerAll() - state.read.budget(),
         o = opened
     }
 end
 function history.append()
-    local point         = sample()
-    local points        = state.chart.points
-    points[#points + 1] = point
-    local limit         = (CONFIG.CHART and CONFIG.CHART.POINTS) or 80
-    while #points > limit do table.remove(points, 1) end
+    local point = sample()
+    state.write.chartAppend(point)
+    local points = state.read.chart().points
+    local limit  = (CONFIG.CHART and CONFIG.CHART.POINTS) or 80
+    if #points > limit then
+        local tail = {}
+        for i = #points - limit + 1, #points do tail[#tail + 1] = points[i] end
+        state.write.chartSetPoints(tail)
+    end
     return point
 end
 function history.load()
-    local chart = state.chart
-    chart.points = {}
-    if not files.exists(path()) then return false, "没有历史文件（从零开始记）" end
+    local chartPoints = {}
+    if not files.exists(path()) then
+        state.write.chartSetPoints(chartPoints)
+        return false, "没有历史文件"
+    end
     local points = 0
     for _, line in ipairs(files.readLines(path())) do
         local mark, nums = numbers(line)
         if mark == "P" and #nums >= 4 + constants.LEVEL_COUNT then
             local w = {}
             for level = 1, constants.LEVEL_COUNT do w[level] = at(nums, 4 + level) end
-            chart.points[#chart.points + 1] = {
+            chartPoints[#chartPoints + 1] = {
                 t = at(nums, 1), p = at(nums, 2), u = at(nums, 3), o = at(nums, 4), w = w
             }
             points = points + 1
         end
     end
     local limit = (CONFIG.CHART and CONFIG.CHART.POINTS) or 80
-    if #chart.points > limit then
+    if #chartPoints > limit then
         local tail = {}
-        for i = #chart.points - limit + 1, #chart.points do tail[#tail + 1] = chart.points[i] end
-        chart.points = tail
+        for i = #chartPoints - limit + 1, #chartPoints do tail[#tail + 1] = chartPoints[i] end
+        chartPoints = tail
     end
-    return points > 0, string.format("历史：%d 个采样点（保留最新 %d 个）", points, #chart.points)
+    state.write.chartSetPoints(chartPoints)
+    return points > 0, string.format("历史：%d 个采样点（保留最新 %d 个）", points, #chartPoints)
 end
 function history.save()
-    local chart = state.chart
+    local chart = state.read.chart()
     local lines = {
         "# 净水厂历史（自动生成：删掉会重新记录）",
         "# P <时刻> <可用功率> <已用功率> <开着级数> <T1..T8 水量>"
@@ -89,12 +96,10 @@ function history.save()
     end
     local ok, err = files.writeLines(path(), lines)
     if not ok then return false, "写历史失败：" .. tostring(err) end
-    state.clearDirty("history")
     return true, string.format("历史已写盘（%d 点）", #chart.points)
 end
 function history.view(window)
-    local chart  = state.chart
-    local points = chart.points
+    local points = state.read.chart().points
     local key    = viewKey(points, window)
     if viewCache.key == key and viewCache.data then return viewCache.data end
     local from = 1

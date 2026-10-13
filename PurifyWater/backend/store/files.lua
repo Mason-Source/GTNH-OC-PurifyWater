@@ -1,39 +1,35 @@
 --------------------------------------------------------------------------------
 -- backend/store/files.lua
 --------------------------------------------------------------------------------
--- 【职责】文件读写原语：整读、按行读、**原子写**、存在性、删除
--- 【不做什么】不认识任何业务格式（行 -> 表由 shared/models 做）
--- 【依赖】filesystem（存在性/删除）、io（读写）
--- 【被谁用】backend/store/*（唯一允许写盘的一层）
+-- 【职责】文件读写原语：整读/按行读/原子写/存在性/删除
+-- 【不做什么】不识业务格式（shared/models）
+-- 【依赖】filesystem、io
+-- 【被谁用】backend/store/*（唯一写盘层）
 --
--- 【坑】`filesystem.open()` 拿到的句柄**不支持 `f:read("*a")`**：整读一律用 `io.open`，
---   filesystem 只用来 exists / remove / size。
--- 【原子写】先写 `<path>.tmp` 再改名：中途掉电/退出不会留下半截文件
---   （阈值配置被写坏会影响后续调度）。
+-- 坑：filesystem.open() 的句柄不支持 f:read("*a")，整读用 io.open。
+-- 原子写：先写 .tmp 再改名。
 --------------------------------------------------------------------------------
 
 local filesystem = require("filesystem")
 
 local files = {}
 
--- 数据文件根目录：boot 时注入应用目录，配置里的相对名都相对它解析
+-- 数据根目录：boot 时注入应用目录
 local ROOT = "."
 
---- 设置数据文件根目录（入口在 boot 时调 `files.setRoot(appDir)`）
+--- 设置数据根目录（入口调用）
 -- @param dir string
 function files.setRoot(dir)
     ROOT = tostring(dir or ".")
 end
 
---- 当前数据根目录（= 应用目录）：需要绝对路径的模块（如 store/autostart 算 main.lua 路径）读它
+--- 当前数据根目录（= 应用目录）
 -- @return string
 function files.root()
     return ROOT
 end
 
---- 把配置里的文件名解析成实际路径
--- 【规则】以 "/" 开头的当绝对路径，否则相对应用根目录
---   （应用目录一定可写，不赌文件系统根目录）
+--- 解析实际路径：/ 开头为绝对，否则相对应用根目录。
 -- @param name string
 -- @return string
 function files.path(name)
@@ -62,7 +58,7 @@ function files.read(path)
     return text
 end
 
---- 按行读（去掉空行；保留 # 注释行，由解析层决定是否忽略）
+--- 按行读（去空行，保留 # 注释行）
 -- @param path string
 -- @return table 行数组（文件不存在时为空表）
 function files.readLines(path)
@@ -75,8 +71,7 @@ function files.readLines(path)
     return out
 end
 
---- 确保目录存在（幂等；不存在就建）
--- 数据收在 data/ 子目录里，而 io.open 不会自动建目录。
+--- 确保目录存在（幂等）
 -- @param dir string 完整路径
 -- @return boolean
 function files.ensureDir(dir)
@@ -86,9 +81,7 @@ function files.ensureDir(dir)
     return files.exists(dir)
 end
 
---- 原子写文本：写临时文件 -> 改名覆盖
--- 【原子】中途掉电/退出不会留下半截文件（阈值配置被写坏会影响后续调度）。
--- 【顺便建目录】目标在 data/ 下时，第一次写会自动把目录建出来。
+--- 原子写文本：临时文件 -> 改名覆盖；目标目录不存在则建。
 -- @param path string
 -- @param text string
 -- @return boolean 是否成功

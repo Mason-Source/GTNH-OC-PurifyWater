@@ -1,17 +1,14 @@
 --------------------------------------------------------------------------------
 -- core/scheduler.lua
 --------------------------------------------------------------------------------
--- 【职责】只管"什么时候跑"：
---         * 定时任务：注册（名字 + 周期 + 任务体）、启停、到期计算、执行
---         * 事件总线：订阅（on）、发布（emit）、派发（drain）
--- 【不做什么】不认识任何业务语义（它不知道"扫描硬件"是什么）
--- 【依赖】computer（计时）、shared/{config,logs}
--- 【被谁用】core/runtime（驱动）、backend/jobs（注册任务）、backend/handlers（订阅事件）
+-- 【职责】定时任务（注册/启停/到期/执行）与事件总线（on/emit/drain）
+-- 【不做什么】不识业务语义
+-- 【依赖】computer、shared/{config,logs}
+-- 【被谁用】core/runtime、backend/jobs、backend/handlers
 --
--- 【三条语义】
---   ① disabled 期间不推进 lastRun -> 重新启用后下一帧立刻补跑一次
---   ② emit 是入队、drain 才派发 -> 处理器里再 emit 不会递归爆栈
---   ③ 到期时间不在这里夹紧，夹紧是主循环（runtime）的事
+-- ① disabled 不推进 lastRun，启用后下一帧补跑
+-- ② emit 入队、drain 派发，处理器再 emit 不递归；drain 记录序号（"同一次派发只做一次"的合并用）
+-- ③ 到期时间不在此夹紧（runtime 管）
 --------------------------------------------------------------------------------
 
 local computer  = require("computer")
@@ -24,6 +21,7 @@ local tasks     = {}  -- 数组，保持注册顺序（同帧的执行顺序 = �
 local byName    = {}
 local listeners = {}  -- event -> { fn, ... }
 local queue     = {}  -- 待派发的事件 { {name=, payload=}, ... }
+local drainSeq  = 0   -- 派发序号：每次 drain 自增（供合并类消费）
 
 local MAX_DRAIN = 200 -- 单次 drain 最多派发多少条（防处理器互相 emit 成死循环）
 
@@ -34,7 +32,7 @@ local MAX_DRAIN = 200 -- 单次 drain 最多派发多少条（防处理器互相
 --- 注册一个周期任务
 -- @param name string 唯一名字（重复注册返回 false）
 -- @param interval number 周期秒数
--- @param fn function(now) 任务体（**必须是一小步**，不许 sleep/长跑）
+-- @param fn function(now) 任务体，只做一小步
 -- @param opts table|nil { enabled = boolean }（默认 enabled；enabled=false 时不推进计时）
 -- @return boolean
 function scheduler.every(name, interval, fn, opts)
@@ -105,7 +103,7 @@ end
 
 --- 订阅事件
 -- @param event string 事件名
--- @param fn function(payload) 处理器（**只做一小步**）
+-- @param fn function(payload) 处理器，只做一小步
 function scheduler.on(event, fn)
     if type(fn) ~= "function" then return end
     local list = listeners[event]
@@ -126,10 +124,11 @@ end
 --- 派发队列里的事件
 -- @return number 派发条数
 function scheduler.drain()
+    drainSeq = drainSeq + 1
     local n = 0
     while #queue > 0 do
         if n >= MAX_DRAIN then
-            logs.warn("事件队列单帧超过 " .. MAX_DRAIN .. " 条（可能有处理器互相触发），已截断")
+            logs.warn("事件队列单帧超过 " .. MAX_DRAIN .. " 条，疑似处理器互相触发，已截断")
             queue = {}
             break
         end
@@ -140,6 +139,12 @@ function scheduler.drain()
         end
     end
     return n
+end
+
+--- 最近一次派发的序号（每调一次 drain 自增一次）
+-- @return number
+function scheduler.drainSeq()
+    return drainSeq
 end
 
 return scheduler

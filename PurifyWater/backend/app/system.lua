@@ -1,16 +1,15 @@
 --------------------------------------------------------------------------------
 -- backend/app/system.lua
 --------------------------------------------------------------------------------
--- 【职责】系统生命周期：启动 / 停机 / 暂停锁定 / 会话重置 / 调度总闸 / 阈值警告
--- 【不做什么】不采集硬件、不判断开关事实、不计算规则、不下发单台机器
+-- 【职责】系统生命周期：启动/停机/等待用户/会话重置/调度总闸/建议发布/阈值警告
+-- 【不做什么】不采集硬件、不判开关事实、不算规则、不下发单台机器
 --
 -- 【状态】
---   state.system.running    系统是否在自动调度
---   state.system.locked     锁定：出过需要人来处理的事，不自动恢复
---   state.system.lockReason 锁定原因（只记第一条）
+--   session.running     系统是否在自动调度（唯一行为门）
+--   session.awaiting    等待用户：出过需要人来处理的事，不自动恢复
+--   session.awaitReason 等待原因（只记第一条）
 --
--- 【会话边界】每次从停止进入运行，并行学习值都清空并从建议值重新学习；
---   停止、暂停、锁定、硬件变化、功率变化都走同一套重置逻辑。
+-- 会话边界：停止进入运行时清学习值并从建议值重学；停机/等待/硬件/功率变化同一套重置。
 --------------------------------------------------------------------------------
 
 local constants       = require("shared.constants")
@@ -27,32 +26,31 @@ local mode            = require("backend.domain.mode")
 local power           = require("backend.domain.power")
 local plan            = require("backend.app.plan")
 
--- 主机总开关被关时用的锁定原因（只写一处）
-local HOST_OFF_REASON = "主机开关已关"
+-- 主机开关关闭的停机原因（只写一处）
+local HOST_OFF_REASON = "主机已关机"
 
 local system          = {}
-local lastWarnSig     = nil
-local lastZeroWarn    = nil   -- "全 0"这类整块提示：文本变了才再报一次，没有就复位
+local lastWarnSig      = nil
+local lastZeroWarn     = nil   -- 整块提示哨兵
+local lastPublishDrain = -1    -- 最近一次发布的派发序号（同一次派发只发一次）
 
---- 重新生成建议并发布（**受控点专用**）：调 mode.publish()，把返回的"功率利用不充分"警告打出去
--- 【级别】警告（logs.warn）—— 不是调度信息
--- 【为什么不走 auditThresholds】那套按"文本相同只报一次"合并；这行要求**每次生成都显示**，
---   所以直接在这里打，不参与去重。
+--- 重新生成建议并发布（受控点专用）
+-- 同一次派发内只发一次：触发事实虽多，但发布输入在派发前都已写完，结果相同。
+-- 返回的扩产警告每次发布都显示，不走 audit 的去重。
 function system.publish()
+    local seq = scheduler.drainSeq()
+    if seq == lastPublishDrain then return end
+    lastPublishDrain = seq
     local text = mode.publish()
     if text and text ~= "" then logs.warn(text) end
 end
 
---- 配置表格各列的"生效性"（唯一判定处：`api.read.system` 与 `app/rates` 共用）
--- 【为什么放后端】生效性 = 模式判定，界面只照着灰显/写日志，不自己算：
---   阈值调度：勾选 + 阈值生效（权重 / 增产只存不生效，切到速率模式才用）；
---   速率调度：权重 + 增产生效；再受阈值约束时，勾选 + 阈值也生效。
--- 【与 domain/modes/rate 的关系】那边读 `state.system.enforceThreshold` 决定"开不开"；
---   这里只回答"这一列算不算数"，两处判据都只有一份（模式 + 阈值约束）。
+--- 配置各列生效性（唯一判定处）
+-- 阈值调度：勾选+阈值生效；速率调度：权重+增产生效，受阈值约束时勾选+阈值也生效。
 -- @return table { enabled = boolean, threshold = boolean, weight = boolean, boost = boolean }
-function system.effect()
-    local rate   = state.system.mode == "rate"
-    local gated  = (not rate) or (state.system.enforceThreshold == true)
+function system.effectiveConfig()
+    local rate   = state.read.mode() == "rate"
+    local gated  = (not rate) or (state.read.enforceThreshold() == true)
     return {
         enabled   = gated,
         threshold = gated,
@@ -61,30 +59,29 @@ function system.effect()
     }
 end
 
---- 统一调度请求：先过系统活动状态 -> 建议基线检查 -> 再交给 plan
+--- 统一调度请求：运行中 -> 建议基线 -> plan
 -- @param reason string
 -- @return boolean
 function system.requestPlan(reason)
-    if not state.isActive() then return false end
-    if system.checkSuggestionChange() then return false end -- 建议变了：已全关+锁定，本轮不排计划
+    if not state.read.running() then return false end
+    if system.checkSuggestionChange() then return false end -- 建议变：已停会话 + 等待用户
     return plan.run(reason)
 end
 
---- 把"建议并行基线"设为当前建议（启动会话时调用：以当前建议为基准，不触发锁定）
+--- 设建议基线为当前建议（启动会话调用，不触发等待）
 function system.resetSuggestBaseline()
-    state.system.lastSuggest = power.suggestVector()
+    state.write.setBaseline(power.suggestVector())
 end
 
---- 检查"建议并行"是否相对本次会话基线变了；变了就**全关 + 锁定**（明细只进 debug）
--- 【只比整数建议】不看实测并行/学习值 —— 玩家按建议调机器时不会被反复锁。
--- 【首建不锁】没有基线时只记基线；【停机/锁定期间不锁】只更新基线（启动会话时还会再重置一次）。
--- @return boolean 是否因此锁定（true = 调用方本轮不要再排计划）
+--- 建议相对会话基线变化 -> 停会话 + 等待用户（明细进 debug）
+-- 只比整数建议；无基线只记。唯一调用者 requestPlan 已先过"运行中"闸。
+-- @return boolean 是否因此进入等待（true = 调用方本轮不要再排计划）
 function system.checkSuggestionChange()
     local now = power.suggestVector()
-    local was = state.system.lastSuggest
+    local was = state.read.baseline()
 
     if not was then
-        state.system.lastSuggest = now
+        state.write.setBaseline(now)
         return false
     end
 
@@ -95,22 +92,21 @@ function system.checkSuggestionChange()
     end
     if #changed == 0 then return false end
 
-    state.system.lastSuggest = now
-    if not state.isActive() then return false end -- 停机/锁定期间：只更新基线，不锁
+    state.write.setBaseline(now)
 
     local texts = {}
     for _, item in ipairs(changed) do
         texts[#texts + 1] = string.format("%s %s→%s", constants.levelLabel(item.level),
             tostring(item.from), tostring(item.to))
     end
-    logs.debug("[调试] 建议并行变化（已锁定）：" .. table.concat(texts, "、"))
+    logs.debug("建议并行变化（等待用户）：" .. table.concat(texts, "、"))
 
-    system.enterSafeState("建议并行已变化", true, "请按新建议调好机器并行，再点【启动系统】")
+    system.enterAwaiting("建议并行已变化", true, "请按新建议调好机器并行，再点【启动系统】")
     return true
 end
 
 --- 检查"一次性提示"（阈值低于保供线 / 全 0 / 速率模式备注…）
--- 【模式化】文本/指纹/整块提示都由当前模式给（mode.audit），"只报一次"的哨兵留在这里（通用机制）
+-- 文本/指纹/整块提示由模式给；只报一次哨兵在此。
 function system.auditThresholds()
     local texts, signature, warnText, debugTexts = mode.audit()
     texts     = texts or {}
@@ -142,39 +138,41 @@ end
 --- 开始一次运行会话：清学习值，置运行态，忘掉旧方案
 local function beginSession(reason)
     system.resetLearning(reason)
-    state.system.running = true
+    state.write.setRunning(true)
     plan.forget()
     system.resetSuggestBaseline() -- 启动会话：以"当前建议"为基线（用户刚按建议调好机器才点的启动）
-    logs.system("并行学习已重置：本轮将从建议值重新学习真实并行")
+    logs.system("并行学习已重置（从建议值重新学习）")
 end
 
 --- 结束一次运行会话：置停止态，清学习值，忘掉旧方案
 local function endSession(reason)
-    state.system.running = false
+    state.write.setRunning(false)
     system.resetLearning(reason)
     plan.forget()
 end
 
---- 启动（开始自动调度；锁定后唯一的手动恢复入口）
+--- 启动（开始自动调度；等待用户的唯一手动恢复入口）
 -- @param reason string
 -- @return boolean 是否真的启动了
 function system.start(reason)
-    if state.system.running then return true end
-    if state.plant(constants.HOST_LEVEL).switch == false then
-        system.ensureHostStoppedLock()
-        logs.warn("无法启动：净水主机开关是关的（请先在主机上打开）")
+    if state.read.running() then return true end
+    if state.read.plant(constants.HOST_LEVEL).switch == false then
+        logs.warn("无法启动：净水主机未开机")
         return false
     end
 
     logs.system(string.format("启动（%s）", tostring(reason or "-")))
-    if state.system.locked then system.unlock() end
+    if state.read.awaiting() then
+        local why = state.write.clearAwaiting()
+        logs.system("已恢复（原等待原因：" .. tostring(why) .. "）")
+    end
     beginSession(reason)
     system.auditThresholds()
     system.requestPlan("启动")
     return true
 end
 
---- 停机（下发全关）
+--- 停机（下发全关；正常停机不置等待）
 -- @param reason string
 function system.stop(reason)
     local count = actuator.shutdownAll()
@@ -182,55 +180,51 @@ function system.stop(reason)
     logs.system(string.format("停机（%s）：已下发全关 %d 台", tostring(reason or "-"), count))
 end
 
---- 锁定（不再自动恢复，直到解锁）
+--- 等待用户（软因：人工改动 / 建议变 / 硬件变）-> 停会话 + 置等待
+-- allOff = true 先全关；false 保持机器现状
 -- @param why string
-function system.lock(why)
-    state.system.locked     = true
-    state.system.lockReason = tostring(why or "锁定")
-    logs.warn("已锁定：" .. state.system.lockReason)
-end
-
---- 解锁；唯一调用者是 system.start
--- @return boolean 是否真的解锁了
-function system.unlock()
-    if not state.system.locked then return false end
-    local why = state.system.lockReason
-    state.system.locked, state.system.lockReason = false, nil
-    logs.system("已解锁（原锁定原因：" .. tostring(why) .. "）")
-    return true
-end
-
---- 进安全状态：结束会话 + 锁定
--- allOff = true  先全关；false 保持机器现状
-function system.enterSafeState(why, allOff, line)
-    if state.system.locked then return false end
+-- @param allOff boolean
+-- @param line string|nil 进等待时的一行提示（只打这一次）
+function system.enterAwaiting(why, allOff, line)
+    if state.read.awaiting() then return false end
     if line then logs.warn(line) end
     if allOff then
         system.stop(why)
     else
         endSession(why)
-        logs.system(string.format("停机（%s）：保持 T1-8 现状，未下发任何指令", why))
+        logs.system(string.format("停机：%s；保持现状，未下发指令", why))
     end
-    system.lock(why)
+    state.write.setAwaiting(tostring(why or "等待处理"))
+    logs.warn("等待用户处理：" .. state.read.awaitReason())
+    return true
+end
+
+--- 硬因（缺件 / 主机关）：只在运行中停一次；不置等待，事实恢复即回"停机待启动"
+-- @param why string
+-- @return boolean 是否真的停了
+local function stopIfRunning(why)
+    if not state.read.running() then return false end
+    system.stop(why)
     return true
 end
 
 -- 事件入口
 
---- 硬件缺失 -> 全关 + 锁定
+--- 硬件缺失（电平事件）-> 运行中则全关停机；不置等待（事实恢复自动回停机）
 function system.onHardwareMissing(payload)
     local what = table.concat((payload and payload.missing) or { "未知" }, "、")
-    system.enterSafeState("硬件缺失：" .. what, true)
+    stopIfRunning("硬件缺失：" .. what)
 end
 
---- 主机开关是关的 -> 确保全关 + 锁定
-function system.ensureHostStoppedLock()
-    return system.enterSafeState(HOST_OFF_REASON, true)
+--- 主机开关是关的 -> 运行中则全关停机；不置等待
+function system.ensureHostStopped()
+    return stopIfRunning(HOST_OFF_REASON)
 end
 
---- 实测开关偏离方案 -> 停机 + 锁定，不动机器
+--- 实测开关偏离方案 -> 停会话 + 等待用户，不动机器（只在运行中被接受）
 function system.onSwitchMismatch(payload)
     if not payload or not payload.level then return end
+    if not state.read.running() then return end
     local levelName    = constants.levelLabel(payload.level)
     local receipt      = actuator.lastReceipt()
     local sent, failed = 0, 0
@@ -244,21 +238,31 @@ function system.onSwitchMismatch(payload)
     local sentText = (sent == 0) and "还没有过下发记录"
         or string.format("最近一次下发 %s %d 台（失败 %d）", since, sent, failed)
 
-    system.enterSafeState(levelName .. " 开关被人工改动", false, string.format(
-        "%s 实测%s，方案要%s。停机并锁定（机器保持现状），处理完请点【启动系统】｜ %s",
+    system.enterAwaiting(levelName .. " 开关被人工改动", false, string.format(
+        "%s 实测%s，方案要%s；点【启动系统】恢复 ｜ %s",
         levelName, payload.got and "开" or "关", payload.want and "开" or "关", sentText))
 end
 
---- 硬件台账变化 -> 清学习值 + 全关 + 锁定
+--- 硬件台账变化 -> 运行中：停会话 + 等待用户；非运行：只清学习
 function system.onHardwareChanged()
-    system.enterSafeState("硬件变更", true)
+    if state.read.running() then
+        system.enterAwaiting("硬件变更", true)
+    else
+        system.resetLearning("硬件变更")
+    end
 end
 
---- 全厂功率变化 -> 清本轮学习值，在运行中则重排
+--- 全厂功率变化 -> 发布建议 + 清本轮学习值，在运行中则重排
 function system.onPowerChanged(payload)
+    system.publish()
     system.resetLearning(string.format("功率变化 %s -> %s",
         tostring(payload and payload.from), tostring(payload and payload.to)))
     system.requestPlan("功率变化")
+end
+
+--- 台数变化（T3 写完快照后）-> 发布建议（各状态恒发，等待/停机期间也照看新建议）
+function system.onDeployedChanged()
+    system.publish()
 end
 
 --- 并行学习值更新 -> 重算规则并立即重排
@@ -266,7 +270,7 @@ function system.onParallelWrite(payload)
     if not payload or not learning.remember(payload.level, payload.parallel, payload.success) then
         return false
     end
-    logs.system(string.format("%s 本次实际并行 = %s（来源：%s）",
+    logs.system(string.format("%s 实际并行 = %s（来源：%s）",
         constants.levelLabel(payload.level), utils.formatShortNumber(payload.parallel),
         tostring(payload.by or "传感器确认")))
     system.auditThresholds()
@@ -288,7 +292,7 @@ end
 
 --- 开关系统（界面一个键搞定）
 function system.toggle(reason)
-    if state.system.running then
+    if state.read.running() then
         system.stop(reason or "手动")
         return false
     end

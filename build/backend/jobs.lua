@@ -16,7 +16,6 @@ local levels_config    = require("backend.store.levels_config")
 local rates_config     = require("backend.store.rates_config")
 local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
-local power            = require("backend.domain.power")
 local system           = require("backend.app.system")
 local jobs             = {}
 local last             = {
@@ -28,7 +27,6 @@ local last             = {
     fluidOk = false,
     fluidErr = nil
 }
-local lastParallelWarn = nil
 local startedAt        = computer.uptime()
 local memwatch         = nil
 function jobs.elapsed()
@@ -36,8 +34,11 @@ function jobs.elapsed()
 end
 function jobs.last() return last end
 function jobs.scanHardware()
-    device.invalidate()
-    local summary = machines.scan()
+    device.sweep()
+    device.scanMe()
+    device.scanNet()
+    device.scanMachines()
+    local summary = machines.classify()
     local hatch   = machines.energy()
     local euMax
     if hatch then
@@ -51,25 +52,19 @@ function jobs.scanHardware()
     if summary.host == 0 then missing[#missing + 1] = "净水厂主机" end
     if not meProxy then missing[#missing + 1] = "ME网络接口" end
     if not hatch then missing[#missing + 1] = "能量仓" end
-    local diff              = inventory.compareAndSave(machines.topology())
+    local diff = inventory.compareAndSave(machines.topology())
+    local prevMissing = last.missing
     last.scanCount          = last.scanCount + 1
     last.summary            = summary
     last.meOk, last.missing = meProxy ~= nil, missing
-    if state.power.all ~= totalPower then
-        state.power.all = totalPower
-        system.publish()
+    if #prevMissing > 0 and #missing == 0 then
+        logs.system("硬件缺失已恢复：" .. table.concat(prevMissing, "、") .. "；点【启动系统】恢复")
+    elseif #prevMissing == 0 and #missing > 0 then
+        logs.warn("硬件缺失：" .. table.concat(missing, "、") .. "；请补齐缺失硬件")
     end
-    local warnParts         = {}
-    for _, item in ipairs(power.parallelMismatch()) do
-        warnParts[#warnParts + 1] = string.format("%s 当前 %s / 建议 %s", constants.levelLabel(item.level),
-            utils.formatShortNumber(item.current), utils.formatShortNumber(item.suggest))
-    end
-    local warnText = table.concat(warnParts, "；")
-    if warnText ~= lastParallelWarn then
-        lastParallelWarn = warnText
-        if warnText ~= "" then
-            logs.warn("当前并行与建议并行不一致：" .. warnText)
-        end
+    local prevAll = state.read.powerAll()
+    if state.read.powerMax() ~= totalPower then
+        state.write.setPowerMax(totalPower)
     end
     if #missing > 0 then
         scheduler.emit("hardware_missing", { missing = missing })
@@ -77,12 +72,14 @@ function jobs.scanHardware()
     if diff.changed then
         scheduler.emit("hardware_changed", diff)
     end
-    if last.powerBefore ~= nil and math.floor(last.powerBefore) ~= math.floor(totalPower) then
-        scheduler.emit("power_changed", { from = last.powerBefore, to = totalPower, note = powerNote })
+    local nowAll = state.read.powerAll()
+    if prevAll ~= nowAll then
+        scheduler.emit("power_changed", { from = prevAll, to = nowAll, note = powerNote })
     end
     last.powerBefore = totalPower
-    logs.debug(string.format("[调试] 硬件扫描 #%d：主机 %d、单元 %d、能量仓 %s、其它 %d、总功率 %s、缺失 %s",
-        last.scanCount, summary.host, summary.unitTotal, hatch and hatch.name or "无", summary.other,
+    logs.debug(string.format("硬件扫描 #%d：主机 %d、单元 %d、能量仓 %s、网卡 %s、其它 %d、总功率 %s、缺失 %s",
+        last.scanCount, summary.host, summary.unitTotal, hatch and hatch.name or "无",
+        device.net() and "有" or "无", summary.other,
         utils.formatNumber(totalPower), (#missing > 0 and table.concat(missing, "/") or "无")))
 end
 function jobs.scanSettings()
@@ -94,25 +91,26 @@ function jobs.scanSettings()
     local ratesChanged, ratesWhy = rates_config.load(snapshot)
     if ratesChanged then
         scheduler.emit("rates_changed", { why = ratesWhy })
-        system.publish()
     end
 end
 function jobs.readFluids()
     local amounts, ok, err = fluid.readAll()
     last.fluidOk, last.fluidErr = ok, err
+    local fluids = {}
     for level = 1, constants.LEVEL_COUNT do
-        state.fluids[level] = (ok and amounts[level]) or 0
+        fluids[level] = (ok and amounts[level]) or 0
     end
+    state.write.setFluids(fluids)
 end
 function jobs.observePlants()
     local samples, runningTotal = 0, 0
     local hostAllowed = nil
     local hostProgress, hostProgressMax
-    local deployedChanged = false
+    local deployedLevels = {}
     for level = constants.HOST_LEVEL, constants.LEVEL_COUNT do
         local list                 = machines.of(level)
-        local snap                 = state.plant(level)
-        local want                 = state.lastPlan[level]
+        local snap                 = state.read.plant(level)
+        local want                 = state.read.lastPlan()[level]
         local total, on, off, fail = 0, 0, 0, 0
         local running, actFail     = 0, 0
         local facts                = {}
@@ -163,20 +161,27 @@ function jobs.observePlants()
                 observed = false
             end
         end
-        if snap.deployed ~= total then
-            snap.deployed    = total
-            deployedChanged  = true
+        local deployed = snap.deployed or 0
+        if deployed ~= total then
+            deployed = total
+            deployedLevels[#deployedLevels + 1] = level
         end
-        snap.switch   = observed
-        snap.active   = (total > 0 and actFail == 0) and running or nil
-        snap.machines = facts
-        if minSample then snap.sample = minSample end
-        if minSuccess then snap.success = minSuccess end
+        local fields = {
+            deployed = deployed,
+            switch   = observed,
+            active   = (total > 0 and actFail == 0) and running or nil,
+            machines = facts
+        }
+        if minSample then fields.sample = minSample end
+        if minSuccess then fields.success = minSuccess end
+        if level == constants.HOST_LEVEL then
+            fields.progress    = hostProgress
+            fields.progressMax = hostProgressMax
+        end
+        state.write.recordPlant(level, fields)
         runningTotal = runningTotal + running
         if level == constants.HOST_LEVEL then
-            snap.progress    = hostProgress
-            snap.progressMax = hostProgressMax
-            hostAllowed      = snap.switch
+            hostAllowed = observed
         end
         if total > 0 then
             scheduler.emit("plant_observed", {
@@ -184,8 +189,10 @@ function jobs.observePlants()
             })
         end
     end
-    if deployedChanged then system.publish() end
-    logs.debug(string.format("[调试] 观测：单元在跑 %d 台，本轮采样 %d 条", runningTotal, samples))
+    if #deployedLevels > 0 then
+        scheduler.emit("deployed_changed", { levels = deployedLevels })
+    end
+    logs.debug(string.format("观测：单元在跑 %d 台，本轮采样 %d 条", runningTotal, samples))
 end
 function jobs.schedule()
     system.requestPlan("定时")
@@ -193,15 +200,10 @@ end
 function jobs.persist()
     if memwatch then memwatch.watch(jobs.elapsed()) end
     history.append()
-    state.markDirty("history")
-    if state.isDirty("levels") then
-        levels_config.saveAll()
-        state.clearDirty("levels")
-    end
     local ok, text = history.save()
-    if not ok then logs.debug("[调试] T5 写历史失败：" .. tostring(text)) end
+    if not ok then logs.debug("T5 写历史失败：" .. tostring(text)) end
     local okLog, logNote = log_file.flush()
-    if not okLog then logs.debug("[调试] T5 写日志失败：" .. tostring(logNote)) end
+    if not okLog then logs.debug("T5 写日志失败：" .. tostring(logNote)) end
 end
 function jobs.register()
     local n = 0
@@ -209,7 +211,6 @@ function jobs.register()
         if scheduler.every(...) then n = n + 1 end
     end
     add("scanHardware", CONFIG.INTERVAL.HARDWARE, jobs.scanHardware)  
-    add("scanSettings", CONFIG.INTERVAL.SETTINGS, jobs.scanSettings)  
     add("readFluids", CONFIG.INTERVAL.FLUID, jobs.readFluids)         
     add("observePlants", CONFIG.INTERVAL.OBSERVE, jobs.observePlants) 
     add("schedule", CONFIG.INTERVAL.SCHEDULE, jobs.schedule)          
@@ -218,6 +219,7 @@ function jobs.register()
         memwatch = require("backend.debug.memwatch")
         add("sampleMemory", CONFIG.INTERVAL.SAMPLE, memwatch.sample) 
     end
+    jobs.scanSettings()
     jobs.scanHardware()
     jobs.readFluids()
     jobs.observePlants()

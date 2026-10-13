@@ -5,7 +5,8 @@
 -- 【不做什么】不碰 data/ 中的用户数据；不删除清单外文件。
 -- 【通道策略】一轮用一个通道；**某个文件失败就立刻换另一个通道**（失败的那个 + 本轮还没试的
 --   一起在新通道重试）。首选通道 = 参数 --mirror 或引导器传入的实际通道。
--- 【参数】--mirror/-m 首选镜像；--debug/-d 写 installer.log；--source=build|PurifyWater。
+-- 【参数】--monitor = 装镜像端（只装公共 + 镜像端文件）；不写 = 主控端。
+--   --mirror/-m 首选镜像通道；--debug/-d 写 installer.log；--source=build|PurifyWater。
 --------------------------------------------------------------------------------
 
 local component  = require("component")
@@ -15,11 +16,13 @@ local shell      = require("shell")
 local ARGS       = { ... }
 local SRC        = "build"
 local PREFER     = 1
+local ROLE       = "main" -- "main" = 主控端（公共 + 主控专属）；"monitor" = 镜像端（公共 + monitor.lua）
 local LOG_ON     = false
 
 for _, a in ipairs(ARGS) do
     if a == "--debug" or a == "-d" then LOG_ON = true end
     if a == "--mirror" or a == "-m" then PREFER = 2 end
+    if a == "--monitor" then ROLE = "monitor" end
     if a == "--source=PurifyWater" or a == "--src=PurifyWater" then SRC = "PurifyWater" end
     if a == "--source=build" or a == "--src=build" then SRC = "build" end
 end
@@ -39,13 +42,46 @@ local MANIFEST_REL  = "data/install_manifest.txt"
 -- 首次从旧安装器迁移时，需要明确清理的旧文件。以后依赖 manifest 自动计算。
 local RETIRED_FILES = {
     "backend/store/records.lua",
+    "start.lua", -- 历史启动器：不再生成；老机器靠这条清掉
 }
 
-local FILE_LIST = {
+-- 文件清单由 build_deploy.py 按依赖闭包生成，分三张：
+--   COMMON  = 两端都要；MAIN = 仅主控端；MONITOR = 仅镜像端（monitor.lua）
+-- 于是：主控机没有 monitor.lua，镜像机没有 backend/ 与 main.lua（结构性只读）。
+local FILE_LIST_COMMON = {
+    "core/bootstrap.lua",
+    "core/locate.lua",
+    "core/scheduler.lua",
+    "frontend/charts.lua",
+    "frontend/decorate.lua",
+    "frontend/layout.lua",
+    "frontend/panels/chart.lua",
+    "frontend/panels/config.lua",
+    "frontend/panels/control.lua",
+    "frontend/panels/detail.lua",
+    "frontend/panels/keypad.lua",
+    "frontend/panels/log.lua",
+    "frontend/panels/settings.lua",
+    "frontend/panels/status.lua",
+    "frontend/panels/tabbar.lua",
+    "frontend/render.lua",
+    "frontend/state.lua",
+    "frontend/theme.lua",
+    "frontend/viewinput.lua",
+    "frontend/widgets.lua",
+    "shared/config.lua",
+    "shared/constants.lua",
+    "shared/logs.lua",
+    "shared/models.lua",
+    "shared/utils.lua",
+}
+
+local FILE_LIST_MAIN = {
     "main.lua",
-    "monitor.lua",
     "backend/api.lua",
     "backend/app/autostart.lua",
+    "backend/app/energy.lua",
+    "backend/app/net.lua",
     "backend/app/plan.lua",
     "backend/app/rates.lua",
     "backend/app/system.lua",
@@ -79,34 +115,21 @@ local FILE_LIST = {
     "backend/store/rates_config.lua",
     "backend/store/settings.lua",
     "backend/store/trace.lua",
-    "core/bootstrap.lua",
-    "core/locate.lua",
     "core/runtime.lua",
-    "core/scheduler.lua",
-    "frontend/charts.lua",
     "frontend/input.lua",
-    "frontend/layout.lua",
-    "frontend/panels/chart.lua",
-    "frontend/panels/config.lua",
-    "frontend/panels/control.lua",
-    "frontend/panels/detail.lua",
-    "frontend/panels/keypad.lua",
-    "frontend/panels/log.lua",
-    "frontend/panels/settings.lua",
-    "frontend/panels/status.lua",
-    "frontend/panels/tabbar.lua",
-    "frontend/render.lua",
-    "frontend/state.lua",
-    "frontend/theme.lua",
     "frontend/viewmodel.lua",
-    "frontend/widgets.lua",
-    "shared/config.lua",
-    "shared/constants.lua",
-    "shared/logs.lua",
-    "shared/models.lua",
     "shared/state.lua",
-    "shared/utils.lua",
 }
+
+local FILE_LIST_MONITOR = {
+    "monitor.lua",
+}
+
+-- 本次要装的文件 = 公共 + 本角色专属
+local FILE_LIST = {}
+for _, rel in ipairs(FILE_LIST_COMMON) do FILE_LIST[#FILE_LIST + 1] = rel end
+local extra = (ROLE == "monitor") and FILE_LIST_MONITOR or FILE_LIST_MAIN
+for _, rel in ipairs(extra) do FILE_LIST[#FILE_LIST + 1] = rel end
 
 local CH_NAME = { "直连", "备用" }
 local LOG_LINES = {}
@@ -175,6 +198,7 @@ local function writeManifest(root, list)
     local f, err = io.open(root .. "/" .. MANIFEST_REL, "w")
     if not f then return false, err end
     f:write("# PurifyWater install manifest v1\n")
+    f:write("# role=" .. ROLE .. "\n")
     for _, rel in ipairs(list) do f:write(rel .. "\n") end
     f:close()
     return true
@@ -206,20 +230,6 @@ local function fetch(url, dest)
         return false, "改名失败：" .. tostring(mvErr)
     end
     return true, size
-end
-
-local function writeLauncher(root)
-    local f, err = io.open(root .. "/start.lua", "w")
-    if not f then return false, err end
-    f:write(([[
-local appDir = "%s"
-package.path = appDir .. "/?.lua;" .. appDir .. "/?/init.lua;" .. package.path
-local fn, e = loadfile(appDir .. "/main.lua")
-if not fn then error(e) end
-fn()
-]]):format(APP_DIR))
-    f:close()
-    return true
 end
 
 local function downloadAll()
@@ -283,7 +293,6 @@ local function commit(oldManifest)
     local managed = {}
     local newSet  = {}
     for _, rel in ipairs(FILE_LIST) do managed[#managed + 1] = rel; newSet[rel] = true end
-    managed[#managed + 1] = "start.lua"; newSet["start.lua"] = true
     managed[#managed + 1] = MANIFEST_REL; newSet[MANIFEST_REL] = true
 
     local stale = {}
@@ -350,6 +359,7 @@ local function main()
     if PREFER == 2 and MIRROR_PREFIX == "" then PREFER = 1 end
 
     print("== 净化水线 安装器核心 ==")
+    print("角色：" .. (ROLE == "monitor" and "镜像端（公共 + monitor.lua）" or "主控端（公共 + 主控专属）"))
     print("变体：" .. SRC)
     print("目标：" .. APP_DIR)
     print("文件：" .. #FILE_LIST .. " 个")
@@ -359,10 +369,7 @@ local function main()
 
     local managed = {}
     for _, rel in ipairs(FILE_LIST) do managed[#managed + 1] = rel end
-    managed[#managed + 1] = "start.lua"
     managed[#managed + 1] = MANIFEST_REL
-    local okL, errL = writeLauncher(STAGE_DIR)
-    if not okL then error("start.lua 生成失败：" .. tostring(errL)) end
     local okM, errM = writeManifest(STAGE_DIR, managed)
     if not okM then error("manifest 生成失败：" .. tostring(errM)) end
 

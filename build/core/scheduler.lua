@@ -6,6 +6,7 @@ local tasks     = {}
 local byName    = {}
 local listeners = {}
 local queue     = {}
+local drainSeq  = 0
 local MAX_DRAIN = 200
 function scheduler.every(name, interval, fn, opts)
     if byName[name] then return false end
@@ -67,10 +68,11 @@ function scheduler.emit(event, payload)
     queue[#queue + 1] = { name = event, payload = payload }
 end
 function scheduler.drain()
+    drainSeq = drainSeq + 1
     local n = 0
     while #queue > 0 do
         if n >= MAX_DRAIN then
-            logs.warn("事件队列单帧超过 " .. MAX_DRAIN .. " 条（可能有处理器互相触发），已截断")
+            logs.warn("事件队列单帧超过 " .. MAX_DRAIN .. " 条，疑似处理器互相触发，已截断")
             queue = {}
             break
         end
@@ -81,5 +83,8 @@ function scheduler.drain()
         end
     end
     return n
+end
+function scheduler.drainSeq()
+    return drainSeq
 end
 return scheduler

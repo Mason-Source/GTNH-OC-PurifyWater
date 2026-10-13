@@ -1,25 +1,18 @@
 --------------------------------------------------------------------------------
 -- frontend/panels/config.lua
 --------------------------------------------------------------------------------
--- 【职责】配置页「调度配置」卡的**表格段**：边框 + 标题（带"哪几列生效"）+ 表头 + 8 级 × 5 列
--- 【不做什么】不画键盘（那是 panels/keypad，在同一张卡的**固定键盘槽**里）、不碰后端、不发命令
+-- 【职责】调度配置卡的表格段：边框 + 标题 + 表头 + 8 级 × 5 列
+-- 【不做什么】不画键盘（panels/keypad）、不碰后端、不发命令
 -- 【依赖】frontend/{state,theme,widgets,layout}、shared/constants
 -- 【被谁用】frontend/render
 --
--- 【一张表管全部】8 级 ×（勾选 / 阈值 / 权重 / 增产）都在这里：
---   **勾选格点一下就直接切换**（老习惯，不选中、不开键盘）；其余列点一格 = 选中它，
---   卡内键盘槽随即换成**那一列自己的键盘**。表里不再有「建议并行」—— 建议在总览页每级行上看，
---   配置页只放"能改的东西"（一条信息只有一个地方显示，少一处就少一处要维护的对齐）。
---   「增产」是 T7 专属的全局档位（1 / 1.25 / 1.5 / 1.75 / 2）：只有 T7 那一行有值，其余行画 `-`。
--- 【对齐】文字列（级 / 勾选）左对齐，**数值列（阈值 / 权重 / 增产）一律右对齐**，表头跟数值同侧。
--- 【生效性】system.effect() 说哪几列当前模式算数：不算数的整列灰显，但**照画照改**（保存待用）——
---   灰显只是"现在用不到"，不是"禁改"；选中高亮压过灰显。
--- 【格内缓冲】正在改的那一格显示输入缓冲 + 一个下划线，不再单独占一行回显。
---
--- 【重画规矩（踩过的坑）】面板重画时**只清"标题 + 表头"那两行**，每级那一行由它自己的子指纹决定
---   "清这一行 + 画这一行"。**绝不能先整段清空**：选中态一变（editLevel/editField/editBuf）面板就会
---   重画，而那些没变的行会被擦掉却永远不再重画 —— 屏幕上就是"其它行全没了"。
+-- 8 级 ×（勾选/阈值/权重/增产）一张表；勾选格点即切换，其余列点开对应键盘。
+-- 增产是 T7 专属档位，其余行画 -。文字列左对齐、数值列右对齐。
+-- 生效性由 system.effectiveConfig() 决定：无效列灰显但照改照存；选中高亮压过灰显。
+-- 重画：只清标题+表头与变化的那一行，禁止先整段清空（未变行会永久消失）。
 --------------------------------------------------------------------------------
+
+local unicode   = require("unicode")
 
 local constants = require("shared.constants")
 local fstate    = require("frontend.state")
@@ -33,33 +26,11 @@ local config    = {}
 local COLS      = {
     { head = "级" },
     { key = "enabled", head = "勾选" },
-    { key = "threshold", head = "阈值(kL)", align = "right" },
+    { key = "threshold", head = "阈值 kL", align = "right" },
     { key = "weight", head = "权重", align = "right" },
     { key = "boost", head = "增产", align = "right" }
 }
 local COL_W     = { 0.12, 0.12, 0.38, 0.20, 0.18 }
-
---- 标题行右侧那句"现在哪几列算数"（纯展示：判据来自后端 system.effect）
--- @param sys table api.read.system()
--- @return string
-local function effectText(sys)
-    local eff  = (sys and sys.effect) or {}
-    local on, off = {}, {}
-    for _, item in ipairs({
-        { "enabled", "勾选" }, { "threshold", "阈值" },
-        { "weight", "权重" }, { "boost", "增产" }
-    }) do
-        if eff[item[1]] then on[#on + 1] = item[2] else off[#off + 1] = item[2] end
-    end
-
-    local head = (sys and sys.mode == "rate")
-        and ("速率调度" .. (sys.enforceThreshold and "（受阈值约束）" or "（不受阈值约束）"))
-        or "阈值调度"
-    local text = head .. "："
-        .. ((#on > 0) and (table.concat(on, "/") .. " 生效") or "没有列生效")
-    if #off > 0 then text = text .. "，" .. table.concat(off, "/") .. " 待用" end
-    return text
-end
 
 --- 数值文本：整数不带小数点（1 / 1.25 / 1.5 / 1.75 / 2）
 -- @param value number|nil
@@ -77,7 +48,7 @@ function config.draw(data)
     if not area or area.h < 3 then return end
 
     local sys   = data.system or {}
-    local eff   = sys.effect or {}
+    local eff   = sys.effectiveConfig or {}
     local inner = { x = area.x + 2, w = area.w - 4 }
     local cols  = layout.cols(inner, COL_W)
 
@@ -85,16 +56,38 @@ function config.draw(data)
     widgets.drawBorder(area.x, area.y, area.w, area.h,
         theme.borderColor(sys.priority == "high"))
 
-    -- ② 标题行（含"哪几列生效"）+ 表头行：每次重画（就两行文字，不值得再做一层指纹）
-    widgets.clearArea(area.x + 1, area.y + 1, area.w - 2, 2)
+    -- ② 标题 + 分隔 + 表头 + 分隔：每次重画（就四行，不值得再做一层指纹）
+    --   标题行只写"调度配置"：哪几列现在算数由**列本身的灰/亮**表达，不再写一行说明（太长）
+    widgets.clearArea(area.x + 1, area.y + 1, area.w - 2, 4)
     widgets.drawText(area.x + 2, area.y + 1, "调度配置", theme.COLORS.TEXT_CYAN)
-    widgets.drawText(area.x + 12, area.y + 1, effectText(sys), theme.COLORS.TEXT_DISABLED)
+    -- 标题行右侧：两个可点开的全局字段，**贴在一起**从右往左排（热区 = 文本本身）
+    --   无线范围（左，青色）+ 能源仓利用因子（右，紫色）；点哪个换哪个的数字键盘，编辑中变黄
+    local fEditing = (fstate.editField == "factor")
+    local fText    = string.format("能源仓利用因子 %s%%",
+        fEditing and ((fstate.editBuf or "") .. "_")
+        or tostring(math.floor(tonumber(sys.energyFactor) or 100)))
+    local sEditing = (fstate.editField == "strength")
+    local sText    = string.format("无线范围 %s", sEditing and ((fstate.editBuf or "") .. "_")
+        or tostring(math.floor(tonumber((data.net or {}).strength) or 0)))
+    local fW       = unicode.wlen(fText)
+    local sW       = unicode.wlen(sText)
+    local fX       = inner.x + inner.w - fW
+    local sX       = fX - sW - 3
+    widgets.drawText(fX, area.y + 1, fText,
+        fEditing and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_VIOLET)
+    widgets.drawText(sX, area.y + 1, sText,
+        sEditing and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_CYAN)
+    fstate.factorCell   = { x = fX, y = area.y + 1, w = fW, h = 1 }
+    fstate.strengthCell = { x = sX, y = area.y + 1, w = sW, h = 1 }
+    -- 表头行上下各一条细分隔线（暗色）
+    widgets.drawText(inner.x, area.y + 2, string.rep("─", inner.w), theme.CHART_AXIS)
+    widgets.drawText(inner.x, area.y + 4, string.rep("─", inner.w), theme.CHART_AXIS)
     for index, col in ipairs(COLS) do
         if col.align == "right" then
-            widgets.drawTextRight(cols[index].x, cols[index].w, area.y + 2, col.head,
+            widgets.drawTextRight(cols[index].x, cols[index].w, area.y + 3, col.head,
                 theme.COLORS.TEXT_DISABLED)
         else
-            widgets.drawText(cols[index].x, area.y + 2, col.head, theme.COLORS.TEXT_DISABLED)
+            widgets.drawText(cols[index].x, area.y + 3, col.head, theme.COLORS.TEXT_DISABLED)
         end
     end
 
@@ -108,7 +101,7 @@ function config.draw(data)
     fstate.cells = {}
     for level = 1, constants.LEVEL_COUNT do
         local row = data.levels[level]
-        local y   = area.y + 3 + (level - 1)
+        local y   = area.y + 5 + (level - 1)
         if y > area.y + area.h - 2 then break end
 
         local sel  = (fstate.editLevel == level)
@@ -185,11 +178,12 @@ end
 function config.fingerprint(data)
     local area  = fstate.areas.config or {}
     local sys   = (data and data.system) or {}
-    local eff   = sys.effect or {}
+    local eff   = sys.effectiveConfig or {}
     local parts = {
         tostring(area.x or 0), tostring(area.y or 0), tostring(area.w or 0), tostring(area.h or 0),
         tostring(sys.priority), tostring(sys.mode), tostring(sys.enforceThreshold),
-        tostring(sys.t7Boost), tostring(eff.enabled), tostring(eff.threshold),
+        tostring(sys.t7Boost), tostring(sys.energyFactor), tostring((data.net or {}).strength),
+        tostring(eff.enabled), tostring(eff.threshold),
         tostring(eff.weight), tostring(eff.boost),
         tostring(fstate.editLevel or 0), tostring(fstate.editField or ""),
         tostring(fstate.editBuf or "")

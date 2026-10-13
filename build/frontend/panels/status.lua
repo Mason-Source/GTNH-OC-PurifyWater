@@ -9,7 +9,7 @@ local status        = {}
 local lastWasDetail = false
 local function switchText(row)
     if (row.deployed or 0) == 0 then return "未部署", theme.COLORS.TEXT_RED end
-    if row.switch == nil then return "读不到", theme.COLORS.TEXT_RED end
+    if row.switch == nil then return "读取失败", theme.COLORS.TEXT_RED end
     if row.switch then
         return string.format("开 %s", row.runText), theme.COLORS.TEXT_GREEN
     end
@@ -64,10 +64,10 @@ function status.draw(data)
         local row = data.levels[level]
         local y   = top + (level - 1) * rowH
         if y > bottom then break end
-        fstate.levelRows[level]      = { x = area.x, y = y, w = area.w, h = rowH }
+        fstate.levelRows[level]  = { x = area.x, y = y, w = area.w, h = rowH }
         local name                   = string.format("%s %s", row.label, row.deployText)
         local switchTxt, switchColor = switchText(row)
-        local effective              = (data.system.effect or {}).enabled == true
+        local effective              = (data.system.effectiveConfig or {}).enabled == true
         local mark                   = row.rule.enabled and "[√]" or "[ ]"
         local markColor              = (row.rule.enabled and effective)
             and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED
@@ -83,7 +83,7 @@ function status.draw(data)
         local barW2, pText
         if rowH == 2 then
             barW2 = math.max(4, barCol[1].w - 2)
-            local stale = row.sampleStale and row.sample ~= nil and "(上次)" or ""
+            local stale = row.sampleStale and row.sample ~= nil and "（上次）" or ""
             pText = ((row.deployed or 0) == 0) and "并行 -"
                 or string.format("并行 %s%s / 建议 %s", row.sampleText, stale, row.suggestText)
         end

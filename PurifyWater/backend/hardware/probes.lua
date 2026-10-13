@@ -7,9 +7,8 @@
 -- 【依赖】hardware/{device,gt_infodata}
 -- 【被谁用】backend/jobs（T3）
 --
--- 【调用约定】一律用 `component.invoke`（device.invoke）：gt_machine 的有效方法用 proxy
---   索引拿不到（见 hardware/device）。
--- 【失败约定】读失败返回 nil + 错误文本，而不是隐式当成 false
+-- 一律走 device.invoke（proxy 索引拿不到 gt_machine 方法）。
+-- 读失败返回 nil + 错误文本，不隐式当 false。
 --------------------------------------------------------------------------------
 
 local device     = require("backend.hardware.device")
@@ -17,7 +16,7 @@ local gtInfodata = require("backend.hardware.gt_infodata")
 
 local probes     = {}
 
---- 工作开关（玩家在 GT 界面按的那个）
+--- 工作开关
 -- @param address string 组件地址
 -- @return boolean|nil, string|nil
 function probes.switch(address)
@@ -26,7 +25,7 @@ function probes.switch(address)
     return nil, err or ("开关读数不是布尔值：" .. tostring(value))
 end
 
---- 是否正在处理配方（空闲是正常状态，**不可当停机**）
+--- 是否在处理配方（空闲 ≠ 停机）
 -- @param address string 组件地址
 -- @return boolean|nil, string|nil
 function probes.active(address)
@@ -35,9 +34,8 @@ function probes.active(address)
     return nil, err or ("活动读数不是布尔值：" .. tostring(value))
 end
 
---- 运行进度（`getWorkProgress` / `getWorkMaxProgress`）
--- 【只对主机（T0）调】各级水厂周期同步：主机这一份进度就是全厂的周期位置。
---   两个用途：界面画周期条；`tracker` 判周期边界（回落 = 新周期）。
+--- 运行进度（getWorkProgress/getWorkMaxProgress）
+-- 只对主机调（周期同步）。用途：界面周期条、tracker 判周期边界。
 -- @param address string 组件地址
 -- @return number|nil progress
 -- @return number|nil maxProgress
@@ -49,7 +47,7 @@ function probes.progress(address)
     return progress, type(maxProgress) == "number" and maxProgress or nil, nil
 end
 
---- 传感器信息（已解析）——**只对正在运行的机器调用**（停机时报的并行是 1，没有意义）
+--- 传感器信息（已解析）；只对在跑机器调用。
 -- @param address string 组件地址
 -- @return table|nil gt_infodata.parse() 的结果
 -- @return string|nil 错误说明

@@ -1,95 +1,81 @@
 --------------------------------------------------------------------------------
 -- shared/state.lua
 --------------------------------------------------------------------------------
--- 【职责】**内存数据的唯一容器**：硬件快照、并行确认器、调度意图、系统状态、曲线、脏标记
--- 【不做什么】不含任何逻辑（判断、计算、IO 都不在）——一张表 + 几个访问器
+-- 【职责】内存数据的唯一容器：私有数据 + read/write 接口
+-- 【不做什么】不含逻辑（判断、计算、IO）
 -- 【依赖】shared/constants
--- 【被谁用】backend/hardware（写快照）、backend/domain（读快照算）、frontend（只读）
--- 【对应盘上的数据】backend/store/*（内存 -> 盘只有 persist 一条路）
+-- 【被谁用】backend/hardware 写、backend/domain 读、frontend 只读
+-- 原始表不外露：读走 state.read.*，写走 state.write.*（每个 setter 唯一调用者见文件内注释）
 --------------------------------------------------------------------------------
 
 local constants = require("shared.constants")
 
-local state = {}
-
--- ============================ 硬件快照（由 backend/hardware 写） ============================
--- plants[level] = {
---     deployed = number,          -- 在册台数
---     switch   = true|false|nil,  -- 全开 / 全关 / nil（混合态**或有读不到**——界面显示 ?）
---     lastSwitch = true|false|nil, -- T3 最近一次读到的开关（**电平**：每轮观测都写，含 nil）
---     active   = number|nil,      -- 确认在跑的台数；nil = 有读不到的（**不等于 0**，界面显示 ?）
---     sample   = number|nil,      -- **当前并行**：本周期读到的在跑机器的**最低并行**（多台取最小；**未确认**）
---     success  = number|nil,      -- 本级**最小成功率**（多台取最小；最近一次采样）
---     parallel = number|nil,      -- **本轮学习并行**：连续 N 个运行周期一致 -> tracker 确认 -> 写这里
---                                 --   （仅内存；power.adopted 优先用它，停机/暂停后清空）
---     source   = "measured"|"suggest"|nil,
---     suggest  = number              -- **每级建议并行**（当前模式的账算结果；由 mode.publish() 单点发布，
---                                    --   读侧只读 —— 见 ARCHITECTURE R4；未部署 / 在役前缀外恒 0）
--- }
--- progress / progressMax：**只有主机（T0）这一行有**（T3 只读主机；各水厂周期同步，T1-8 不记进度）；界面画周期条用
-state.plants = {}
-
--- fluids[level] = number（mB；**读不到按 0 记** —— T2 是唯一写入方，注册时就写过一次）
-state.fluids = {}
-
--- 功率：all = 全厂可用（能量仓）｜budget = 本轮剩余（allocator 逐级扣减）
-state.power = { all = 0, budget = 0 }
-
--- 并行确认器：tracker[address] = { progress, cycleValue, value, streak, samples, confirmed }（见 domain/tracker）
-state.tracker = {}
-
--- 系统状态
--- 锁定分两级，字段只有一个；级别按"当前事实"判（不看进入锁定的历史）：
---   硬锁定   = 硬件缺失 / 主机开关关 —— 物理上做不到，界面按钮变灰（vm.startBlockedReason）
---   暂停锁定 = 其它（硬件变更、开关与意图不符）—— 按钮可点，点它就是手动恢复
--- 两者都不自动恢复，只能由用户点【启动系统】退出（system.start 里 unlock）。
-state.system = {
-    running    = false, -- 自动控制系统是否在跑
-    locked     = false, -- 进过安全状态：**不自动恢复**（硬锁时界面按钮还会变灰）
-    lockReason = nil,   -- 锁定原因（**只记第一条**：谁先出事谁是真因）
-    mode       = "threshold", -- 调度模式（domain/mode 注册 id；main 启动时按 settings 的 mode 键覆盖）
-    lastSuggest = nil,        -- 本次会话的"建议并行"基线（启动会话时重置；变了就全关+锁定，见 app/system）
-    enforceThreshold = true,  -- 速率模式子参数：是否仍受水位阈值约束（main 启动时按 settings 覆盖）
-    t7Boost    = 1,           -- 速率模型：T7 超导粗胚增产倍率（1 / 1.25 / 1.5 / 1.75 / 2）
-    priority   = "low", -- "low" = 低级水优先 / "high" = 高级水优先
-    -- 开机自启（真源 = $HOME/.shrc 里那段标记块，由 backend/store/autostart 读回）：
-    autostart      = false, -- 勾选 = 块在且指向当前应用目录
-    autostartStale = false, -- 块在但指向别的路径（界面显示未勾选 + 启动时警告）
-    autostartPath  = nil    -- 那个 .shrc 的完整路径（界面文案里显示）
+-- 私有数据（唯一可摸这些表的地方）
+local F = {
+    facts   = { plants = {}, fluids = {}, powerMax = 0 },
+    learn   = {},
+    config  = { rules = {}, weights = {}, mode = "threshold", priority = "low",
+                enforceThreshold = true, t7Boost = 1, energyFactor = 100, netStrength = 20 },
+    session = { running = false, awaiting = false, awaitReason = nil, lastSuggest = nil,
+                autostart = false, autostartStale = false, autostartPath = nil },
+    plan    = { suggest = {}, lastPlan = {}, notes = {}, budget = 0 },
+    chart   = { points = {} },
+    net     = { enabled = false, frame = 0, warned = nil },
+    tracker = {}
 }
 
--- 曲线（界面用；盘上的历史见 store/history）
--- 只有采样点：报表页与小时/天聚合已删。
-state.chart = { points = {} }
+local state = {}
+local read  = {}
+local write = {}
 
--- 无线广播状态（T7）：enabled = 总开关；frame = 分片帧号（接收端据此拼帧）；warned = 失败只报一次
-state.net = { enabled = false, frame = 0, warned = nil }
+--------------------------------------------------------------------------------
+-- 读接口（返回内部引用；约定只读）
+--------------------------------------------------------------------------------
 
--- 阈值 + 勾选（由 store/levels_config 从 settings.txt 读入）：rules[level] = { threshold = number, enabled = boolean }
-state.rules = {}
+function read.plant(level)
+    local p = F.facts.plants[level]
+    if not p then
+        p = { deployed = 0 }
+        F.facts.plants[level] = p
+    end
+    return p
+end
 
--- 速率模式权重（由 store/rates_config 从 settings.txt 读入）：rates[level] = number（0..MAX，净产出权重）
-state.rates = {}
+function read.fluids()   return F.facts.fluids end
+function read.powerMax() return F.facts.powerMax or 0 end
+function read.energyFactor() return F.config.energyFactor or 100 end
+function read.netStrength() return F.config.netStrength or 0 end
+--- 全厂可用功率 = 折算最大功率 × 利用因子（读时现算；唯一"最大→可用"换算处）
+function read.powerAll()
+    return math.floor((F.facts.powerMax or 0) * (F.config.energyFactor or 100) / 100)
+end
+function read.rules()    return F.config.rules end
+function read.weights()  return F.config.weights end
+function read.mode()     return F.config.mode end
+function read.priority() return F.config.priority end
+function read.enforceThreshold() return F.config.enforceThreshold end
+function read.t7Boost()  return F.config.t7Boost end
+function read.running()  return F.session.running end
+function read.awaiting() return F.session.awaiting end
+function read.awaitReason() return F.session.awaitReason end
+function read.baseline() return F.session.lastSuggest end
+function read.autostart() return F.session.autostart end
+function read.autostartStale() return F.session.autostartStale end
+function read.autostartPath()  return F.session.autostartPath end
+function read.learn(level) return F.learn[level] end
+function read.suggest(level) return F.plan.suggest[level] or 0 end
+function read.lastPlan() return F.plan.lastPlan end
+function read.notes()    return F.plan.notes end
+function read.budget()   return F.plan.budget or 0 end
+function read.chart()    return F.chart end
+function read.net()      return F.net end
+function read.tracker()  return F.tracker end
 
--- 速率模式发布的审计明细（{ {level=, kind=, ...}, ... }；由 rate.publish() 随方案一起发布，rate.audit 读）
-state.planNotes = {}
-
--- 已下发过的方案（避免重复下发同一套指令）
-state.lastPlan = {}
-
--- 脏标记（persist 任务据此决定写不写盘）
-state.dirty = {}
-
--- ============================ 访问器 ============================
-
---- **在役前缀**的最高等级：从 T1 起连续有机器（deployed > 0）的最后一级；T1 没机器 = 0
--- 【两套模式共用口径】速率链条只覆盖这一段（断点之后要求"某级跑 N 并行"而它没有机器 = 无解），
---   阈值审计也只统计这一段（更高级的阈值/权重属于**预填**，不算错、不报警）。
--- @return number 0..LEVEL_COUNT
-function state.serviceTop()
+--- 在役前缀最高等级：T1 起连续部署的最后一级；T1 没机器 = 0。
+function read.serviceTop()
     local top = 0
     for level = 1, constants.LEVEL_COUNT do
-        if (state.plant(level).deployed or 0) > 0 then
+        if (read.plant(level).deployed or 0) > 0 then
             top = level
         else
             break
@@ -98,56 +84,124 @@ function state.serviceTop()
     return top
 end
 
---- 取某等级的快照（不存在就建一个空的）
--- @param level number 0 = 主机
--- @return table
-function state.plant(level)
-    local p = state.plants[level]
-    if not p then
-        p = { deployed = 0 }
-        state.plants[level] = p
-    end
-    return p
-end
-
---- 标脏：`state.markDirty("levels")`
--- @param what string
-function state.markDirty(what)
-    state.dirty[what] = true
-end
-
---- 某类数据是否脏
--- @param what string
--- @return boolean
-function state.isDirty(what)
-    return state.dirty[what] == true
-end
-
---- 清除脏标记（成功写盘后调用）
--- @param what string
-function state.clearDirty(what)
-    state.dirty[what] = nil
-end
-
---- 系统是否"在自动调度中"：在跑且未锁定
--- 全工程唯一的调度闸（没有"暂停"这类会自己消失的中间态：要么在跑，要么停了等人）：
---   * 所有"想调度"的入口先查它，**提前**放弃，免得白做一遍再被挡回来
---   * `plan.run` 开头再查一次，作最后一道保险
--- @return boolean
-function state.isActive()
-    return state.system.running == true and state.system.locked == false
-end
-
---- 低级水优先 / 高级水优先的扫描顺序（两种模式**只差这一个顺序**）
--- @return table 等级数组
-function state.priorityOrder()
+--- 低级/高级水优先的扫描顺序
+function read.priorityOrder()
     local order = {}
-    if state.system.priority == "high" then
+    if F.config.priority == "high" then
         for level = constants.LEVEL_COUNT, 1, -1 do order[#order + 1] = level end
     else
         for level = 1, constants.LEVEL_COUNT do order[#order + 1] = level end
     end
     return order
 end
+
+--------------------------------------------------------------------------------
+-- 写接口（每个 setter 唯一调用者）
+--------------------------------------------------------------------------------
+
+--- facts：T3 观测结果（backend/jobs）。仅覆盖传入的非 nil 键。
+function write.recordPlant(level, fields)
+    local p = read.plant(level)
+    for key, value in pairs(fields or {}) do
+        p[key] = value
+    end
+end
+
+--- facts：开关边沿记录（app/watch）
+function write.setLastSwitch(level, value)
+    read.plant(level).lastSwitch = value
+end
+
+--- facts：水量（jobs T2）
+function write.setFluids(values)
+    for level = 1, constants.LEVEL_COUNT do
+        F.facts.fluids[level] = (values and values[level]) or 0
+    end
+end
+
+--- facts：能量仓折算最大功率（jobs T1；可用功率由 read.powerAll 现算）
+function write.setPowerMax(value)
+    F.facts.powerMax = value or 0
+end
+
+--- learn：本轮学习值（domain/learning）
+function write.learnSet(level, parallel, source, success)
+    local l = F.learn[level]
+    if not l then l = {} F.learn[level] = l end
+    l.parallel, l.source = parallel, source
+    if success ~= nil then read.plant(level).success = success end
+end
+
+function write.learnClear(level)
+    if level then
+        local l = F.learn[level]
+        if l then l.parallel, l.source = nil, nil end
+    else
+        for lv = 1, constants.LEVEL_COUNT do write.learnClear(lv) end
+    end
+end
+
+--- config（store/* 与 app 层）
+function write.setRules(t)    F.config.rules = t or {} end
+function write.setRuleLevel(level, rule) F.config.rules[level] = rule end
+function write.setWeights(t)  F.config.weights = t or {} end
+function write.setWeightLevel(level, w) F.config.weights[level] = w end
+function write.setMode(v)     F.config.mode = v end
+function write.setPriority(v) F.config.priority = v end
+function write.setEnforce(v)  F.config.enforceThreshold = v end
+function write.setBoost(v)    F.config.t7Boost = v end
+function write.setEnergyFactor(v) F.config.energyFactor = v end
+function write.netSetStrength(v) F.config.netStrength = tonumber(v) or 0 end
+
+--- session（app/system、app/autostart）
+function write.setRunning(v)  F.session.running = (v == true) end
+function write.setAwaiting(reason)
+    F.session.awaiting    = true
+    F.session.awaitReason = tostring(reason or "等待处理")
+end
+
+function write.clearAwaiting()
+    local why = F.session.awaitReason
+    F.session.awaiting, F.session.awaitReason = false, nil
+    return why
+end
+
+function write.setBaseline(v)   F.session.lastSuggest = v end
+function write.setAutostart(on, stale, path)
+    F.session.autostart      = (on == true)
+    F.session.autostartStale = (stale == true)
+    F.session.autostartPath  = path
+end
+
+--- plan（domain/modes、app/plan、domain/allocator）
+function write.publishSuggest(level, value) F.plan.suggest[level] = value end
+function write.setLastPlan(t)  F.plan.lastPlan = t end
+function write.deleteLastPlanLevel(level) F.plan.lastPlan[level] = nil end
+function write.clearPlan()     F.plan.lastPlan = {} end
+function write.setNotes(t)     F.plan.notes = t or {} end
+function write.setBudget(v)    F.plan.budget = v or 0 end
+
+--- chart（store/history）
+function write.chartSetPoints(t) F.chart.points = t or {} end
+function write.chartAppend(point) F.chart.points[#F.chart.points + 1] = point end
+
+--- net（hardware/net）
+function write.netSetEnabled(v) F.net.enabled = (v == true) end
+function write.netSetFrame(v)   F.net.frame = v or 0 end
+function write.netSetWarned(v)  F.net.warned = v end
+
+--- tracker（domain/tracker）
+function write.trackerSet(address, t) F.tracker[address] = t end
+function write.trackerDelete(address) F.tracker[address] = nil end
+function write.trackerReset()         F.tracker = {} end
+
+--------------------------------------------------------------------------------
+-- 兼容出口：派生读函数
+--------------------------------------------------------------------------------
+
+state.read           = read
+state.write          = write
+state.serviceTop     = read.serviceTop
+state.priorityOrder  = read.priorityOrder
 
 return state

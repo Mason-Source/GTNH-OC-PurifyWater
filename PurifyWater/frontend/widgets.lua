@@ -6,8 +6,7 @@
 -- 【依赖】unicode、frontend/{state,theme}
 -- 【被谁用】frontend/panels/*、frontend/charts
 --
--- 【来源】v2 的排版工具（实机用过）
--- 中文是宽字符：一切宽度都用 unicode.wlen，不能用 #text
+-- 中文是宽字符：宽度一律用 unicode.wlen，不用 #text
 --------------------------------------------------------------------------------
 
 local unicode = require("unicode")
@@ -115,7 +114,7 @@ end
 --   area.y + 2 … bottom 正文
 --   bottom + 1 … h - 2  底部留白
 --   area.y + h - 1      下边框
--- v2 把缓冲行数与正文行数写在两处，结果"最新一行永远看不见"；现在两边都调这里。
+-- 缓冲行数与正文行数统一由此计算。
 -- @param area table { y = , h = }
 -- @param bottomMargin number|nil 默认 2
 -- @return table { top = , bottom = , rows = }

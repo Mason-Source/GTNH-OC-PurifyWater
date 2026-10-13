@@ -1,3 +1,4 @@
+local CONFIG        = require("shared.config")
 local constants     = require("shared.constants")
 local logs          = require("shared.logs")
 local state         = require("shared.state")
@@ -7,6 +8,8 @@ local jobs          = require("backend.jobs")
 local app           = require("backend.app.system")
 local autostart     = require("backend.app.autostart")
 local ratesApp      = require("backend.app.rates")
+local energyApp    = require("backend.app.energy")
+local netApp       = require("backend.app.net")
 local power         = require("backend.domain.power")
 local rules         = require("backend.domain.rules")
 local levels_config = require("backend.store.levels_config")
@@ -15,16 +18,17 @@ local net           = require("backend.hardware.net")
 local api           = { read = {} }
 function api.read.system()
     return {
-        running  = state.system.running == true,
-        locked   = state.system.locked == true,
-        priority = state.system.priority,
-        mode             = state.system.mode,
-        enforceThreshold = state.system.enforceThreshold == true,
-        t7Boost          = state.system.t7Boost,
-        effect           = app.effect(),
-        autostart      = state.system.autostart == true,
-        autostartStale = state.system.autostartStale == true,
-        autostartPath  = state.system.autostartPath
+        running  = state.read.running() == true,
+        awaiting = state.read.awaiting() == true,
+        priority = state.read.priority(),
+        mode             = state.read.mode(),
+        enforceThreshold = state.read.enforceThreshold() == true,
+        t7Boost          = state.read.t7Boost(),
+        energyFactor     = state.read.energyFactor(),
+        effectiveConfig  = app.effectiveConfig(),
+        autostart      = state.read.autostart() == true,
+        autostartStale = state.read.autostartStale() == true,
+        autostartPath  = state.read.autostartPath()
     }
 end
 function api.read.hardware()
@@ -41,12 +45,12 @@ end
 function api.read.levels()
     local out = {}
     for level = 1, constants.LEVEL_COUNT do
-        local snap = state.plant(level)
-        local rule = state.rules[level] or { threshold = 0, enabled = false }
+        local snap = state.read.plant(level)
+        local rule = state.read.rules()[level] or { threshold = 0, enabled = false }
         local line = rules.lines(level)
         local perMachine = {}
         for i, m in ipairs(snap.machines or {}) do
-            local track = state.tracker[m.address]
+            local track = state.read.tracker()[m.address]
             perMachine[i] = {
                 address = m.address,
                 active = m.active,
@@ -63,9 +67,9 @@ function api.read.levels()
             active = snap.active,
             sample = snap.sample,
             success = snap.success,
-            parallel = snap.parallel,
+            parallel = (state.read.learn(level) or {}).parallel,
             machines = perMachine,
-            water = state.fluids[level],
+            water = state.read.fluids()[level],
             rule = {
                 threshold           = rule.threshold or 0,
                 enabled             = rule.enabled == true,
@@ -74,21 +78,21 @@ function api.read.levels()
                 thresholdOverridden = line.overridden
             },
             suggest         = power.suggest(level),
-            weight          = state.rates[level] or 0
+            weight          = state.read.weights()[level] or 0
         }
     end
     return out
 end
 function api.read.power()
     return {
-        all = state.power.all or 0,
-        used = (state.power.all or 0) - (state.power.budget or 0)
+        all = state.read.powerAll(),
+        used = state.read.powerAll() - state.read.budget()
     }
 end
 function api.read.plan()
     local opened = {}
     for level = 1, constants.LEVEL_COUNT do
-        if state.lastPlan[level] == true then opened[#opened + 1] = level end
+        if state.read.lastPlan()[level] == true then opened[#opened + 1] = level end
     end
     return { opened = opened }
 end
@@ -106,22 +110,29 @@ function api.read.net()
     return net.status()
 end
 function api.read.host()
-    local snap = state.plant(constants.HOST_LEVEL)
+    local snap = state.read.plant(constants.HOST_LEVEL)
     return {
         switch = snap.switch,
         progress = snap.progress,
         progressMax = snap.progressMax
     }
 end
-function api.snapshot()
-    return {
-        system = api.read.system(),
+function api.snapshot(opts)
+    local payload = {
+        system   = api.read.system(),
         hardware = api.read.hardware(),
-        power = api.read.power(),
-        plan = api.read.plan(),
-        host = api.read.host(),
-        levels = api.read.levels()
+        power    = api.read.power(),
+        plan     = api.read.plan(),
+        host     = api.read.host(),
+        levels   = api.read.levels(),
+        logs     = api.read.logs(CONFIG.LOG.MAX_LINES),
+        net      = api.read.net()
     }
+    if opts and opts.chart then
+        payload.history = api.read.history((CONFIG.CHART.ALL_WINDOW_DAYS or 1)
+            * (CONFIG.CHART.SECONDS_PER_GAME_DAY or 86400))
+    end
+    return payload
 end
 local COMMANDS = {}
 COMMANDS.system_toggle = function()
@@ -151,6 +162,11 @@ COMMANDS.weight_set = function(level, weight)
 end
 COMMANDS.t7_boost_set = function(value)
     local ok, text = ratesApp.setT7Boost(value)
+    if not ok then return false, text end
+    return true, ""
+end
+COMMANDS.energy_factor_set = function(value)
+    local ok, text = energyApp.setFactor(value)
     if not ok then return false, text end
     return true, ""
 end
@@ -186,7 +202,12 @@ COMMANDS.level_enabled_set = function(level, enabled)
     return COMMANDS.level_rules_set(level, nil, enabled)
 end
 COMMANDS.net_toggle = function()
-    return true, net.toggle()
+    return true, netApp.toggle()
+end
+COMMANDS.net_strength_set = function(value)
+    local ok, text = netApp.setStrength(value)
+    if not ok then return false, text end
+    return true, ""
 end
 COMMANDS.log_level_toggle = function()
     logs.setLevel(logs.isDebug() and "user" or "debug")

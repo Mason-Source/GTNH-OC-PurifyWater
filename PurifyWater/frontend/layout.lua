@@ -34,15 +34,15 @@ layout.MIN_LOG_H     = 6
 layout.STATUS_TWO_H  = 19 -- 净水状态：每级 2 行（信息 + 进度条）；运行周期条已挤进标题行，故 19
 layout.STATUS_ONE_H  = 12 -- 装不下时每级 1 行
 -- 【配置页两张卡片】从上往下贴：调度配置 -> 运行设置，**其余留白**（不再塞满整屏）：
---   ① 「调度配置」卡 = 边框 2 + 标题/生效性 1 + 表头 1 + 8 级 + 键盘槽 6 = 18
+--   ① 「调度配置」卡 = 边框 2 + 标题 1 + 分隔 1 + 表头 1 + 分隔 1 + 8 级 + 键盘槽 6 = 20
 --      键盘槽是**固定**的：点哪一列就换成哪一列的键盘（阈值 / 权重 / 增产；勾选点一下直接切换），
 --      表格与键盘本体都不动 —— 只有被选中的那一格和键盘槽重画。
 --   ② 空 1 行
 --   ③ 「运行设置」卡 = 边框 2 + 标题 1 + 子项 1 + 说明 1 = 5
---   本机运行分辨率 128×40：18 + 1 + 5 = 24 行，体区 39 行，剩下 15 行留白。
-layout.CONFIG_HEAD_H   = 11 -- 表格段：边框 2 + 标题 1 + 表头 1 + 8 级（config 面板只清/画这一段）
+--   本机运行分辨率 128×40：20 + 1 + 5 = 26 行，体区 39 行，剩下 13 行留白。
+layout.CONFIG_HEAD_H   = 13 -- 表格段：边框 2 + 标题 1 + 分隔 1 + 表头 1 + 分隔 1 + 8 级
 layout.KEYPAD_H        = 6  -- 键盘槽（固定高度；画得下的键盘都在这儿，不挤表格）
-layout.CONFIG_CARD_H   = 18 -- 调度配置卡整高 = 表格段 11 + 键盘槽 6 + 下边框 1
+layout.CONFIG_CARD_H   = 20 -- 调度配置卡整高 = 表格段 13 + 键盘槽 6 + 下边框 1
 layout.CARD_GAP        = 1  -- 卡片之间空一行
 layout.SETTINGS_CARD_H = 5  -- 运行设置卡：边框 2 + 标题 1 + 子项 1 + 说明 1
 layout.MIN_CHART_H   = 10 -- 水量监视最小高度（标题 + 画布 + 刻度）
@@ -84,7 +84,7 @@ function layout.calculate()
     grid.rows.top      = { y = 1, h = layout.TAB_H }
     grid.rows.body     = { y = layout.TAB_H + 1, h = H - layout.TAB_H }
 
-    -- ② 网格：列（左窄右宽；左列夹在合理区间，免得极窄/极宽屏失衡）
+    -- ② 网格：左窄右宽，左列夹在合理区间
     local leftW        = math.floor(W * 0.30)
     leftW              = math.max(26, math.min(leftW, 46, W - 40))
     local rightW       = W - leftW - layout.SIDE_PAD * 2 - layout.COL_GAP
@@ -146,10 +146,10 @@ function layout.calculate()
     fstate.areas.settings = { x = configX, y = settingsY, w = configW, h = settingsH }
 
     -- 缓冲上限与"面板能画几行"无关：内存固定留 CONFIG.LOG.MAX_LINES（超出删最前面的），
-    --   面板自己从尾部取可见行数画（否则往回翻什么都看不到）。
+    --   面板从尾部取可见行数画
 
     -- 布局摘要进 debug 日志：屏幕上的错位抄不回来，排错时靠这行数字。
-    logs.debug(string.format("[调试] 布局 控制 %dx%d@%d,%d 状态 %dx%d@%d,%d 图表 %dx%d@%d,%d 日志 %dx%d@%d,%d",
+    logs.debug(string.format("布局 控制 %dx%d@%d,%d 状态 %dx%d@%d,%d 图表 %dx%d@%d,%d 日志 %dx%d@%d,%d",
         fstate.areas.control.w, fstate.areas.control.h, fstate.areas.control.x, fstate.areas.control.y,
         fstate.areas.status.w, fstate.areas.status.h, fstate.areas.status.x, fstate.areas.status.y,
         fstate.areas.chart.w, fstate.areas.chart.h, fstate.areas.chart.x, fstate.areas.chart.y,

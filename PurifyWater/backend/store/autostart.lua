@@ -1,21 +1,14 @@
 --------------------------------------------------------------------------------
 -- backend/store/autostart.lua
 --------------------------------------------------------------------------------
--- 【职责】开机自启块的**文件读写与解析**：$HOME/.shrc 里那段带标记的启动块
+-- 【职责】开机自启块的文件读写与解析：$HOME/.shrc 标记块
 -- 【不做什么】不写日志、不改 state、不认识界面（那些在 backend/app/autostart）
 -- 【依赖】backend/store/files（唯一写盘原语）
 -- 【被谁用】backend/app/autostart.lua
 --
--- 【为什么块长这样】OpenOS 的 .shrc 是**逐行当 shell 命令执行**的，不是 Lua 文件：
---   /etc/profile.lua 用 /bin/source.lua 逐行喂给 sh.execute，所以块必须是能当 shell 命令跑的行：
---       # >>> PurifyWater autostart >>>    <- # 开头的整行由 sh.execute 直接跳过
---       lua "<应用目录>/main.lua"
---       # <<< PurifyWater autostart <<<
---   这三行是 .shrc 里**唯一属于本程序**的部分：勾选 = 改写/追加，取消 = 整段删除，
---   其余内容一行不动（只在写回时统一 LF 行尾、末尾补一个换行 —— shell 逐行执行，语义不变）。
---
--- 【真源】勾选与否只看这个块在不在、块里的命令是不是指向**当前**应用目录；
---   指向别处（换过目录 / 旧安装残留）只报 stale，不自动改用户的文件。
+-- .shrc 逐行当 shell 命令执行：块内是 # 注释行 + lua 命令，属本程序的唯一部分。
+-- 勾选 = 改写/追加，取消 = 整段删除，其余内容不动。
+-- 真源 = 块在不在且是否指向当前应用目录；指向别处只报 stale。
 --------------------------------------------------------------------------------
 
 local files = require("backend.store.files")
@@ -25,7 +18,7 @@ local autostart = {}
 local BEGIN_MARK = "# >>> PurifyWater autostart >>>"
 local END_MARK   = "# <<< PurifyWater autostart <<<"
 
---- 本机 shell 启动脚本路径：$HOME/.shrc（HOME 取不到按 /home）
+--- .shrc 路径（HOME 取不到按 /home）
 -- @return string
 local function shrcPath()
     local home = os.getenv("HOME")
@@ -33,20 +26,20 @@ local function shrcPath()
     return home .. "/.shrc"
 end
 
---- 本程序 main.lua 的绝对路径（应用目录来自 files.root()，main.lua 定位到哪就指哪）
+--- main.lua 绝对路径
 -- @return string
 local function mainPath()
     return files.root() .. "/main.lua"
 end
 
---- 去首尾空白（判标记行 / 认命令行用；不改原文）
+--- 去首尾空白
 -- @param text string|nil
 -- @return string
 local function trim(text)
     return (tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
---- 文本 -> 行数组（丢 CR；末尾那个空行不入数组，写回时统一补一个换行）
+--- 文本 -> 行数组（丢 CR）
 -- @param text string|nil
 -- @return table
 local function splitLines(text)
@@ -58,7 +51,7 @@ local function splitLines(text)
     return out
 end
 
---- 行数组 -> 文本（LF 行尾；非空则末尾补一个换行）
+--- 行数组 -> 文本（LF，末尾补换行）
 -- @param lines table
 -- @return string
 local function joinLines(lines)
@@ -66,8 +59,7 @@ local function joinLines(lines)
     return table.concat(lines, "\n") .. "\n"
 end
 
---- 摘出自启块：返回（不含块的其余行, 块内命令行数组, 删掉的块数）
---   没配结束标记的残块按"一直到文件尾"处理 —— 残块也得能被取消掉。
+--- 摘出自启块；缺结束标记的残块按到文件尾处理。
 -- @param lines table
 -- @return table, table, number
 local function extractBlocks(lines)
@@ -91,7 +83,7 @@ local function extractBlocks(lines)
     return kept, commands, removed
 end
 
---- 块外还有没有"手动启动本程序"的行（只提个醒，不拦、不改）
+--- 块外手动启动行（只提醒）
 -- @param lines table
 -- @param target string 本程序 main.lua 的绝对路径
 -- @return string|nil 命中的那一行
@@ -129,7 +121,7 @@ function autostart.read()
     }
 end
 
---- 勾选：删掉旧块（含重复块 / 换目录残留）后追加一个新块；其余内容原样保留
+--- 勾选：删旧块后追加新块；其余保留
 -- @return boolean ok
 -- @return string 路径（成功）或失败原因
 function autostart.enable()

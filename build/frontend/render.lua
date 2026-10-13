@@ -1,8 +1,6 @@
 local fstate        = require("frontend.state")
 local theme         = require("frontend.theme")
 local layout        = require("frontend.layout")
-local viewmodel     = require("frontend.viewmodel")
-local input         = require("frontend.input")
 local CONFIG        = require("shared.config")
 local logs          = require("shared.logs")
 local scheduler     = require("core.scheduler")
@@ -55,14 +53,21 @@ function render.restoreResolution()
         pcall(fstate.gpu.setResolution, base.width, base.height)
     end
 end
-function render.boot()
+function render.setup()
     fstate.gpu = require("component").gpu
     render.applyResolution()
     layout.calculate()
+    fstate.invalidateAll()
+end
+function render.bindInput()
+    local input = require("frontend.input") 
     scheduler.on("key_down", function(payload) input.handle("key_down", payload) end)
     scheduler.on("touch", function(payload) input.handle("touch", payload) end)
     scheduler.on("screen_resized", function() layout.calculate() end)
-    fstate.invalidateAll()
+end
+function render.boot()
+    render.setup()
+    render.bindInput()
 end
 function render.renderAll(forceAll)
     local fps = fstate.render.fingerprints
@@ -89,8 +94,8 @@ function render.renderAll(forceAll)
     fstate.render.forceAll = false
 end
 function render.frame()
-    local data = viewmodel.build()
-    input.attach(data)
+    local data = require("frontend.viewmodel").build()
+    require("frontend.input").attach(data)
     render.renderAll()
 end
 return render

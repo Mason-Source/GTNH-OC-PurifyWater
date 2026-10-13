@@ -8,7 +8,6 @@ CONFIG.FILES                     = {
 }
 CONFIG.INTERVAL                  = {
     HARDWARE  = 10,
-    SETTINGS  = 5,
     FLUID     = 5,
     OBSERVE   = 5,
     SCHEDULE  = 5,
@@ -29,15 +28,18 @@ CONFIG.CHART                     = {
     LEVEL_WINDOW_DAYS    = 2
 }
 CONFIG.NET                       = {
-    ENABLED = false,
-    PORT    = 4096,
-    CHUNK   = 4000,
-    REFRESH = 2
+    ENABLED        = false,
+    ENABLED_KEY    = "net_enabled",       
+    PORT           = 4096,
+    CHUNK          = 4000,
+    REFRESH        = 2,
+    STRENGTH       = 20,
+    STRENGTH_KEY   = "net_strength",      
+    STRENGTH_MAX   = 400
 }
 CONFIG.LOOP_MIN_IDLE             = 0.05
 CONFIG.LOOP_MAX_IDLE             = 1.0
 CONFIG.PARALLEL_CONFIRM_CYCLES   = 3
-CONFIG.PARALLEL_FALLBACK_SAMPLES = 24
 CONFIG.LEVELS_DEFAULT            = {
     threshold = 0,
     enabled   = true
@@ -47,6 +49,12 @@ CONFIG.RATES                     = {
     MAX_WEIGHT       = 100,
     DEFAULT_T7_BOOST = 1,
     ZERO_MARGIN      = 0.05
+}
+CONFIG.ENERGY                    = {
+    FACTOR_KEY     = "energy_factor", 
+    FACTOR_MIN     = 1,
+    FACTOR_MAX     = 100,
+    FACTOR_DEFAULT = 100
 }
 CONFIG.SYSTEM                    = {
     PRIORITY_DEFAULT        = "low", 

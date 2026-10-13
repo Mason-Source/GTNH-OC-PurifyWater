@@ -32,7 +32,7 @@ function chart.draw(data)
     local history = data.history
     if not history or #(history.times or {}) < 2 then
         widgets.drawCenteredTip({ x = area.x, y = area.y + 2, w = area.w, h = area.h - 3 },
-            "数据采集中…（每 30 秒一个点）")
+            "数据采集中…")
         return
     end
     if fstate.chartLevel == 0 then
@@ -43,7 +43,7 @@ function chart.draw(data)
             labels[#labels + 1] = "T" .. level
         end
         charts.bars(area, values, labels,
-            string.format("近 %d 游戏日 各级水量变化（柱向上=增加，向下=减少）", days))
+            string.format("近 %d 游戏日 各级水量变化", days))
     else
         local level = fstate.chartLevel
         local row   = data.levels[level]

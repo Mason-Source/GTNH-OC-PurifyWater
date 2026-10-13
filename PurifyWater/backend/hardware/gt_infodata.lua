@@ -1,54 +1,25 @@
 --------------------------------------------------------------------------------
 -- backend/hardware/gt_infodata.lua
 --------------------------------------------------------------------------------
--- 【层次】后端 / 硬件适配（**纯解析**，不碰任何组件对象）
--- 【职责】把 GregTech 的 `getSensorInformation()` 返回值（字符串数组）解析成结构化数据。
+-- 【职责】解析 GT getSensorInformation() 文本 -> { parallel, success }（纯解析）
+-- 【不做什么】不碰组件；并行读数由调用方用 isMachineActive 闸门（停机时报 1）
+-- 【依赖】无
+-- 【被谁用】backend/hardware/probes
 --
--- 独立成模块：v2 的 sensors.lua 走"关键字 + 抓数字"的猜测路线，会把
---   `GT5U.infodata.parallel.current\§e3000000` 里的 `GT5U` 抓成 **5**（3000000 读成 5）。
---   本模块改成"**键优先、标签兜底**"，不猜文本；那个 sensors.lua 已随 v3 重构删除。
---
--- 【必须适配三种输出形态（实机样本）】同一台机器在不同模组版本 / 语言设置下给出完全不同的行，
--- 三种都带 `N = ` 行号前缀：
---
---   A. 未本地化键值（最稳，不受语言影响）
---        1 = GT5U.infodata.purification_unit_base.linked_at\\541\\21\\301
---        2 = GT5U.infodata.purification_unit_base.success_chance\\§e70%§r
---        3 = GT5U.infodata.parallel.current\\§e1
---   B. 中文本地化文本
---        1 = 该净化装置与位于22,8,14的水净化厂相连。
---        2 = 成功几率：§e70%§r
---        3 = 当前并行：§e1
---   C. 英文本地化文本
---        1 = This Purification Unit is linked to the Water Purification Plant at 22, 8, 14.
---        2 = Success chance: §e70%§r
---        3 = Current Parallel: §e1
---
--- 【实测事实（实机）】
---   * 键值形态的分隔符是**双反斜杠** `\\`（个别版本可能是单个），两种都认
---   * **机器停着时 `parallel.current` 会报 1**、`success_chance` 行整行消失
---     -> 并行读数必须由调用方用 `isMachineActive` 做闸门，本模块只负责解析
---   * **值前面带颜色码**（实测是黄色 `§e`）：GT 把"值"染色、标签是别的颜色。
---     并行与成功率两行都是这个形状（`…当前并行：§e3000000` / `…成功几率：§e70%§r`），
---     所以数值的统一取法就是：**关键字之后，第一个带颜色码的数字**（见 coloredNumber）。
---
--- 【依赖】无（连 constants 都不需要）—— 保证任何层都能安全 require
--- 【被谁用】backend/hardware/probes（传感器读数）
+-- 适配三种输出形态（A 未本地化键 / B 中文本地化 / C 英文本地化），均带行号前缀。
+-- 键值分隔符为一段反斜杠；数值取"关键字之后第一个带颜色码的数字"。
 --------------------------------------------------------------------------------
 
 local gtInfodata = {}
 
--- ============================ 字段识别表 ============================
--- 【加字段就在这里加一行】匹配顺序 = 表里的顺序，先命中先算
---   keys    : GT 的未本地化键（子串匹配，大小写不敏感）—— 最稳，优先
---   labels  : 本地化文本里的标签（子串匹配，大小写不敏感；中英都收）—— 兼顾版本差异
---   exclude : 命中这些词就放弃**标签**匹配（键匹配不受影响）
+-- ---- 字段识别表 ----
+-- keys 键优先，labels 标签兜底（均子串、大小写不敏感）；exclude 命中则放弃标签。
 local FIELDS = {
     {
         name    = "parallel",
         keys    = { "parallel.current", "parallel" },
         labels  = { "当前并行", "并行数", "当前并联", "current parallel", "并行", "parallel" },
-        -- 排除 GT 的 "Parallel machine count: 5"（讲的是机器数量）；v2 正是把它读成了 5。
+        -- 排除 "Parallel machine count"（机器数量）
         exclude = { "机器", "数量", "machine", "count" }
     },
     {
@@ -70,22 +41,16 @@ function gtInfodata.stripColors(line)
     return (tostring(line):gsub("§.", ""))
 end
 
---- 去掉行首的"行号前缀"（`1 = ` / `2: ` / `3) ` 等）
--- 三种输出形态都带行号（玩家是从带编号的视图里看的），统一剥掉。
--- 不误伤：数字后面必须紧跟分隔符（= : ： ) .）才算行号（`70%`、`22,8,14` 不满足）。
+--- 去掉行号前缀（1 = / 2: / 3) 等）
+-- 数字后必须紧跟分隔符（= : ： ) .）才算行号，避免误伤 70%/坐标。
 -- @param line string
 -- @return string
 function gtInfodata.stripIndex(line)
     return (tostring(line):gsub("^%s*%d+%s*[=:：%)%.]%s*", "", 1))
 end
 
---- 拆分一行为 "键" 与 "值"
--- 两种形态都要认：
---   ① `键\参数...`     —— 实测分隔符是**双反斜杠**（`\\`），故用 `\\+` 匹配"一段反斜杠"
---   ② `键`（无参数）   —— 整行就是一个键，如 `GT5U.infodata.purification_plant.linked_units`
---      判据是"整行只有键字符集（字母/数字/点/下划线）"：纯文本行（如"澄清净化单元: 激活"）
---      含中文/冒号/空格，不会命中；归错会把键当普通文本，丢掉"这个键存在"的信息。
--- ③ 其余（含中文/冒号/空格的普通文本）返回 key = nil，rest = 剥掉行号后的整行。
+--- 拆分为键与值
+-- ① 键\参数 ② 无参数键（整行只有字母/数字/点/下划线）③ 其余文本返回 key=nil。
 -- @param line string 原始行
 -- @return string|nil key
 -- @return string rest 去色码、去行号后的剩余部分（多参数用 " / " 连接）
@@ -151,9 +116,7 @@ end
 -- 本地化文本形态的辅助（B/C 两种形态走这里）
 --------------------------------------------------------------------------------
 
---- 在某行里找字段标签，返回**第一个**命中的位置
--- 传小写行：ASCII 大小写不影响字节长度，用同样位置去原串里取值是安全的。
--- 位置来自原行的小写：标签本身不含色码，位置可直接用来"往后取值"。
+--- 找字段标签，返回第一个命中位置（小写行上，字节位置可回原行用）。
 -- @param lowerLine string 已小写化的行（传原行的小写，位置才对得上 raw）
 -- @param labels table 标签表
 -- @return number|nil 位置（字节下标）
@@ -178,9 +141,7 @@ local function excluded(lowerLine, field)
     return false
 end
 
---- 在一行里找字段：① 未本地化键优先（形态 A） ② 本地化标签兜底（形态 B/C）
--- 返回值位置的原因：取值规则是"关键字**之后**第一个带颜色码的数字"，必须知道关键字在
---   **原行**里到哪里结束（标签本身不含色码，直接在小写化的原行上找，位置就是准的）。
+--- 找字段：键优先，标签兜底；返回原行上的取值起点。
 -- @param raw string 原始行（带色码）
 -- @param plain string 去色码后的行
 -- @param key string|nil splitLine 得到的键（nil = 这行不是键值形态）
@@ -212,10 +173,7 @@ local function findField(raw, plain, key)
     return nil, nil
 end
 
---- 取该行"关键字之后"的目标数值
--- 【规则】就是上面那一条：第一个带颜色码的数字。
--- 【唯一例外】整行**一个颜色码都没有**（老格式 / 纯文本输出）时，
---   退回"关键字之后第一个完整数字"；有颜色码但取不到数字就是没有，不再瞎猜。
+--- 取关键字之后的数值：优先带色码的数字；整行无色码则取第一个完整数字。
 -- @param raw string 原始行
 -- @param from number 关键字结束位置
 -- @return number|nil
@@ -227,9 +185,7 @@ local function valueAt(raw, from)
     return gtInfodata.firstNumber(raw:sub(from))
 end
 
---- 写入一个字段值
--- 单独包一层：`field.name` 是**动态键**，直接写在 parse 里会被静态分析当成"窄表类型"的
---   已知字段（于是报 number 不能赋给 table|nil）；包一层参数无类型的局部函数最省事。
+--- 写入字段值（包一层规避 LuaLS 对动态键的窄表检查）。
 -- @param info table
 -- @param name string
 -- @param value any
@@ -241,7 +197,7 @@ end
 -- 整段解析
 --------------------------------------------------------------------------------
 
---- 解析一个机器返回的整段传感器文本（三种输出形态都适配，见文件头）
+--- 解析整段传感器文本（三种形态，见文件头）
 -- @param lines table getSensorInformation() 的返回值（字符串数组；也接受带 \n 的字符串）
 -- @return table {
 --     parallel    = number|nil  真实并行（机器停着时可能是 1，调用方需自己闸门）
@@ -254,7 +210,7 @@ function gtInfodata.parse(lines)
     }
     if lines == nil then return info end
 
-    -- 允许传"已经拆好的行数组"，也允许传"带 \n 的一整串"
+    -- 接受行数组或带 \n 的整串
     local list = lines
     if type(lines) == "string" then
         list = {}
@@ -266,12 +222,11 @@ function gtInfodata.parse(lines)
     for _, raw in ipairs(list) do
         local plain = gtInfodata.stripColors(raw)
 
-        -- ① 关键字 = 未本地化键（形态 A）或本地化标签（形态 B/C）
+        -- ① 键或标签定位字段
         local key = gtInfodata.splitLine(plain)
         local field, from = findField(raw, plain, key)
 
-        -- ② 取值：关键字之后，第一个带颜色码的数字；取不到就当这行没这个字段
-        --    （既不是本模块字段、也不是键的纯文本行直接忽略：没有消费者）
+        -- ② 取关键字后的数字；纯文本行忽略
         if field then
             local num = valueAt(raw, from)
             if num ~= nil then put(info, field.name, num) end

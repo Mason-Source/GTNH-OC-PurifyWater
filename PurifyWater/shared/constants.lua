@@ -1,30 +1,28 @@
 --------------------------------------------------------------------------------
 -- shared/constants.lua
 --------------------------------------------------------------------------------
--- 【职责】整个工程「永不改变」的常量：等级映射、流体名、机器名、单并行功耗、电压档
--- 【不做什么】不含任何可调参数（那在 shared/config.lua），不含逻辑
--- 【依赖】无 —— 保证任何层都能安全 require
+-- 【职责】工程常量：等级映射、流体名、机器名、功耗、电压档
+-- 【不做什么】不含可调参数（在 shared/config）、不含逻辑
+-- 【依赖】无
 -- 【被谁用】shared/*、backend/*、frontend/*
 --------------------------------------------------------------------------------
 
 local constants                   = {}
 
--- ============================ 版本戳 ============================
--- OC 的 shell 会缓存已加载的模块：只重启程序不一定拿到新代码。
--- 启动日志与 last_run 痕迹都写它，换完文件即可确认跑的是哪一份；改了需重启生效的东西就抬号。
--- 跑 `--debug` 时显示成 `vX.Y-debug`：后缀在 `core/bootstrap.version()` 里拼（常量本身只有号）。
-constants.CODE_VERSION            = "v4.6"
+-- ---- 版本戳 ----
+-- 启动日志与痕迹写版本戳；改动需重启生效时抬号。debug 后缀在 core/bootstrap 拼。
+constants.CODE_VERSION            = "v4.7"
 
--- 等级：1~8 级净水单元；0 级保留给净水主机
+-- 等级：1~8 净水单元；0 = 净水主机
 constants.LEVEL_COUNT             = 8
 constants.HOST_LEVEL              = 0
-constants.T7_LEVEL                = 7    -- 支持增产（超导粗胚倍率）的那一级
+constants.T7_LEVEL                = 7    -- 支持增产的等级
 
--- ============================ 水位/并行 ============================
-constants.STOCK_PER_PARALLEL      = 1000 -- 每并行预留的水量（mB）
-constants.OPEN_RESERVE_MULTIPLIER = 5    -- "5 倍水位线" = 5 × 该级总并行 × STOCK_PER_PARALLEL
+-- ---- 水位/并行 ----
+constants.STOCK_PER_PARALLEL      = 1000 -- 每并行预留水量（mB）
+constants.OPEN_RESERVE_MULTIPLIER = 5    -- 保供线倍数
 
--- 各等级"单并行"功耗（EU/t）
+-- 单并行功耗（EU/t）
 constants.POWER_LEVELS            = {
     [1] = 30720,
     [2] = 30720,
@@ -36,19 +34,18 @@ constants.POWER_LEVELS            = {
     [8] = 7864320
 }
 
--- ============================ 速率模型（每并行每周期） ============================
--- 【谁用】domain/rates（速率模式的算账）。数值来自实机口径：吃 1000L 上一级 / 成功产 900L 本级；
---   回流等级额外吃 90L 本级水换 +15% 成功率（封顶 100%）；T7 可用超导粗胚增产（倍率档位见表）。
--- 【只有比例有意义】权重只是相对值，绝对量级不影响结果。
+-- ---- 速率模型（每并行每周期） ----
+-- domain/rates 用：每并行吃 1000L 上一级、产 900L 本级；回流级多吃 90L 换 +15% 成功率。
+-- 权重只取比例，绝对量级不影响结果。
 constants.RATE_PRODUCE            = 900   -- 成功时产出本级水（L/并行/周期）
 constants.RATE_CONSUME            = 1000  -- 消耗上一级水（L/并行/周期）
 constants.RATE_REFLUX             = 90    -- 回流额外吃本级水（L/并行/周期）
 constants.RATE_REFLUX_BONUS       = 0.15  -- 回流加成功率
-constants.RATE_SUCCESS            = { 0.7, 0.8, 1, 1, 0.99, 0.9, 1, 1 } -- 各级基础成功率（下标=等级）
-constants.RATE_REFLUX_LEVELS      = { [1] = true, [2] = true, [6] = true } -- 值得回流的等级
-constants.T7_BOOST_OPTIONS        = { 1, 1.25, 1.5, 1.75, 2 }             -- T7 增产倍率档位
+constants.RATE_SUCCESS            = { 0.7, 0.8, 1, 1, 0.99, 0.9, 1, 1 } -- 基础成功率
+constants.RATE_REFLUX_LEVELS      = { [1] = true, [2] = true, [6] = true } -- 回流等级
+constants.T7_BOOST_OPTIONS        = { 1, 1.25, 1.5, 1.75, 2 }             -- T7 增产档位
 
--- 各等级**单台并行上限**（两套模式共用的唯一夹取数字）：T1 = 2386092，T2~T8 = 2147483
+-- 单台并行上限（threshold/rate 共用）：T1 单独一档，T2~T8 同档
 constants.PARALLEL_CAP_T1         = 2386092
 constants.PARALLEL_CAP_OTHER      = 2147483
 
@@ -59,8 +56,8 @@ function constants.parallelCap(level)
     return (level == 1) and constants.PARALLEL_CAP_T1 or constants.PARALLEL_CAP_OTHER
 end
 
--- ============================ 流体 / 机器 ============================
--- 等级 -> GT 流体注册名（净化水 grade1~grade8）
+-- ---- 流体 / 机器 ----
+-- 等级 -> GT 流体注册名
 constants.FLUID_NAMES             = {
     [1] = "grade1purifiedwater",
     [2] = "grade2purifiedwater",
@@ -72,7 +69,7 @@ constants.FLUID_NAMES             = {
     [8] = "grade8purifiedwater"
 }
 
--- GT 机器名（getName() 的返回值）-> 等级；0 = 净水主机本体
+-- GT 机器名 -> 等级；0 = 净水主机
 constants.MACHINE_NAMES           = {
     ["multimachine.purificationplant"]            = 0,
     ["multimachine.purificationunitclarifier"]    = 1,
@@ -85,7 +82,7 @@ constants.MACHINE_NAMES           = {
     ["multimachine.purificationunitextractor"]    = 8
 }
 
--- 等级 -> 中文简称（日志与界面用；机器名是英文的，不能直接给用户看）
+-- 等级中文简称（日志与界面）
 constants.LEVEL_NAMES             = {
     [0] = "主机",
     [1] = "T1澄清",
@@ -98,10 +95,8 @@ constants.LEVEL_NAMES             = {
     [8] = "T8萃取"
 }
 
--- ============================ 电压档（GT 的 EU/t 档位表） ============================
--- GT 档位电压（EU/t）：ULV=8 … UXV=536,870,912。
--- 【豁免】当前无人引用，但**刻意保留** —— 不按"无引用即删"处理：
---   后续做"功率按电压档显示 / 按档位估产能 / 标注能源仓等级"时可直接用，不必再查表。
+-- ---- 电压档（GT EU/t） ----
+-- 档位电压表（暂无人引用，保留备查）。
 constants.VOLTAGE_TIERS           = {
     { name = "ULV", eu = 8 }, { name = "LV", eu = 32 },
     { name = "MV",  eu = 128 }, { name = "HV", eu = 512 },
@@ -113,15 +108,9 @@ constants.VOLTAGE_TIERS           = {
     { name = "MAX", eu = 2147483640 }
 }
 
--- ============================ 键盘扫描码 ============================
--- `key_down` 的 char 载荷是**数字**（ASCII 码），某些布局/修饰键下可能为 0；扫描码（code）
--- 不受影响，用来兜底。
--- 【数据来源：实机观测，勿凭记忆改】
---   * Q：2026-09-16 实测 char=113 code=16 ✓（`data/last_run.txt` 里记的原始值）
---   * R：v2 实机验证过 code=19
---   * X：2026-09-27 实机（char=120 code=45）
---   * **P / T 没有条目**：只靠 char 识别（实测正常）；要补就实测后再写，不要猜。
---   【ENTER / ESCAPE / BACKSPACE 已删】阈值改用配置页虚拟键盘输入，物理键盘不进输入框。
+-- ---- 键盘扫描码 ----
+-- char 为 ASCII 码数字，部分布局为 0；扫描码兜底。
+-- 扫描码来自实机观测；P/T 无条目，只靠 char。ENTER/ESC/BACKSPACE 已不用（虚拟键盘输入）。
 constants.KEY_CODES               = {
     Q = 16,
     R = 19,

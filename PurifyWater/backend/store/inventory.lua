@@ -7,8 +7,7 @@
 -- 【依赖】store/files、shared/config
 -- 【被谁用】backend/jobs（T1）
 --
--- 这张清单用于发现"换了能源仓 / 加了单元"（会让本轮并行学习值失效），
---   清单变化就是重学（重测并行）的触发条件之一。
+-- 清单用于发现硬件变化；变化是重学并行的触发条件。
 --------------------------------------------------------------------------------
 
 local CONFIG    = require("shared.config")
@@ -61,7 +60,7 @@ function inventory.compareAndSave(items)
     table.sort(removed)
 
     local changed = #added > 0 or #removed > 0
-    -- 首次运行（盘上没有清单）也写一份，但**不算变化**（避免启动时白报一次"硬件变更"）
+    -- 首次运行也写，但不算变化
     if changed or #prev == 0 then files.writeLines(path, lines) end
 
     return { changed = changed, added = added, removed = removed, path = path }

@@ -1,3 +1,4 @@
+local unicode   = require("unicode")
 local constants = require("shared.constants")
 local fstate    = require("frontend.state")
 local theme     = require("frontend.theme")
@@ -7,28 +8,11 @@ local config    = {}
 local COLS      = {
     { head = "级" },
     { key = "enabled", head = "勾选" },
-    { key = "threshold", head = "阈值(kL)", align = "right" },
+    { key = "threshold", head = "阈值 kL", align = "right" },
     { key = "weight", head = "权重", align = "right" },
     { key = "boost", head = "增产", align = "right" }
 }
 local COL_W     = { 0.12, 0.12, 0.38, 0.20, 0.18 }
-local function effectText(sys)
-    local eff  = (sys and sys.effect) or {}
-    local on, off = {}, {}
-    for _, item in ipairs({
-        { "enabled", "勾选" }, { "threshold", "阈值" },
-        { "weight", "权重" }, { "boost", "增产" }
-    }) do
-        if eff[item[1]] then on[#on + 1] = item[2] else off[#off + 1] = item[2] end
-    end
-    local head = (sys and sys.mode == "rate")
-        and ("速率调度" .. (sys.enforceThreshold and "（受阈值约束）" or "（不受阈值约束）"))
-        or "阈值调度"
-    local text = head .. "："
-        .. ((#on > 0) and (table.concat(on, "/") .. " 生效") or "没有列生效")
-    if #off > 0 then text = text .. "，" .. table.concat(off, "/") .. " 待用" end
-    return text
-end
 local function numberText(value)
     value = tonumber(value) or 0
     if value == math.floor(value) then return string.format("%d", value) end
@@ -38,20 +22,38 @@ function config.draw(data)
     local area = fstate.areas.config
     if not area or area.h < 3 then return end
     local sys   = data.system or {}
-    local eff   = sys.effect or {}
+    local eff   = sys.effectiveConfig or {}
     local inner = { x = area.x + 2, w = area.w - 4 }
     local cols  = layout.cols(inner, COL_W)
     widgets.drawBorder(area.x, area.y, area.w, area.h,
         theme.borderColor(sys.priority == "high"))
-    widgets.clearArea(area.x + 1, area.y + 1, area.w - 2, 2)
+    widgets.clearArea(area.x + 1, area.y + 1, area.w - 2, 4)
     widgets.drawText(area.x + 2, area.y + 1, "调度配置", theme.COLORS.TEXT_CYAN)
-    widgets.drawText(area.x + 12, area.y + 1, effectText(sys), theme.COLORS.TEXT_DISABLED)
+    local fEditing = (fstate.editField == "factor")
+    local fText    = string.format("能源仓利用因子 %s%%",
+        fEditing and ((fstate.editBuf or "") .. "_")
+        or tostring(math.floor(tonumber(sys.energyFactor) or 100)))
+    local sEditing = (fstate.editField == "strength")
+    local sText    = string.format("无线范围 %s", sEditing and ((fstate.editBuf or "") .. "_")
+        or tostring(math.floor(tonumber((data.net or {}).strength) or 0)))
+    local fW       = unicode.wlen(fText)
+    local sW       = unicode.wlen(sText)
+    local fX       = inner.x + inner.w - fW
+    local sX       = fX - sW - 3
+    widgets.drawText(fX, area.y + 1, fText,
+        fEditing and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_VIOLET)
+    widgets.drawText(sX, area.y + 1, sText,
+        sEditing and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_CYAN)
+    fstate.factorCell   = { x = fX, y = area.y + 1, w = fW, h = 1 }
+    fstate.strengthCell = { x = sX, y = area.y + 1, w = sW, h = 1 }
+    widgets.drawText(inner.x, area.y + 2, string.rep("─", inner.w), theme.CHART_AXIS)
+    widgets.drawText(inner.x, area.y + 4, string.rep("─", inner.w), theme.CHART_AXIS)
     for index, col in ipairs(COLS) do
         if col.align == "right" then
-            widgets.drawTextRight(cols[index].x, cols[index].w, area.y + 2, col.head,
+            widgets.drawTextRight(cols[index].x, cols[index].w, area.y + 3, col.head,
                 theme.COLORS.TEXT_DISABLED)
         else
-            widgets.drawText(cols[index].x, area.y + 2, col.head, theme.COLORS.TEXT_DISABLED)
+            widgets.drawText(cols[index].x, area.y + 3, col.head, theme.COLORS.TEXT_DISABLED)
         end
     end
     local selCol = nil
@@ -61,7 +63,7 @@ function config.draw(data)
     fstate.cells = {}
     for level = 1, constants.LEVEL_COUNT do
         local row = data.levels[level]
-        local y   = area.y + 3 + (level - 1)
+        local y   = area.y + 5 + (level - 1)
         if y > area.y + area.h - 2 then break end
         local sel  = (fstate.editLevel == level)
         local fp   = table.concat({
@@ -118,11 +120,12 @@ end
 function config.fingerprint(data)
     local area  = fstate.areas.config or {}
     local sys   = (data and data.system) or {}
-    local eff   = sys.effect or {}
+    local eff   = sys.effectiveConfig or {}
     local parts = {
         tostring(area.x or 0), tostring(area.y or 0), tostring(area.w or 0), tostring(area.h or 0),
         tostring(sys.priority), tostring(sys.mode), tostring(sys.enforceThreshold),
-        tostring(sys.t7Boost), tostring(eff.enabled), tostring(eff.threshold),
+        tostring(sys.t7Boost), tostring(sys.energyFactor), tostring((data.net or {}).strength),
+        tostring(eff.enabled), tostring(eff.threshold),
         tostring(eff.weight), tostring(eff.boost),
         tostring(fstate.editLevel or 0), tostring(fstate.editField or ""),
         tostring(fstate.editBuf or "")

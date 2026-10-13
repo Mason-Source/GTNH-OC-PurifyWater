@@ -1,8 +1,8 @@
 --------------------------------------------------------------------------------
 -- core/bootstrap.lua
 --------------------------------------------------------------------------------
--- 【职责】启动前的"卫生工作"：清旧模块缓存、解析命令行参数、版本戳；退出前把屏幕交还 shell
--- 【不做什么】不注册任务、不建事件循环、不碰硬件、不调垃圾回收（OC 里没得调，见下）
+-- 【职责】启动前清旧模块缓存、解析参数、拼版本戳；退出前交还屏幕
+-- 【不做什么】不注册任务、不建事件循环、不碰硬件
 -- 【依赖】shared/{logs,constants}
 -- 【被谁用】main.lua / monitor.lua
 --------------------------------------------------------------------------------
@@ -12,12 +12,11 @@ local constants    = require("shared.constants")
 
 local bootstrap    = {}
 
--- 本工程自己的模块前缀（清理缓存时只看这些，别把 OC 官方模块清掉）
+-- 本工程模块前缀（清缓存只看这些）
 local OWN_PREFIXES = { "core.", "shared.", "backend", "frontend" }
 
 --- 清掉本工程模块的 require 缓存
--- OpenOS 的 shell 把 require 过的模块留在 package.loaded 里：换完文件后只重跑程序
--- 不一定拿到新代码（实测：文件是新的、跑的还是旧逻辑）。
+-- OpenOS 会把已加载模块留在 package.loaded；换文件后重跑可能仍是旧代码，先清。
 -- @param prefixes string[]|nil 自定义前缀；默认本工程前缀
 -- @return integer 清掉的模块数
 function bootstrap.clearModuleCache(prefixes)
@@ -41,14 +40,9 @@ function bootstrap.applyArgs(args)
     logs.applyArgs(args or {})
 end
 
---- 退出前把屏幕交还 shell：整屏刷黑（黑底白字）+ 光标回左上
--- 【为什么要刷】界面是**直接画在 gpu 上**的，不走 shell 的终端缓冲区 —— shell 不知道屏幕被占过，
---   退出后它只在"自己写过的那几行"上重画，于是那几行退出信息正好压在界面残影上（实机现象：
---   退出信息挤在前几行，字被残影盖着看不清）。刷一次就不必去猜"残影有几行、屏幕现在几行"。
--- 【为何不用 term.clear】它按终端**缓存的**宽高清屏，而分辨率刚被还原过（`screen_resized`
---   还没被主循环取走）—— 缓存可能是旧的，边角会留一条残影。这里直接问 gpu 要当前分辨率。
--- 【为何安全】此刻界面已收工（`render.restoreResolution` 已跑过），屏上没有别人在用；
---   两段都包 pcall：没有 term / 没有 gpu 也只是刷不了屏，不该影响退出。
+--- 退出前把屏幕交还 shell：整屏刷黑 + 光标回左上
+-- 界面直接画在 gpu，shell 不知道屏幕被占过，退出信息会压在残影上，先清一次。
+-- 不用 term.clear：分辨率刚还原，其缓存尺寸是旧的；两段都 pcall，失败不影响退出。
 function bootstrap.releaseConsole()
     local okComp, component = pcall(require, "component")
     if okComp and type(component) == "table" and component.gpu then
@@ -66,20 +60,16 @@ function bootstrap.releaseConsole()
     end
 end
 
--- 【没有"垃圾回收调参"这一步】OC 的沙箱里 `collectgarbage` 是 nil（实机报
---   `attempt to call a nil value (global 'collectgarbage')`），回收参数根本改不了。
---   能做的只有两件：少造垃圾（界面/视图层）、少留数据（内存只留屏幕上放得下的），
---   剩下的靠主循环每帧 `event.pull` 让出时 GC 自己跑。
+-- OC 无 collectgarbage；内存控制靠少造垃圾、少留数据。
 
---- 内核版本戳（不带"内核版本"字样）：`vX.Y`；跑 `--debug` 时带 `-debug` 后缀
--- 【为什么要后缀】屏幕日志与 `last_run.txt` 都写它 —— 一眼看出这轮跑的是正式版还是调试版。
--- 【为什么在这里拼】后缀取决于日志级别，而 `constants` 是无依赖的常量表（不能去 require logs）。
+--- 内核版本戳：vX.Y；--debug 加 -debug 后缀。
+-- 后缀依赖日志级别，故在此拼（constants 不能 require logs）。
 -- @return string
 function bootstrap.version()
     return constants.CODE_VERSION .. (logs.isDebug() and "-debug" or "")
 end
 
---- 版本戳文本（启动日志第一行；**不带前缀**，前缀由 logs.system 统一加）
+--- 启动日志第一行（前缀由 logs 统一加）
 -- @return string
 function bootstrap.versionLine()
     return "内核版本 " .. bootstrap.version()

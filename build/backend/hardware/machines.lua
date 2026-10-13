@@ -15,7 +15,7 @@ local function isEnergy(name)
     return false
 end
 for level = 0, constants.LEVEL_COUNT do reg[level] = {} end
-function machines.scan()
+function machines.classify()
     for level = 0, constants.LEVEL_COUNT do reg[level] = {} end
     energyItem, otherReg = nil, {}
     for _, address in ipairs(device.machines()) do

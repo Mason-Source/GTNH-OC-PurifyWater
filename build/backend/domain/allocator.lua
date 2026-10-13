@@ -5,11 +5,11 @@ local mode      = require("backend.domain.mode")
 local allocator = {}
 function allocator.plan(order)
     order           = order or mode.order()
-    local budget    = state.power.all or 0
+    local budget    = state.read.powerAll()
     local remaining = budget
     local result    = { plan = {}, used = 0, budget = budget, opened = {}, warn = nil }
     if budget <= 0 then
-        result.warn = "[警告] 全厂可用功率为 0（能量仓没读到？）—— 本轮不开启任何等级"
+        result.warn = "[警告] 全厂可用功率为 0，本轮全部关闭"
     end
     for _, level in ipairs(order) do
         local open = mode.evaluate(level)
@@ -22,7 +22,7 @@ function allocator.plan(order)
         end
     end
     result.used = budget - remaining
-    state.power.budget = remaining
+    state.write.setBudget(remaining)
     return result
 end
 function allocator.isSame(a, b)

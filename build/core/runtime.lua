@@ -26,7 +26,7 @@ function runtime.discardStaleInterrupts()
         end
     end
     if dropped > 0 then
-        logs.debug(string.format("[调试] 忽略启动瞬间的 %d 个 interrupted（上一个进程的残留）", dropped))
+        logs.debug(string.format("忽略启动瞬间的 %d 个 interrupted（上个进程残留）", dropped))
     end
     return dropped
 end

@@ -1,13 +1,12 @@
 --------------------------------------------------------------------------------
 -- backend/store/trace.lua
 --------------------------------------------------------------------------------
--- 【职责】运行痕迹：启动 / 退出 各写一行，写在 **data/last_run.txt**（统一数据目录）
--- 【不做什么】不做日志缓冲（那是 shared/logs，纯内存）
+-- 【职责】运行痕迹：启动/退出各写一行到 data/last_run.txt
+-- 【不做什么】不做日志缓冲（shared/logs）
 -- 【依赖】store/files、shared/{constants,config}
--- 【被谁用】main.lua / monitor.lua
+-- 【被谁用】main.lua、monitor.lua
 --
--- 放应用目录下的 data/：应用目录一定可写，文件系统根目录则要看机器。
--- 留痕的用途：确认"跑的是哪一份"、看退出原因 —— 屏幕上的字抄不出来。
+-- 用途：确认跑的版本与退出原因。
 --------------------------------------------------------------------------------
 
 local files     = require("backend.store.files")
@@ -24,8 +23,7 @@ local function stamp()
     return os.date("%m-%d %H:%M:%S")
 end
 
---- 设定痕迹文件位置（**统一在 data/ 下**，路径由 CONFIG.FILES.TRACE 决定）
--- @param appDir string 应用根目录（实际位置由 files.setRoot 决定，参数保留兼容调用方）
+--- 设定痕迹文件位置（data/ 下）
 -- @return string 实际路径
 function trace.setPath(appDir)
     tracePath = files.path(CONFIG.FILES.TRACE)
@@ -48,10 +46,9 @@ function trace.line(text)
     return files.writeLines(tracePath, lines)
 end
 
---- 记启动（由入口调用）
--- @param appDir string
--- @param version string|nil 内核版本戳（入口传 `bootstrap.version()` —— 带 -debug 后缀；缺省用常量原值）
--- @param note string|nil 附加说明（例如"硬件齐全"）
+--- 记启动
+-- @param version string|nil 内核版本戳
+-- @param note string|nil 附加说明
 function trace.start(appDir, version, note)
     trace.setPath(appDir)
     trace.line("启动：内核 " .. tostring(version or constants.CODE_VERSION) .. (note and ("，" .. note) or ""))
