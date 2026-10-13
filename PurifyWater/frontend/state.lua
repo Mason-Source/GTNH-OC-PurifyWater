@@ -25,6 +25,7 @@ local fstate = {
     -- （网格只是 layout 的中间量，不存 fstate：面板要的矩形全在 areas 里）
     areas          = {},                       -- 由网格派生：{ tabBar=, control=, status=, chart=, log=, config=, keypad=, settings= }
     currentTab     = "overview",               -- "overview" | "config"（详情不是页：它只是 status 面板换内容）
+    readOnly       = false,                    -- true = 镜像端：命令类交互禁用（只有【退出程序】可点）；本地视图动作与主端一致
     tabs           = {},                       -- 页签热区 { [name] = { x, y, w, h } }
     buttons        = {},                       -- 按钮热区 { [name] = { x, y, w, h, action, label } }
     levelRows      = {},                       -- 净水状态面板：每级那一行（两行高）的点击热区 { [level] = box }
@@ -44,11 +45,9 @@ local fstate = {
     render         = { fingerprints = {}, forceAll = true, subs = {} }
 }
 
---- 面板**内部**的子区域指纹（面板级指纹只管"这个面板要不要重画"）
--- 为什么两层：像状态面板、日志这种"总有一小块在动"的面板，面板级指纹必然每次都变
---   -> 整块清底重画 -> 屏幕上就是闪。子区域让**真正变了的那一格**单独重画。
--- 用法：画之前 `if fstate.subDirty("status", "row3", fp) then ... end`
---   fp 必须盖住这一格画的**每一样输入**（含坐标：位置变了也得重画）。
+--- 面板内部子区域指纹
+-- 两层：常动面板的面板级指纹每次都变，整块重画会闪；子区域只重画真正变的一格。
+-- fp 须盖住该格全部输入（含坐标）。
 -- @param panel string 面板名（与 render.PANELS 的表键一致，避免不同面板撞名）
 -- @param sub string 子区域名
 -- @param fp any 该子区域这一帧的指纹（会当字符串比）
@@ -83,6 +82,8 @@ function fstate.clearHitboxes()
     fstate.levelRows = {}
     fstate.logTitle = nil
     fstate.autostartRow = nil
+    fstate.factorCell = nil
+    fstate.strengthCell = nil
 end
 
 --- 命中测试

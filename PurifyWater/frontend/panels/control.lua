@@ -16,7 +16,7 @@ local fstate    = require("frontend.state")
 local theme     = require("frontend.theme")
 local widgets   = require("frontend.widgets")
 local layout    = require("frontend.layout")
-local viewmodel = require("frontend.viewmodel")
+local decorate  = require("frontend.decorate")
 
 local control   = {}
 
@@ -93,11 +93,14 @@ end
 function control.drawButtons(area, data, twoCol)
     fstate.buttons = {}
 
-    -- 启动按钮能不能点：判据只有一处（viewmodel.startBlockedReason），键盘 X 用同一处，
-    --   免得出现"按钮灰着、按 X 却能发命令"。运行中它返回 nil（那是「停机」，任何情况都允许）。
-    local blocked  = viewmodel.startBlockedReason(data)
-    local locked   = blocked ~= nil
+    -- 启动按钮能不能点：判据只有一处（frontend.decorate.startBlockedReason），键盘 X 用同一处，
+    --   避免按钮灰着却能用 X；运行中返回 nil（停机允许）。
+    local blocked  = decorate.startBlockedReason(data)
+    local cannotStart = blocked ~= nil
     local rateMode = (data.system.mode == "rate")
+    -- 镜像端（readOnly）：除【退出程序】外都画禁用态、不登记热区
+    --   （退出按钮在镜像端由 monitor.lua 处理 = 退镜像端自己，不发命令给主控）
+    local ro       = fstate.readOnly == true
 
     -- 按钮按"行"组织：一行可以有 1~2 个（只有模式行是 2 个）
     local rows     = {
@@ -107,14 +110,15 @@ function control.drawButtons(area, data, twoCol)
             label    = data.system.running and "停机" or "启动系统",
             color    = data.system.running and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT,
             bg       = data.system.running and theme.COLORS.BTN_BG_HOVER or theme.COLORS.BTN_BG,
-            disabled = locked and not data.system.running
+            disabled = ro or (cannotStart and not data.system.running)
         } },
         { {
             name   = "mode",
             action = "mode_toggle",
             label  = rateMode and "切到阈值调度" or "切到速率调度",
             color  = theme.COLORS.TEXT_CYAN,
-            bg     = theme.COLORS.BTN_BG
+            bg     = theme.COLORS.BTN_BG,
+            disabled = ro
         }, {
             name   = "subparam",
             action = rateMode and "threshold_enforce_toggle" or "priority_toggle",
@@ -124,14 +128,16 @@ function control.drawButtons(area, data, twoCol)
             color  = theme.COLORS.TEXT,
             bg     = (not rateMode and data.system.priority == "high") and theme.COLORS.BTN_PRIORITY_HIGH
                 or ((rateMode and not data.system.enforceThreshold) and theme.COLORS.BTN_BG_HOVER
-                    or theme.COLORS.BTN_BG)
+                    or theme.COLORS.BTN_BG),
+            disabled = ro
         } },
         { {
             name   = "refresh",
             action = "refresh",
             label  = "刷新扫描",
             color  = theme.COLORS.TEXT,
-            bg     = theme.COLORS.BTN_BG
+            bg     = theme.COLORS.BTN_BG,
+            disabled = ro
         } },
         { {
             name     = "net",
@@ -139,14 +145,15 @@ function control.drawButtons(area, data, twoCol)
             label    = data.net.enabled and "无线广播：开" or "无线广播：关",
             color    = data.net.enabled and theme.COLORS.TEXT_CYAN or theme.COLORS.TEXT_YELLOW,
             bg       = data.net.enabled and theme.COLORS.BTN_BG_HOVER or theme.COLORS.BTN_BG,
-            disabled = not data.net.available
+            disabled = ro or not data.net.available
         } },
         { {
             name   = "quit",
             action = "quit",
             label  = "退出程序",
             color  = theme.COLORS.TEXT_RED,
-            bg     = theme.COLORS.BTN_BG
+            bg     = theme.COLORS.BTN_BG,
+            disabled = false -- 镜像端也能点（退的是镜像端本程序）
         } }
     }
 
@@ -199,7 +206,7 @@ function control.fingerprint(data)
         tostring(data.system.mode), tostring(data.system.enforceThreshold), tostring(data.runModeText),
         tostring(data.powerText), tostring(data.meText), tostring(data.machineText),
         tostring(data.net.enabled), tostring(data.net.available),
-        tostring(data.system.locked), tostring(#data.hardware.missing),
+        tostring(data.system.awaiting), tostring(#data.hardware.missing),
         tostring(fstate.areas.control and fstate.areas.control.h or 0)
     }, "\x1f")
 end

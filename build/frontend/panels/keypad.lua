@@ -2,6 +2,7 @@ local unicode = require("unicode")
 local fstate  = require("frontend.state")
 local theme   = require("frontend.theme")
 local widgets = require("frontend.widgets")
+local CONFIG    = require("shared.config")
 local constants = require("shared.constants")
 local keypad  = {}
 local KEY_W   = 8
@@ -84,16 +85,24 @@ local function hintText(data)
     local field = fstate.editField
     local label = "T" .. tostring(fstate.editLevel or "")
     if field == "threshold" then
-        return string.format("正在改 %s 阈值（kL）：%s_   ✔ 保存，✘ 取消", label, fstate.editBuf or ""),
+        return string.format("正在编辑 %s 阈值（kL）：%s_   ✔ 保存 · ✘ 取消", label, fstate.editBuf or ""),
             theme.COLORS.TEXT_YELLOW
     elseif field == "weight" then
-        return string.format("正在改 %s 权重：%s_   ✔ 保存，✘ 取消", label, fstate.editBuf or ""),
+        return string.format("正在编辑 %s 权重：%s_   ✔ 保存 · ✘ 取消", label, fstate.editBuf or ""),
             theme.COLORS.TEXT_YELLOW
     elseif field == "boost" then
-        return string.format("正在改 T7 增产倍率（当前 ×%s）：点下面任意一档即生效",
+        return string.format("正在编辑 T7 增产倍率（当前 ×%s）：点击切换档位",
             numberText((data and data.system or {}).t7Boost)), theme.COLORS.TEXT_YELLOW
+    elseif field == "factor" then
+        return string.format("正在编辑 能源仓利用因子（%d-%d%%）：%s_   ✔ 保存 · ✘ 取消",
+            CONFIG.ENERGY.FACTOR_MIN, CONFIG.ENERGY.FACTOR_MAX, fstate.editBuf or ""),
+            theme.COLORS.TEXT_YELLOW
+    elseif field == "strength" then
+        return string.format("正在编辑 无线范围（方块，上限 %d）：%s_   ✔ 保存 · ✘ 取消",
+            CONFIG.NET.STRENGTH_MAX, fstate.editBuf or ""),
+            theme.COLORS.TEXT_YELLOW
     end
-    return "点表格里任意一格选中，再用这里的键盘改（勾选格点一下就是切换）", theme.COLORS.TEXT_DISABLED
+    return "选中后编辑；勾选切换", theme.COLORS.TEXT_DISABLED
 end
 function keypad.draw(data)
     local area = fstate.areas.keypad
@@ -126,7 +135,8 @@ function keypad.draw(data)
             widgets.drawText(xC + math.floor(SEP / 2), ky + r, "│", theme.CHART_AXIS)
         end
         drawPad(xC + SEP, ky, PRESETS)
-    elseif fstate.editField == "weight" then
+    elseif fstate.editField == "weight" or fstate.editField == "factor"
+        or fstate.editField == "strength" then
         local kx = area.x + math.max(0, math.floor((area.w - padWidth(WEIGHTS)) / 2))
         drawPad(kx, slotY(#WEIGHTS), WEIGHTS, { [3] = math.floor((KEY_W + KEY_GAP) / 2) })
     elseif fstate.editField == "boost" then

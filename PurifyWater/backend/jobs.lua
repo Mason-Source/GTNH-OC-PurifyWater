@@ -2,23 +2,14 @@
 -- backend/jobs.lua
 --------------------------------------------------------------------------------
 -- 【职责】**定时任务表**：注册所有周期任务，每个任务只做一小步（不许 sleep / 长跑）
--- 【不做什么】不含动作（改状态/下发/写盘由 backend/app/* 的事件处理器做）——
---             任务体只做"采集事实 -> 写快照 -> emit 事件"
+-- 【不做什么】不含状态机判断——采集任务只做"读事实 -> 写快照 -> emit 事件"；
+--             下发只有 plan.run 一条路（T4 经 system.requestPlan），落盘集中在 store/*（T5）。
 -- 【依赖】core/scheduler、shared/*、backend/hardware/*、backend/store/*、backend/debug/memwatch（仅 --debug）
 -- 【被谁用】main.lua（启动时调 jobs.register()）
 --
--- 【任务清单（ARCHITECTURE.md §3）】
---   T1 scanHardware  10 s  硬件 + 功率 + 拓扑清单         -> hardware_missing / hardware_changed / power_changed
---   T2s scanSettings  5 s  settings.txt **一次读全**，各配置模块比对
---                                                       -> level_rules_changed / rates_changed（谁变发谁）
---   T2 readFluids     5 s  1-8 级水量                    -> 无事件（写 state.fluids；**读不到按 0**）
---   T3 observePlants  5 s  T0-8 开关与活动；在运行的读传感器
---                                                       -> plant_observed ×N / parallel_sample ×N
---                                                       （边沿、归因、不一致判定在 app/watch）
---   T4 schedule       5 s  跑一轮调度（算方案 -> 下发）   -> 由 app/plan 具体干活
---   T5 persist       30 s  抽一个曲线点 + 脏数据落盘（不含并行学习值）
---   T6 sampleMemory   1 s  **仅 --debug**：内存地板/峰值采样（整套观测在 backend/debug/memwatch）
---   T7 broadcast      1 s  无线快照（门控：总开关 + 网卡在位；在 main.lua 注册）
+-- 任务清单见 ARCHITECTURE.md §3：T1 硬件(10s) / T2 水位(5s) / T3 观测(5s) /
+-- T4 调度(5s) / T5 落盘(30s) / T6 内存(1s, --debug) / T7 广播(1s)；
+-- T2s 设置对账只在启动时跑一次（不再周期扫描 settings.txt）。
 --------------------------------------------------------------------------------
 
 local computer         = require("computer")
@@ -41,12 +32,11 @@ local levels_config    = require("backend.store.levels_config")
 local rates_config     = require("backend.store.rates_config")
 local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
-local power            = require("backend.domain.power")
 local system           = require("backend.app.system")
 
 local jobs             = {}
 
--- 采集摘要（界面 / 排错用；不含业务判断）
+-- 采集摘要（界面/排错用）
 local last             = {
     scanCount = 0,
     summary = nil,
@@ -57,15 +47,11 @@ local last             = {
     fluidErr = nil
 }
 
--- 上次告过的"实测 ≠ 建议"（文本一变就再告一次；不变就不刷屏）
-local lastParallelWarn = nil
-
--- 本进程启动时刻（本模块被 require 时就是程序启动；main/monitor 开头就 require 它）
--- 【为何不用 computer.uptime() 当运行时长】它返回的是**机器开机**时长，跨程序重启不清零，
---   拿它当"本次运行 N 秒"会得到自相矛盾的数字（实测三次退出的比例对不上就是这个原因）。
+-- 本进程启动时刻（require 本模块即启动）
+-- 不用 computer.uptime() 当时长：那是机器开机时长，跨程序重启不清零。
 local startedAt        = computer.uptime()
 
--- 内存观测模块句柄：**只在 --debug 下**在 jobs.register 里装上（整套观测见 backend/debug/memwatch）
+-- 内存观测模块句柄（仅 --debug 装载）
 local memwatch         = nil
 
 --- 本次运行了多少秒（从 require 本模块算起）
@@ -78,22 +64,22 @@ end
 -- @return table
 function jobs.last() return last end
 
--- 【内存观测（地板/峰值/告警/留痕）不在这里】它是诊断用的"测试内容"（决策 32）：整套在
---   `backend/debug/memwatch.lua`，**只在 --debug 下才装、才注册 T6**（见 jobs.register）。
+-- 内存观测整套在 backend/debug/memwatch，仅 --debug 注册 T6。
 
 --------------------------------------------------------------------------------
 -- T1 硬件扫描（10 秒）：机器 + 能量仓 + ME 接口 + 拓扑清单
 --------------------------------------------------------------------------------
 
 function jobs.scanHardware()
-    -- 组件缓存先失效：插拔后 component.list 才是权威（这一步也顺带重取 ME 代理）
-    device.invalidate()
+    device.sweep()
+    device.scanMe()
+    device.scanNet()
+    device.scanMachines()
 
-    local summary = machines.scan()
-    -- 单仓：功率就取这一台仓的（没有仓 -> 0，会进 missing）
+    local summary = machines.classify()
+    -- 单仓：取这台仓的功率；无仓 -> 0 进 missing
     local hatch   = machines.energy()
-    -- 激光仓的电流能在仓界面里调小 -> 名字只给上限，真值要从缓冲容量换算（见 hardware/energy）。
-    -- 只认 number（字符串那套还没实证）；拿不到就是 nil，powerOf 退回名字值
+    -- 激光仓电流可调，真值从缓冲容量换算；只认 number，拿不到退回名字值
     local euMax
     if hatch then
         local stored = device.invoke(hatch.address, "getEUMaxStored")
@@ -108,57 +94,49 @@ function jobs.scanHardware()
     if not meProxy then missing[#missing + 1] = "ME网络接口" end
     if not hatch then missing[#missing + 1] = "能量仓" end
 
-    local diff              = inventory.compareAndSave(machines.topology())
+    local diff = inventory.compareAndSave(machines.topology())
 
     -- 快照
+    local prevMissing = last.missing
     last.scanCount          = last.scanCount + 1
     last.summary            = summary
     last.meOk, last.missing = meProxy ~= nil, missing
-    -- 功率是"建议并行"的输入之一：**值真变**时重算并发布（受控触发，见 domain/modes/*）
-    if state.power.all ~= totalPower then
-        state.power.all = totalPower
-        system.publish()
+    -- 缺件边沿（只发快照/日志；事件照旧电平，动作由处理器按"运行中"决定）
+    if #prevMissing > 0 and #missing == 0 then
+        logs.system("硬件缺失已恢复：" .. table.concat(prevMissing, "、") .. "；点【启动系统】恢复")
+    elseif #prevMissing == 0 and #missing > 0 then
+        logs.warn("硬件缺失：" .. table.concat(missing, "、") .. "；请补齐缺失硬件")
+    end
+    -- 功率是"建议并行"的输入之一：折算最大值落 state（可用 = 最大 × 利用因子，读时现算）
+    local prevAll = state.read.powerAll()
+    if state.read.powerMax() ~= totalPower then
+        state.write.setPowerMax(totalPower)
     end
 
-    -- 【当前并行 vs 建议并行】有任一等级不一致就写一行警告。
-    --   当前并行 = snap.sample（本周期读到、**未确认**）；学习并行 = snap.parallel（连续 N 周期确认）。
-    --   边沿触发：两个数通常长期稳定，每 10 秒刷一屏只会挤掉别的行。
-    --   不自作结论：可能机器没吃满、可能建议值被上限夹住、也可能刚换能源仓在过渡。
-    local warnParts         = {}
-    for _, item in ipairs(power.parallelMismatch()) do
-        warnParts[#warnParts + 1] = string.format("%s 当前 %s / 建议 %s", constants.levelLabel(item.level),
-            utils.formatShortNumber(item.current), utils.formatShortNumber(item.suggest))
-    end
-    local warnText = table.concat(warnParts, "；")
-    if warnText ~= lastParallelWarn then
-        lastParallelWarn = warnText
-        if warnText ~= "" then
-            logs.warn("当前并行与建议并行不一致：" .. warnText)
-        end
-    end
-
-    -- 事件
+    -- 事件（顺序 = 归因优先级：缺件 / 变更在前，功率在后）
     if #missing > 0 then
         scheduler.emit("hardware_missing", { missing = missing })
     end
     if diff.changed then
         scheduler.emit("hardware_changed", diff)
     end
-    if last.powerBefore ~= nil and math.floor(last.powerBefore) ~= math.floor(totalPower) then
-        scheduler.emit("power_changed", { from = last.powerBefore, to = totalPower, note = powerNote })
+    local nowAll = state.read.powerAll()
+    if prevAll ~= nowAll then
+        scheduler.emit("power_changed", { from = prevAll, to = nowAll, note = powerNote })
     end
     last.powerBefore = totalPower
 
-    logs.debug(string.format("[调试] 硬件扫描 #%d：主机 %d、单元 %d、能量仓 %s、其它 %d、总功率 %s、缺失 %s",
-        last.scanCount, summary.host, summary.unitTotal, hatch and hatch.name or "无", summary.other,
+    logs.debug(string.format("硬件扫描 #%d：主机 %d、单元 %d、能量仓 %s、网卡 %s、其它 %d、总功率 %s、缺失 %s",
+        last.scanCount, summary.host, summary.unitTotal, hatch and hatch.name or "无",
+        device.net() and "有" or "无", summary.other,
         utils.formatNumber(totalPower), (#missing > 0 and table.concat(missing, "/") or "无")))
 end
 
 --------------------------------------------------------------------------------
--- T2s 设置扫描（5 秒）：**一次读全 settings.txt**，交给各配置模块比对；
+-- T2s 设置对账（**仅启动一次**）：一次读全 settings.txt，交给各配置模块比对；
 --   谁的内容变了就发谁的事件（阈值/勾选 -> level_rules_changed；权重/T7 倍率 -> rates_changed）。
--- 【为什么集中在这里】周期任务只注册一个"设置扫描"：以后再加可手改的配置，只要在下面多喊一次
---   对应模块的 load(snapshot) 即可 —— 不必新增定时任务，也不会把 settings.txt 读好几遍。
+-- 运行中改配置走命令层（直改内存 + 落盘，即时生效）；手改文件 = 重启后生效。
+-- 新增可手改配置在此多调一次 load(snapshot) 即可。
 --------------------------------------------------------------------------------
 
 function jobs.scanSettings()
@@ -172,7 +150,6 @@ function jobs.scanSettings()
     local ratesChanged, ratesWhy = rates_config.load(snapshot)
     if ratesChanged then
         scheduler.emit("rates_changed", { why = ratesWhy })
-        system.publish()   -- 权重/倍率是速率模式建议的输入
     end
 end
 
@@ -185,12 +162,14 @@ function jobs.readFluids()
     last.fluidOk, last.fluidErr = ok, err
 
     -- 【读不到按 0】网络里暂时还没水缓存是**正常态**，不是故障：按 0 判定的结果天然是
-    --   "只强开源头那一级（T1）、L2-T8 被原料线挡住"——已经是安全退化，不必停机、更不必锁定。
-    --   长期取 0 而网络里有水，用户看水量列/曲线会自己察觉。ok/err 只留作排查（退出摘要那行）。
+    --   "只强开源头那一级（T1）、L2-T8 被原料线挡住"——已经是安全退化，不必停机，也不必进入等待。
+    --   长期取 0 而网络里有水，界面会体现；ok/err 只留调试（退出摘要）。
     -- 【没有下游事件】水位只是快照里的一个数：调度每拍（T4）本来就会用最新水位现算可开启性。
+    local fluids = {}
     for level = 1, constants.LEVEL_COUNT do
-        state.fluids[level] = (ok and amounts[level]) or 0
+        fluids[level] = (ok and amounts[level]) or 0
     end
+    state.write.setFluids(fluids)
 end
 
 --------------------------------------------------------------------------------
@@ -214,16 +193,16 @@ function jobs.observePlants()
     --   是每轮 2×机器数 次白费调用；主机自己报这个数，读一次够用。它只有两个去处：
     --   进主机快照（界面周期条）与交给 tracker 判周期边界 —— T1-8 不记进度。
     local hostProgress, hostProgressMax
-    -- 【发布粒度】台数变了几级都只算"这一轮变过"：整轮观测结束后统一发布一次，
-    --   避免逐级发布（循环中途 top 逐级增长，会连打出 T1-3→T1-8 那种一串）
-    local deployedChanged = false
+    -- 【发布粒度】台数变了几级都只算"这一轮变过"：整轮观测结束后统一发一条事实，
+    --   避免逐级发事件（循环中途 top 逐级增长，会连打出 T1-3→T1-8 那种一串）
+    local deployedLevels = {}
 
     for level = constants.HOST_LEVEL, constants.LEVEL_COUNT do
         local list                 = machines.of(level)
-        local snap                 = state.plant(level)
+        local snap                 = state.read.plant(level)
         -- 【对照基准随事实走】读这一刻该级的方案是什么（可为 nil：停机 / 还没跑过 / 上一轮没发出去）。
         --   判定层要拿它对照这条读数；判定若自己另取方案，就会拿"读数之后才下发的新方案"去比旧读数。
-        local want                 = state.lastPlan[level]
+        local want                 = state.read.lastPlan()[level]
 
         local total, on, off, fail = 0, 0, 0, 0
         local running, actFail     = 0, 0
@@ -278,9 +257,7 @@ function jobs.observePlants()
             end
         end
 
-        -- 【关键】"读不到"与"确实是关"必须分开：
-        --   任何一台读不到 -> nil（未知，界面显示 ?），**绝不当成"关"**。
-        --   v2 踩过同类坑：代理失效时把"开着"显示成"关闭"，排查半天。
+        -- 读取失败与"确实是关"必须分开；任何一台读取失败 -> nil（未知），不当成关。
         local observed = nil
         if total > 0 and fail == 0 then
             if on == total then
@@ -290,25 +267,32 @@ function jobs.observePlants()
             end
         end
 
-        -- 台数是"建议并行"的另一个输入：这里只记"这一轮变过"，整轮跑完再统一发布
-        if snap.deployed ~= total then
-            snap.deployed    = total
-            deployedChanged  = true
+        -- 台数是"建议并行"的另一个输入：这里只记"这一轮变过"，整轮跑完再统一发事实
+        local deployed = snap.deployed or 0
+        if deployed ~= total then
+            deployed = total
+            deployedLevels[#deployedLevels + 1] = level
         end
-        snap.switch   = observed
-        snap.active   = (total > 0 and actFail == 0) and running or nil
-        snap.machines = facts -- 逐台原始读数（详情页直接用）
+        local fields = {
+            deployed = deployed,
+            switch   = observed,
+            active   = (total > 0 and actFail == 0) and running or nil,
+            machines = facts -- 逐台原始读数（详情页直接用）
+        }
         -- 本轮没读到就不动旧值（停机后保留最后一次，界面会标"(上次)"）
-        if minSample then snap.sample = minSample end
-        if minSuccess then snap.success = minSuccess end
+        if minSample then fields.sample = minSample end
+        if minSuccess then fields.success = minSuccess end
+        if level == constants.HOST_LEVEL then
+            -- 运行周期只挂在主机（T0）这一行：api.read.host 从这里取周期条数据
+            fields.progress    = hostProgress
+            fields.progressMax = hostProgressMax
+        end
+        state.write.recordPlant(level, fields)
         runningTotal = runningTotal + running
 
         if level == constants.HOST_LEVEL then
-            -- 运行周期只挂在主机（T0）这一行：api.read.host 从这里取周期条数据
-            snap.progress    = hostProgress
-            snap.progressMax = hostProgressMax
             -- 主机的总开关决定后面几级要不要读“机器配置”（见函数开头说明）
-            hostAllowed      = snap.switch
+            hostAllowed = observed
         end
 
         -- 【事实出口 1】每级一行观测（含主机 level=0）：边沿/判定/警告由 app/watch 决定；
@@ -320,16 +304,19 @@ function jobs.observePlants()
         end
     end
 
-    -- 一轮观测结束：台数变过才重新生成建议（每轮最多一次，且此时的快照已完整）
-    if deployedChanged then system.publish() end
+    -- 一轮观测结束：台数变过才发事实（每轮最多一条；发布由事件处理器做）
+    if #deployedLevels > 0 then
+        scheduler.emit("deployed_changed", { levels = deployedLevels })
+    end
 
-    logs.debug(string.format("[调试] 观测：单元在跑 %d 台，本轮采样 %d 条", runningTotal, samples))
+    logs.debug(string.format("观测：单元在跑 %d 台，本轮采样 %d 条", runningTotal, samples))
 end
 
 --------------------------------------------------------------------------------
 -- T4 定时调度（5 秒）：按各等级可开启情况 + 功率预算，做一轮贪心调度
--- 定时任务与事件驱动互补：事件负责"条件一变立刻反应"，这个周期任务负责
---   "没人触发也要周期性对齐"（例如玩家直接在 GT 界面把机器关了，下一轮就会纠正回来）。
+-- 定时任务与事件驱动互补：事件负责"条件一变立刻反应"，这个周期任务负责兜底那些
+--   "没有事件、只能现算"的输入（水位 / 阈值 / 优先级变化后，下一轮重新纳入调度）。
+-- 注意：它不"纠正"人工改动——实测偏离方案由 T3→watch 停会话、等待用户（不动机器）。
 --------------------------------------------------------------------------------
 
 function jobs.schedule()
@@ -337,27 +324,22 @@ function jobs.schedule()
 end
 
 --------------------------------------------------------------------------------
---- T5 落盘（30 秒）：抽一个曲线点，然后只在"脏"时写盘
+-- T5 落盘（30 秒）：抽一个曲线点，然后写盘
 -- 抽点放在这里：曲线 30 秒一个点就够，与落盘同节奏就不必两个计时器。
--- 日志也在这里收：内存只留屏幕上放得下的几行，新行攒到这一拍一起追加（见 store/log_file）。
--- 【不脏不写】盘是游戏里最慢的东西（机械硬盘 + OC 沙箱），没事别碰。
+-- 历史每拍全量重写（80 点小文件）；日志只在新行时写、环形保留（见 store/{history,log_file}）。
+-- 盘是最慢的东西（机械硬盘 + OC 沙箱）——日志没有新行就一次盘都不碰。
 --------------------------------------------------------------------------------
 
 function jobs.persist()
     if memwatch then memwatch.watch(jobs.elapsed()) end -- 退出/落盘前看一眼余量（仅 --debug）
     history.append()
-    state.markDirty("history")
 
-    if state.isDirty("levels") then
-        levels_config.saveAll()
-        state.clearDirty("levels")
-    end
     local ok, text = history.save()
-    if not ok then logs.debug("[调试] T5 写历史失败：" .. tostring(text)) end
+    if not ok then logs.debug("T5 写历史失败：" .. tostring(text)) end
 
     -- 日志：把内存里还没落盘的新行追加进 data/log.txt（没有新行就一次盘都不碰）
     local okLog, logNote = log_file.flush()
-    if not okLog then logs.debug("[调试] T5 写日志失败：" .. tostring(logNote)) end
+    if not okLog then logs.debug("T5 写日志失败：" .. tostring(logNote)) end
 end
 
 --------------------------------------------------------------------------------
@@ -373,12 +355,11 @@ function jobs.register()
     end
 
     add("scanHardware", CONFIG.INTERVAL.HARDWARE, jobs.scanHardware)  -- T1
-    add("scanSettings", CONFIG.INTERVAL.SETTINGS, jobs.scanSettings)  -- T2s（注册在 T2 之前：设置先落，再按新设置读水位）
     add("readFluids", CONFIG.INTERVAL.FLUID, jobs.readFluids)         -- T2
     add("observePlants", CONFIG.INTERVAL.OBSERVE, jobs.observePlants) -- T3
     add("schedule", CONFIG.INTERVAL.SCHEDULE, jobs.schedule)          -- T4
     add("persist", CONFIG.INTERVAL.PERSIST, jobs.persist)             -- T5
-    -- T6 内存观测：**只在 --debug 下装模块、注册任务**（日常运行连模块都不 require，见决策 32）
+    -- T6 内存观测：仅 --debug 装模块、注册任务。
     if logs.isDebug() then
         memwatch = require("backend.debug.memwatch")
         add("sampleMemory", CONFIG.INTERVAL.SAMPLE, memwatch.sample) -- T6
@@ -386,6 +367,8 @@ function jobs.register()
     -- T7 广播在 main.lua 注册（它需要 api 提供的快照来源，放这里会环依赖）
 
     -- 首次采集不必等 10 秒：注册后立刻各跑一次，屏幕马上有数据
+    -- T2s 设置对账也只在这一次跑（之后不再周期扫描 settings.txt）
+    jobs.scanSettings()
     jobs.scanHardware()
     jobs.readFluids()
     jobs.observePlants()

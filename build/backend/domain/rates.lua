@@ -18,7 +18,7 @@ function rates.successOf(level)
     return math.min(1, s)
 end
 function rates.weightOf(level)
-    local w = tonumber(state.rates[level]) or CONFIG.RATES.DEFAULT_WEIGHT
+    local w = tonumber(state.read.weights()[level]) or CONFIG.RATES.DEFAULT_WEIGHT
     if w < 0 then w = 0 end
     if w > CONFIG.RATES.MAX_WEIGHT then w = CONFIG.RATES.MAX_WEIGHT end
     return w
@@ -34,14 +34,14 @@ function rates.allZero()
 end
 function rates.plan()
     local top = state.serviceTop()
-    local boost = rates.acceptBoost(state.system.t7Boost)
+    local boost = rates.acceptBoost(state.read.t7Boost())
     local net, weights, counts = {}, {}, {}
     for level = 1, constants.LEVEL_COUNT do
         local gross = constants.RATE_PRODUCE * rates.successOf(level)
         if level == constants.T7_LEVEL then gross = gross * boost end
         net[level]     = gross - (refluxOf(level) and constants.RATE_REFLUX or 0)
         weights[level] = rates.weightOf(level)
-        counts[level]  = math.max(0, state.plant(level).deployed or 0)
+        counts[level]  = math.max(0, state.read.plant(level).deployed or 0)
     end
     local margin = 1 + (CONFIG.RATES.ZERO_MARGIN or 0)
     local unitQ, unitDemand, needs = {}, {}, {}
@@ -62,7 +62,7 @@ function rates.plan()
             unitQ[level], unitDemand[level], needs[level] = 0, 0, false
         end
     end
-    local power  = state.power.all or 0
+    local power  = state.read.powerAll()
     local unitPower = 0
     for level = 1, top do
         unitPower = unitPower + unitQ[level] * (constants.POWER_LEVELS[level] or 0)
@@ -81,14 +81,9 @@ function rates.plan()
     for level = 1, top do
         local c    = counts[level]
         local raw  = (c > 0) and (lambda * unitQ[level] / c) or 0
-        local cap  = constants.parallelCap(level)
-        local per, clip = math.floor(raw), false
-        if per > cap then per, clip = cap, true end
+        local per  = math.floor(raw)
         suggest[level] = per
         total[level]   = per * c
-        if clip then
-            notes[#notes + 1] = { level = level, kind = "clip", want = raw, got = per }
-        end
         if per < 1 and needs[level] and lambda > 0 then
             notes[#notes + 1] = { level = level, kind = "too_small" }
         end

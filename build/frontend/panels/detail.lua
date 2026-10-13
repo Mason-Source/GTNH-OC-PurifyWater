@@ -49,7 +49,7 @@ local function lines(row, level)
     local suggest  = row.suggest or 0
     local running  = (row.active or 0) > 0
     local num      = utils.formatNumber
-    local stale    = running and "" or "  (上次运行)"
+    local stale    = running and "" or "（上次运行）"
     local liveWatt = running and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_DISABLED
     local out      = {}
     local function sep(text)

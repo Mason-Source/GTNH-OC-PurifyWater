@@ -1,13 +1,12 @@
 --------------------------------------------------------------------------------
 -- backend/store/rates_config.lua
 --------------------------------------------------------------------------------
--- 【职责】速率模式的**权重 + T7 增产倍率**配置：读写 data/settings.txt，并做变更检测
--- 【不做什么】不做业务判断、不认识旧版配置
--- 【依赖】shared/{config,constants,state}、backend/store/settings、domain/rates（档位规整）
--- 【被谁用】main（启动 load）、jobs（T2 每 5 秒 load 一次做变更检测）、backend/app/rates（改后写回）
+-- 【职责】权重 + T7 增产倍率配置：读写 settings.txt 并变更检测
+-- 【不做什么】不判业务
+-- 【依赖】shared/{config,constants,state}、store/settings、domain/rates
+-- 【被谁用】main、jobs（T2）、app/rates
 --
--- 【键】weight.N = 该级"净产出权重"（0..MAX 整数，N = 1..8）｜t7_boost = T7 增产倍率（任一档位）
---   缺键/写坏 -> 默认值兜底并补写回文件；变更检测只看这几个键（别的键改了不会误触发重排）。
+-- 键：weight.N（0..MAX 整数）/ t7_boost；缺键兜底补写；变更检测只看这些键。
 --------------------------------------------------------------------------------
 
 local CONFIG       = require("shared.config")
@@ -48,7 +47,7 @@ local function fingerprint(weights, boost)
     return table.concat(parts, "|")
 end
 
---- 缺键就补默认值（新装/手改删键都重新生成这几个键；已存在的值一律不动）
+--- 缺键补默认值；已存在的值不动
 -- @param snapshot table
 -- @return table 补完后的快照
 -- @return number 补了几个键（0 = 没写盘）
@@ -71,7 +70,7 @@ local function ensureKeys(snapshot)
     return snapshot, missing
 end
 
---- 读配置 -> state.rates / state.system.t7Boost；返回内容是否变化
+--- 读配置 -> config.weights / config.t7Boost；返回内容是否变化
 -- @param snapshot table|nil 已读好的 settings 表（周期扫描一次读全后共用；不传就自己读一次）
 -- @return boolean changed
 -- @return string 说明
@@ -88,23 +87,23 @@ function rates_config.load(snapshot)
     if text == lastText then return false, "速率配置未变化" end
     lastText = text
 
-    state.rates = weights
-    state.system.t7Boost = boost
+    state.write.setWeights(weights)
+    state.write.setBoost(boost)
     return true, string.format("速率配置已更新（%d 级权重 ｜ T7 增产 ×%s）",
         constants.LEVEL_COUNT, tostring(boost))
 end
 
---- 写某一级的权重（命令/界面改完调用）
+--- 写单级权重
 -- @param level number
 -- @param weight number
 -- @return boolean ok
 -- @return string|nil 失败原因
 function rates_config.setWeight(level, weight)
     local w = sanitizeWeight(weight)
-    state.rates[level] = w
+    state.write.setWeightLevel(level, w)
     local ok, err = settings.setMany({ [weightKey(level)] = w })
     if not ok then return false, err end
-    lastText = fingerprint(state.rates, state.system.t7Boost)
+    lastText = fingerprint(state.read.weights(), state.read.t7Boost())
     return true
 end
 
@@ -114,10 +113,10 @@ end
 -- @return string|nil 失败原因
 function rates_config.setBoost(value)
     local boost = rates.acceptBoost(value)
-    state.system.t7Boost = boost
+    state.write.setBoost(boost)
     local ok, err = settings.setMany({ t7_boost = boost })
     if not ok then return false, err end
-    lastText = fingerprint(state.rates, state.system.t7Boost)
+    lastText = fingerprint(state.read.weights(), state.read.t7Boost())
     return true
 end
 

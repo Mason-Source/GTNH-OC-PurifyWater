@@ -26,7 +26,7 @@ function charts.checkBounds(tag, x0, y0, w, h, minY, maxY, maxX)
     if maxX > x0 + w - 1 or maxY > y0 + h - 1 or minY < y0 then
         boundsWarned = true
         logs.warn(string.format(
-            "%s 绘制越界：画布 x=%d..%d y=%d..%d，实际用到 x..%d y=%d..%d（面板可能太窄）",
+            "%s 绘制越界：画布 x=%d..%d y=%d..%d，实际用到 x..%d y=%d..%d",
             tag, x0, x0 + w - 1, y0, y0 + h - 1, maxX, minY, maxY))
     end
 end
@@ -95,7 +95,7 @@ function charts.series(area, series, times, title)
     end
     if drawable == 0 then
         widgets.drawText(x0, y0 - 1, title, theme.COLORS.TEXT_CYAN)
-        widgets.drawCenteredTip({ x = x0, y = y0, w = w, h = h }, "数据采集中…（每 30 秒一个点）")
+        widgets.drawCenteredTip({ x = x0, y = y0, w = w, h = h }, "数据采集中…")
         return false
     end
     local minUsedY, maxUsedY, maxUsedX = y0, y0, x0

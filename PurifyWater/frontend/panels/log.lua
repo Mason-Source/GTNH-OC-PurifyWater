@@ -5,11 +5,8 @@
 -- 【依赖】frontend/{state,theme,widgets}、shared/logs
 -- 【被谁用】frontend/render
 --
--- 【重绘粒度】分两格：框+标题（只在几何/级别变时画）与行区（只在日志真的变了才画）。
---   日志一行行冒出来时框与标题纹丝不动 —— 整块清底重画就是屏幕上那种闪。
--- 【行数】可见行数由 widgets.textAreaRows(area, 1) 算，与画的时候同一个公式：
---   v2 曾出现"缓冲比画面多一行 -> 最新一行永远看不见"。
--- 【不带时间戳】行首没有 [hh:mm:ss]：os.time 是游戏内时间，对日志没有意义。
+-- 重绘分两格：框+标题、行区；行数用同一公式算。
+-- 不带时间戳：os.time 是游戏内时间，对日志无意义。
 --------------------------------------------------------------------------------
 
 local unicode = require("unicode")
@@ -24,12 +21,16 @@ function log.draw(data)
     local area       = fstate.areas.log
     local rows       = widgets.textAreaRows(area, 1)
     local maxW       = area.w - 3
-    local title      = string.format(" 系统日志（%s）点这里切换 ", logs.getLevel())
+    local ro         = fstate.readOnly == true
+    local title      = ro and " 系统日志（只读） "
+        or string.format(" 系统日志（%s）点这里切换 ", logs.getLevel())
 
-    -- 标题就是按钮：点一下切 user / debug（想看排错细节时不用重跑程序）
-    fstate.logTitle  = { x = area.x + 1, y = area.y + 1, w = unicode.wlen(title), h = 1 }
+    -- 标题即按钮：点击切 user/debug（镜像端不登记）
+    if not ro then
+        fstate.logTitle  = { x = area.x + 1, y = area.y + 1, w = unicode.wlen(title), h = 1 }
+    end
 
-    -- ① 框 + 标题：几何 / 边框色 / 级别变了才重画
+    -- ① 框+标题：几何/边框色/级别变才重画
     local frameDirty = fstate.subDirty("log", "frame", table.concat({ area.x, area.y, area.w, area.h,
         tostring(data.system.priority), logs.getLevel() }, ":"))
     if frameDirty then
@@ -39,17 +40,17 @@ function log.draw(data)
             logs.isDebug() and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_CYAN)
     end
 
-    -- ② 行区：指纹用 logs.fingerprint()（含"累计写入数"，新行必变）+ 布局参数
-    --   —— 不必为了判脏先把几十行折一遍（不脏就啥都不做）
-    local bodyDirty = fstate.subDirty("log", "body",
-        logs.fingerprint() .. "\x1f" .. rows.top .. ":" .. rows.rows .. ":" .. maxW)
+    -- ② 行区：日志内容 + 布局参数，不脏不折行
+    -- 【镜像端】本地 logs 缓冲是空的：行区指纹必须以 data.logs 为准
+    --   （#all 与首/末行足以发现变化；本地指纹对主端仍然有效）
+    local all       = data.logs or {}
+    local bodyDirty = fstate.subDirty("log", "body", table.concat({ logs.fingerprint(),
+        #all, tostring(all[1] or ""), tostring(all[#all] or ""),
+        rows.top, rows.rows, maxW }, "\x1f"))
     if not (frameDirty or bodyDirty) then return end
 
-    -- 从最新往前折行，直到填满可见行数（保证最新那行一定看得见）。
-    -- 颜色在折行**之前**判一次、跟着所有片段走：续行没有前缀，逐片段判色会退回默认白
-    --   （表现：只有第一行有色，折出来的续行又变白）。
+    -- 从最新往前折到可见行数；颜色按整行判一次并随片段走。
     local lines = {} -- 每项 = { text = 折行片段, color = **按整行判定的颜色** }
-    local all   = data.logs or {}
     for i = #all, 1, -1 do
         local raw     = tostring(all[i])
         local color   = theme.logColor(logs.kindOf(raw))
@@ -60,25 +61,24 @@ function log.draw(data)
         if #lines >= rows.rows then break end
     end
 
-    -- 只清行区（边框与标题不在里面）：整块清底重画就是屏幕上那种闪
+    -- 只清行区，避免整块闪烁
     widgets.clearArea(area.x + 1, rows.top, area.w - 2, rows.rows)
     local start = math.max(1, #lines - rows.rows + 1)
     local y = rows.top
     for i = start, #lines do
-        -- 颜色来自 logs.kindOf（按前缀判），不做 find("失败") 这类关键字猜测
+        -- 颜色来自 logs.kindOf（按前缀判）
         widgets.drawText(area.x + 1, y, lines[i].text, lines[i].color)
         y = y + 1
     end
 end
 
---- 指纹（**面板级开关**）：logs.fingerprint()（条数/累计/末行/级别）+ 面板尺寸 + 边框色依据
--- 级别必须进指纹：切 user/debug 会清空缓冲、整套内容都换掉。
--- 宽高都要：行区子指纹里有 maxW（随宽变），面板级指纹漏了宽就等于那一格永远不评估。
+--- 指纹：logs.fingerprint() + 尺寸 + 边框色依据
+-- 级别与宽高都必须进指纹。
 function log.fingerprint(data)
     local area = fstate.areas.log
     local all  = data.logs or {}
     return table.concat({ tostring(data.system.priority), logs.fingerprint(),
-        tostring(all[#all] or ""),
+        tostring(#all), tostring(all[1] or ""), tostring(all[#all] or ""),
         tostring(area and area.h or 0), tostring(area and area.w or 0) }, "\x1f")
 end
 

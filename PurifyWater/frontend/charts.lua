@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- frontend/charts.lua
 --------------------------------------------------------------------------------
--- 【职责】图表绘制：点阵网格 / 折线 / 柱状（v2 的 plot + line + bar 合成一个文件）
+-- 【职责】图表绘制：点阵网格/折线/柱状
 -- 【不做什么】不取数据（数据由面板从 viewmodel 拿来）、不做业务判断
 -- 【依赖】frontend/{state,theme,widgets}、shared/{utils,logs}、unicode
 -- 【被谁用】frontend/panels/chart
@@ -9,8 +9,7 @@
 -- 【版面】左侧留一列固定宽度的刻度位（charts.GUTTER）：上界 / 零轴 0 / 下界三个数字写在
 --   坐标轴正左边、靠位置区分含义，画布整体右移让位；数字一律过 `charts.fitNumber` 限长。
 --
--- 合成一个文件：v2 拆成 plot/line/bar 三个文件，而三者只有"画布计算"这一处共用；
---   合在一起后"网格 + 折线 + 柱"一目了然。
+
 --------------------------------------------------------------------------------
 
 local utils        = require("shared.utils")
@@ -58,9 +57,7 @@ local function gutterLabel(area, y, value, color)
         charts.fitNumber(value, charts.GUTTER), color)
 end
 
---- 检查一次绘制用到的坐标是否超出画布；超了就写一行日志（只写一次）
--- 越界时让程序把真实坐标报出来（"屏幕上越界了"很难用语言描述清楚），
---   一轮实机就能定位（用户两次反馈“条长度越界”，靠猜浪费了两轮）。
+--- 检查坐标是否越界；越界写一行日志（只写一次）。
 -- @param tag string 图形名（柱状图 / 折线）
 -- @param x0, y0, w, h number 画布
 -- @param minY, maxY, maxX number 实际用到的纵向最小/最大、横向最大
@@ -69,16 +66,13 @@ function charts.checkBounds(tag, x0, y0, w, h, minY, maxY, maxX)
     if maxX > x0 + w - 1 or maxY > y0 + h - 1 or minY < y0 then
         boundsWarned = true
         logs.warn(string.format(
-            "%s 绘制越界：画布 x=%d..%d y=%d..%d，实际用到 x..%d y=%d..%d（面板可能太窄）",
+            "%s 绘制越界：画布 x=%d..%d y=%d..%d，实际用到 x..%d y=%d..%d",
             tag, x0, x0 + w - 1, y0, y0 + h - 1, maxX, minY, maxY))
     end
 end
 
---- 画布矩形（去掉内边距、左侧刻度位与底部一行刻度位）
--- 【高度为什么是 area.h - 5】纵向从上到下：边框(1) + 标题(1) + 说明行(1) → 画布 h 行 →
---   刻度/标签 1 行 → 下边框。旧版 h = area.h - 6 会在标签下多留一行空白（用户反馈"不够贴底"）。
--- 【宽度为什么要减 GUTTER】左侧留出固定列放坐标数字（上界 / 零轴 / 下界）——
---   旧版写在右上角，跟图名抢位置、也离坐标轴太远。
+--- 画布矩形（去内边距、左侧刻度位、底部标签行）
+-- 高度 = area.h - 5；宽度减 GUTTER 留左侧刻度数字。
 -- @param area table 面板矩形
 -- @param yOffset number|nil 额外顶部偏移
 -- @return number x0, y0, w, h
@@ -174,7 +168,7 @@ function charts.series(area, series, times, title)
 
     if drawable == 0 then
         widgets.drawText(x0, y0 - 1, title, theme.COLORS.TEXT_CYAN)
-        widgets.drawCenteredTip({ x = x0, y = y0, w = w, h = h }, "数据采集中…（每 30 秒一个点）")
+        widgets.drawCenteredTip({ x = x0, y = y0, w = w, h = h }, "数据采集中…")
         return false
     end
 
@@ -228,11 +222,8 @@ function charts.series(area, series, times, title)
     return true
 end
 
---- 把上界取整到"好看的刻度"（1 / 2 / 5 × 10^n）
--- 刻度用 formatShortNumber 显示：它对小于 1000 的数直接 math.floor，
---   于是 ±1.1 会显示成 "1 / -2"（floor(-1.1) = -2）——
---   用户看到的上下界不对称、还眼柱子对不上（2026-09-27 实机反馈的"越界"就是这个）。
---   取整到 1/2/5 阶梓后，刻度总是干净的整数，柱子比例也不会失真。
+--- 上界取整到 1/2/5 × 10^n 刻度
+-- formatShortNumber 对小数 floor，±1.1 会成 1/-2；取整到干净刻度避免上下界不对称。
 -- @param v number 正数
 -- @return number
 local function niceCeil(v)

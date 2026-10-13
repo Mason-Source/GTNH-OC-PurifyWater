@@ -8,8 +8,12 @@ function log.draw(data)
     local area       = fstate.areas.log
     local rows       = widgets.textAreaRows(area, 1)
     local maxW       = area.w - 3
-    local title      = string.format(" 系统日志（%s）点这里切换 ", logs.getLevel())
-    fstate.logTitle  = { x = area.x + 1, y = area.y + 1, w = unicode.wlen(title), h = 1 }
+    local ro         = fstate.readOnly == true
+    local title      = ro and " 系统日志（只读） "
+        or string.format(" 系统日志（%s）点这里切换 ", logs.getLevel())
+    if not ro then
+        fstate.logTitle  = { x = area.x + 1, y = area.y + 1, w = unicode.wlen(title), h = 1 }
+    end
     local frameDirty = fstate.subDirty("log", "frame", table.concat({ area.x, area.y, area.w, area.h,
         tostring(data.system.priority), logs.getLevel() }, ":"))
     if frameDirty then
@@ -18,11 +22,12 @@ function log.draw(data)
         widgets.drawText(area.x + 2, area.y + 1, title,
             logs.isDebug() and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_CYAN)
     end
-    local bodyDirty = fstate.subDirty("log", "body",
-        logs.fingerprint() .. "\x1f" .. rows.top .. ":" .. rows.rows .. ":" .. maxW)
+    local all       = data.logs or {}
+    local bodyDirty = fstate.subDirty("log", "body", table.concat({ logs.fingerprint(),
+        #all, tostring(all[1] or ""), tostring(all[#all] or ""),
+        rows.top, rows.rows, maxW }, "\x1f"))
     if not (frameDirty or bodyDirty) then return end
     local lines = {}
-    local all   = data.logs or {}
     for i = #all, 1, -1 do
         local raw     = tostring(all[i])
         local color   = theme.logColor(logs.kindOf(raw))
@@ -44,7 +49,7 @@ function log.fingerprint(data)
     local area = fstate.areas.log
     local all  = data.logs or {}
     return table.concat({ tostring(data.system.priority), logs.fingerprint(),
-        tostring(all[#all] or ""),
+        tostring(#all), tostring(all[1] or ""), tostring(all[#all] or ""),
         tostring(area and area.h or 0), tostring(area and area.w or 0) }, "\x1f")
 end
 return log

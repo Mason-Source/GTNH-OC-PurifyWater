@@ -1,9 +1,9 @@
 --------------------------------------------------------------------------------
 -- backend/domain/learning.lua
 --------------------------------------------------------------------------------
--- 【职责】保存**本次运行会话**确认过的单台并行
--- 【不做什么】不读写文件、不做调度、不判断开关
--- 【生命周期】每次启动、停机、暂停或锁定后清空；再次启动从建议值重新学习
+-- 【职责】保存本次会话确认过的单台并行
+-- 【不做什么】不读写文件、不调度、不判开关
+-- 启动/停机/等待后清空；再次启动从建议值重学
 --------------------------------------------------------------------------------
 
 local constants = require("shared.constants")
@@ -18,19 +18,15 @@ local learning  = {}
 -- @return boolean
 function learning.remember(level, parallel, success)
     if type(parallel) ~= "number" or parallel <= 0 then return false end
-    local snap    = state.plant(level)
-    snap.parallel = parallel
-    snap.success  = success or snap.success
-    snap.source   = "measured"
+    state.write.learnSet(level, parallel, "measured", success)
     return true
 end
 
---- 清空某一级或全部等级的本轮学习值
+--- 清空单级或全部学习值
 -- @param level number|nil 不传 = 全部
 function learning.forget(level)
     local function clear(lv)
-        local snap = state.plant(lv)
-        snap.parallel, snap.source = nil, nil
+        state.write.learnClear(lv)
     end
 
     if level then
@@ -40,7 +36,7 @@ function learning.forget(level)
     end
 end
 
---- 清空全部本轮学习值
+--- 清空全部学习值
 function learning.forgetAll()
     learning.forget(nil)
 end
@@ -50,9 +46,9 @@ end
 function learning.count()
     local n = 0
     for lv = 1, constants.LEVEL_COUNT do
-        local snap = state.plant(lv)
-        if type(snap.parallel) == "number" and snap.parallel > 0
-            and snap.source == "measured" then
+        local learn = state.read.learn(lv)
+        if learn and type(learn.parallel) == "number" and learn.parallel > 0
+            and learn.source == "measured" then
             n = n + 1
         end
     end

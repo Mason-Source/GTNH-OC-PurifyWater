@@ -48,25 +48,25 @@ function rates_config.load(snapshot)
     local text = fingerprint(weights, boost)
     if text == lastText then return false, "速率配置未变化" end
     lastText = text
-    state.rates = weights
-    state.system.t7Boost = boost
+    state.write.setWeights(weights)
+    state.write.setBoost(boost)
     return true, string.format("速率配置已更新（%d 级权重 ｜ T7 增产 ×%s）",
         constants.LEVEL_COUNT, tostring(boost))
 end
 function rates_config.setWeight(level, weight)
     local w = sanitizeWeight(weight)
-    state.rates[level] = w
+    state.write.setWeightLevel(level, w)
     local ok, err = settings.setMany({ [weightKey(level)] = w })
     if not ok then return false, err end
-    lastText = fingerprint(state.rates, state.system.t7Boost)
+    lastText = fingerprint(state.read.weights(), state.read.t7Boost())
     return true
 end
 function rates_config.setBoost(value)
     local boost = rates.acceptBoost(value)
-    state.system.t7Boost = boost
+    state.write.setBoost(boost)
     local ok, err = settings.setMany({ t7_boost = boost })
     if not ok then return false, err end
-    lastText = fingerprint(state.rates, state.system.t7Boost)
+    lastText = fingerprint(state.read.weights(), state.read.t7Boost())
     return true
 end
 return rates_config

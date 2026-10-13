@@ -1,5 +1,5 @@
 local constants                   = {}
-constants.CODE_VERSION            = "v4.6"
+constants.CODE_VERSION            = "v4.7"
 constants.LEVEL_COUNT             = 8
 constants.HOST_LEVEL              = 0
 constants.T7_LEVEL                = 7

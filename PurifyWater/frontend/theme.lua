@@ -6,7 +6,6 @@
 -- 【依赖】无
 -- 【被谁用】frontend/widgets、frontend/panels/*、frontend/charts
 --
--- 【来源】v2 的 theme.lua（实机调过的配色，直接搬过来复用）
 --------------------------------------------------------------------------------
 
 local theme      = {}
@@ -18,10 +17,11 @@ theme.COLORS     = {
     BORDER_ALERT      = 0x991b1b, -- 高级水优先模式边框（红）
     TEXT              = 0xe2e8f0, -- 常规文本
     TEXT_CYAN         = 0x38bdf8, -- 标题/强调
+    TEXT_VIOLET       = 0xa78bfa, -- 可编辑的全局字段（能源仓利用因子）
     TEXT_GREEN        = 0x22c55e, -- 正常/运行中
-    TEXT_YELLOW       = 0xf59e0b, -- 待机/提示
+    TEXT_YELLOW       = 0xf59e0b, -- 需要用户处理/提示
     TEXT_RED          = 0xef4444, -- 异常/未部署
-    TEXT_DISABLED     = 0x64748b, -- 只读/禁用文字
+    TEXT_DISABLED     = 0x64748b, -- 只读/禁用/非激活
 
     BTN_BG            = 0x1e293b, -- 按钮底色
     BTN_BG_HOVER      = 0x334155, -- 按钮"激活"底色
@@ -38,7 +38,7 @@ theme.COLORS     = {
     CYCLE_FILL        = 0x38bdf8  -- 已完成部分（亮蓝，跟标题同色系）
 }
 
--- 日志行颜色：种类由 shared/logs 按**前缀**判出（logs.kindOf），面板不做关键字猜测式上色。
+-- 日志颜色：按 logs.kindOf 前缀判定。
 theme.LOG_COLORS = {
     warn     = 0xef4444, -- [警告] 异常 / 失败
     schedule = 0x38bdf8, -- [调度] 调度与判定
@@ -97,26 +97,26 @@ function theme.borderColor(highFirst)
     return highFirst and theme.COLORS.BORDER_ALERT or theme.COLORS.BORDER
 end
 
---- 系统状态一行（**只给短状态**，原因写日志）
--- 状态行只给短状态（硬件缺失 / 已锁定 / 自动调度中 / 已停机）：写超了不会自动清理
---   （面板是局部重绘，不会因超长而整屏刷新），多余的字会糊到邻面板；详细原因看系统日志。
--- 没有"已暂停"：只有"在跑"与"停了等人"两种，后者一律叫已锁定。
+--- 系统状态一行（四态短状态，原因写日志）
+-- 四态：自动调度中（绿）/ 硬件未就绪（红，缺件 or 主机关，按事实判）/
+--   等待用户处理（黄）/ 停机待启动（灰）。值列超宽会被 control.draw 截成"…"，保持短词。
 -- @param system table api.read.system() 的返回
 -- @param hardware table api.read.hardware() 的返回
+-- @param host table api.read.host() 的返回（switch = 主机开关）
 -- @return string 文本
 -- @return number 颜色
-function theme.systemStatus(system, hardware)
-    local missing = hardware and hardware.missing or {}
-    if #missing > 0 then
-        return "硬件缺失", theme.COLORS.TEXT_RED
-    end
-    if system.locked then
-        return "已锁定", theme.COLORS.TEXT_RED
-    end
+function theme.systemStatus(system, hardware, host)
     if system.running then
         return "自动调度中", theme.COLORS.TEXT_GREEN
     end
-    return "已停机", theme.COLORS.TEXT_YELLOW
+    local missing = (hardware and hardware.missing) or {}
+    if #missing > 0 or ((host or {}).switch == false) then
+        return "硬件未就绪", theme.COLORS.TEXT_RED
+    end
+    if system.awaiting then
+        return "等待用户处理", theme.COLORS.TEXT_YELLOW
+    end
+    return "停机待启动", theme.COLORS.TEXT_DISABLED
 end
 
 return theme

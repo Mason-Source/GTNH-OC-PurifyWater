@@ -4,6 +4,7 @@ local fstate = {
     H              = 0,
     areas          = {},
     currentTab     = "overview",               
+    readOnly       = false,
     tabs           = {},
     buttons        = {},
     levelRows      = {},
@@ -44,6 +45,8 @@ function fstate.clearHitboxes()
     fstate.levelRows = {}
     fstate.logTitle = nil
     fstate.autostartRow = nil
+    fstate.factorCell = nil
+    fstate.strengthCell = nil
 end
 function fstate.hit(box, x, y)
     if not box then return false end

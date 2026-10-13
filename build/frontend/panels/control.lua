@@ -3,7 +3,7 @@ local fstate    = require("frontend.state")
 local theme     = require("frontend.theme")
 local widgets   = require("frontend.widgets")
 local layout    = require("frontend.layout")
-local viewmodel = require("frontend.viewmodel")
+local decorate  = require("frontend.decorate")
 local control   = {}
 local function infoRows(data)
     return {
@@ -57,9 +57,10 @@ function control.draw(data)
 end
 function control.drawButtons(area, data, twoCol)
     fstate.buttons = {}
-    local blocked  = viewmodel.startBlockedReason(data)
-    local locked   = blocked ~= nil
+    local blocked  = decorate.startBlockedReason(data)
+    local cannotStart = blocked ~= nil
     local rateMode = (data.system.mode == "rate")
+    local ro       = fstate.readOnly == true
     local rows     = {
         { {
             name     = "system",
@@ -67,14 +68,15 @@ function control.drawButtons(area, data, twoCol)
             label    = data.system.running and "停机" or "启动系统",
             color    = data.system.running and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT,
             bg       = data.system.running and theme.COLORS.BTN_BG_HOVER or theme.COLORS.BTN_BG,
-            disabled = locked and not data.system.running
+            disabled = ro or (cannotStart and not data.system.running)
         } },
         { {
             name   = "mode",
             action = "mode_toggle",
             label  = rateMode and "切到阈值调度" or "切到速率调度",
             color  = theme.COLORS.TEXT_CYAN,
-            bg     = theme.COLORS.BTN_BG
+            bg     = theme.COLORS.BTN_BG,
+            disabled = ro
         }, {
             name   = "subparam",
             action = rateMode and "threshold_enforce_toggle" or "priority_toggle",
@@ -84,14 +86,16 @@ function control.drawButtons(area, data, twoCol)
             color  = theme.COLORS.TEXT,
             bg     = (not rateMode and data.system.priority == "high") and theme.COLORS.BTN_PRIORITY_HIGH
                 or ((rateMode and not data.system.enforceThreshold) and theme.COLORS.BTN_BG_HOVER
-                    or theme.COLORS.BTN_BG)
+                    or theme.COLORS.BTN_BG),
+            disabled = ro
         } },
         { {
             name   = "refresh",
             action = "refresh",
             label  = "刷新扫描",
             color  = theme.COLORS.TEXT,
-            bg     = theme.COLORS.BTN_BG
+            bg     = theme.COLORS.BTN_BG,
+            disabled = ro
         } },
         { {
             name     = "net",
@@ -99,14 +103,15 @@ function control.drawButtons(area, data, twoCol)
             label    = data.net.enabled and "无线广播：开" or "无线广播：关",
             color    = data.net.enabled and theme.COLORS.TEXT_CYAN or theme.COLORS.TEXT_YELLOW,
             bg       = data.net.enabled and theme.COLORS.BTN_BG_HOVER or theme.COLORS.BTN_BG,
-            disabled = not data.net.available
+            disabled = ro or not data.net.available
         } },
         { {
             name   = "quit",
             action = "quit",
             label  = "退出程序",
             color  = theme.COLORS.TEXT_RED,
-            bg     = theme.COLORS.BTN_BG
+            bg     = theme.COLORS.BTN_BG,
+            disabled = false
         } }
     }
     local margin = 3
@@ -152,7 +157,7 @@ function control.fingerprint(data)
         tostring(data.system.mode), tostring(data.system.enforceThreshold), tostring(data.runModeText),
         tostring(data.powerText), tostring(data.meText), tostring(data.machineText),
         tostring(data.net.enabled), tostring(data.net.available),
-        tostring(data.system.locked), tostring(#data.hardware.missing),
+        tostring(data.system.awaiting), tostring(#data.hardware.missing),
         tostring(fstate.areas.control and fstate.areas.control.h or 0)
     }, "\x1f")
 end

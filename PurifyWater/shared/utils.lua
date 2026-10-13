@@ -1,10 +1,10 @@
 --------------------------------------------------------------------------------
 -- shared/utils.lua
 --------------------------------------------------------------------------------
--- 【职责】纯函数工具箱：数字格式化（千分位 / 短单位）、流体名归一化、按键判据
--- 【不做什么】不读组件、不读文件、不碰 state —— 全是"输入 -> 输出"
+-- 【职责】纯函数：数字格式化、流体名归一化、按键判据
+-- 【不做什么】不读组件/文件/state
 -- 【依赖】shared/constants
--- 【被谁用】各层（格式化）、frontend/input（按键）、hardware/{fluid,machines}（流体名）
+-- 【被谁用】各层格式化、frontend/input、hardware
 --------------------------------------------------------------------------------
 
 local constants = require("shared.constants")
@@ -49,9 +49,8 @@ function utils.normalizeFluidName(name)
     return clean, "gregtech:" .. clean
 end
 
---- 把 `key_down` 的 char 载荷变成单个小写字符
--- `key_down` 的 char 载荷是**数字（ASCII 码）**而不是字符：`tostring(char) == "q"` 恒为假
--- （`tostring(113)` = `"113"`）。
+--- key_down 的 char 载荷 -> 单个小写字符
+-- char 是 ASCII 码数字，不是字符。
 -- @param char number|string|nil
 -- @return string|nil 单个小写字符（不是可打印 ASCII 时返回 nil）
 function utils.keyChar(char)
@@ -63,8 +62,8 @@ function utils.keyChar(char)
     return nil
 end
 
---- 是否按了某个字母键：**认两种判据** —— 字符（char）或扫描码（code）
--- 某些键盘布局/修饰键下 char 可能是 0，扫描码不受影响，所以两个都试。
+--- 是否按了某字母键：字符或扫描码双判据。
+-- 部分布局 char 可能为 0，扫描码不受影响，故两者都试。
 -- @param char number|string|nil `key_down` 的 ev[3]
 -- @param code number|nil `key_down` 的 ev[4]
 -- @param letter string 单个字母，如 "q" / "r"

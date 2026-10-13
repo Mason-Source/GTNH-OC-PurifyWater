@@ -1,30 +1,31 @@
 --------------------------------------------------------------------------------
 -- backend/handlers.lua
 --------------------------------------------------------------------------------
--- 【职责】事件订阅表：**只做接线**，一行一个事件 -> 一个处理函数
--- 【被谁用】main.lua / monitor.lua（启动时调 handlers.subscribe()）
+-- 【职责】事件订阅表：只做接线，一行一个事件 -> 处理器
+-- 【被谁用】main.lua、monitor.lua
 --
--- v2 把 `scheduler.on(...)` 散在 main / dispatch / unitScan，
---   查"谁响应了什么"要翻三个文件；这里一眼看全。
---
--- 【事件总表（ARCHITECTURE.md §4）】
---   采集类  hardware_missing  -> system（全关 + 锁定）
---           hardware_changed  -> system（全关+锁定 -> 清本轮学习）
---           power_changed     -> system（清本轮学习 -> 在跑时重排）
---           plant_observed    -> watch（边沿 + 归因）
---           parallel_sample   -> watch（连续确认 -> parallel_write / discarded）
---   派生类  level_rules_changed   -> watch（审计提示 + 重排）
---           rates_changed         -> watch（权重/倍率变更：审计提示 + 重排）
---           parallel_write        -> system（内存学习 + 重算规则 + 重排）
---           switch_mismatch       -> system（停机 + 锁定，不动机器）
---           主机开关                -> 不走事件：watch 每轮观测对一次（电平语义，见 app/system）
---   控制类  schedule_now          -> system（界面刷新触发一次立即调度）
+-- 事件总表（ARCHITECTURE.md §4）
+--   采集类  hardware_missing   -> system（运行中则全关停机）
+--           hardware_changed   -> system（运行中：停会话+等待用户；非运行：只清学习）
+--           power_changed      -> system（发布建议 -> 清本轮学习 -> 在跑时重排）
+--           deployed_changed   -> system（发布建议，各状态恒发）
+--           plant_observed     -> watch（边沿 + 归因 + 并行不一致）
+--           parallel_sample    -> watch（连续确认 -> parallel_write / discarded）
+--   配置类  level_rules_changed -> watch（审计提示 + 重排）
+--           rates_changed       -> rates（生效性门 -> 发布 -> 忘方案 -> 审计 -> 重排）
+--           mode_changed        -> rates（发布 -> 忘方案 -> 审计 -> 重排）
+--           enforce_changed     -> rates（忘方案 + 重排，不发布）
+--   派生类  parallel_write     -> system（内存学习 + 重算规则 + 重排）
+--           switch_mismatch    -> system（停会话 + 等待用户，不动机器）
+--           主机开关             -> 不走事件：watch 每轮观测对一次（电平语义，见 app/system）
+--   控制类  schedule_now       -> system（界面刷新触发一次立即调度）
 --------------------------------------------------------------------------------
 
 local scheduler = require("core.scheduler")
 
 local watch     = require("backend.app.watch")
 local system    = require("backend.app.system")
+local rates     = require("backend.app.rates")
 
 local handlers  = {}
 
@@ -35,12 +36,17 @@ function handlers.subscribe()
     scheduler.on("hardware_missing", system.onHardwareMissing)
     scheduler.on("hardware_changed", system.onHardwareChanged)
     scheduler.on("power_changed", system.onPowerChanged)
+    scheduler.on("deployed_changed", system.onDeployedChanged)
     scheduler.on("plant_observed", watch.onPlantObserved)
     scheduler.on("parallel_sample", watch.onParallelSample)
 
-    -- 派生类
+    -- 配置类
     scheduler.on("level_rules_changed", watch.onLevelRulesChanged)
-    scheduler.on("rates_changed", watch.onRatesChanged)
+    scheduler.on("rates_changed", rates.onRatesChanged)
+    scheduler.on("mode_changed", rates.onModeChanged)
+    scheduler.on("enforce_changed", rates.onEnforceChanged)
+
+    -- 派生类
     scheduler.on("parallel_discarded", watch.onParallelDiscarded)
     scheduler.on("parallel_write", system.onParallelWrite)
     scheduler.on("switch_mismatch", system.onSwitchMismatch)
@@ -49,7 +55,7 @@ function handlers.subscribe()
     -- 控制类
     scheduler.on("schedule_now", system.onScheduleRequest)
 
-    return 12
+    return 15
 end
 
 return handlers

@@ -32,31 +32,27 @@ for _, path in ipairs(candidates) do
     end
 end
 if not locate then
-    print("无法装载 core/locate.lua（" .. tostring(locateErr or "文件不存在") .. "）")
-    print("请先 cd 到应用根目录（含 core/ 的目录）再执行：lua main.lua")
+    print("无法加载 core/locate.lua（" .. tostring(locateErr or "文件不存在") .. "）")
+    print("用法：cd 到应用根目录（含 core/ 的目录）后执行 lua main.lua")
     return
 end
 
 local appDir = locate.appDir(arg and arg[1], selfPath)
 if appDir == "" then
-    print("无法定位应用目录：请先 cd 到应用根目录（含 core/ 的目录）再执行 lua main.lua")
+    print("无法定位应用目录：cd 到应用根目录（含 core/ 的目录）后执行 lua main.lua")
     return
 end
 locate.injectPath(appDir)
 
 -- ② 卫生工作
--- 【为什么 require 两次】OpenOS 把模块留在 package.loaded 里，热更新后**第一次重跑**拿到的是上一版的
---   `core.bootstrap`，而它在模块级就 require 了 `shared.constants` —— 版本号会停在旧值（功能不受影响，
---   因为后面所有 require 都发生在清缓存之后）。所以：先用它清缓存，清完**再装一份**。
---   入口文件本身永远是新的（`lua main.lua` 是直接 loadfile 跑的），所以这个修正必须写在入口里。
+-- OpenOS 把模块留在 package.loaded，热更新后首次重跑仍是旧 bootstrap；
+-- 入口自身总是新的，故先借旧 bootstrap 清缓存，再重新 require 一份。
 local bootstrap = require("core.bootstrap") -- 可能来自缓存：这一步只借它的"清缓存"能力
 local removed   = bootstrap.clearModuleCache()
 bootstrap       = require("core.bootstrap") -- 重新装：版本号从这一份起才是新文件的
 bootstrap.applyArgs({ ... })
 
--- 【内存观测：只在 --debug 下做（决策 32）】整套观测在 `backend/debug/memwatch`，日常运行连模块都不装。
---   这里只负责在**任何本工程模块之前**取一次读数：此刻只装了引导模块（`bootstrap` 已装过 `logs`），
---   这个数 ≈ **OpenOS shell 占掉的那部分**（实机 2048K 上限下是 421K，见 ARCHITECTURE 决策 31）。
+-- 内存观测仅 --debug；在任何工程模块前取一次读数，此刻只装引导模块，差值为 shell 占用。
 local memwatch, bootFree, bootTotal = nil, nil, nil
 if require("shared.logs").isDebug() then
     bootFree  = require("computer").freeMemory()
@@ -72,6 +68,7 @@ local models        = require("shared.models")
 local runtime       = require("core.runtime")
 
 local files         = require("backend.store.files")
+local settings      = require("backend.store.settings")
 local trace         = require("backend.store.trace")
 local log_file      = require("backend.store.log_file")
 local history       = require("backend.store.history")
@@ -83,6 +80,7 @@ local handlers      = require("backend.handlers")
 local api           = require("backend.api")
 local power         = require("backend.domain.power")
 local net           = require("backend.hardware.net")
+local netApp        = require("backend.app.net")
 local system        = require("backend.app.system")
 local autostart     = require("backend.app.autostart")
 local mode          = require("backend.domain.mode")
@@ -94,18 +92,29 @@ files.setRoot(appDir) -- 数据文件（配置里的相对名）都相对应用�
 
 -- 【调度模式先装再用】注册内置模式，再按 settings 里的 mode 选当前模式（未知值告警回退阈值）。
 --   必须早于任何 suggest()/evaluate()/audit() 调用 —— 也就是 jobs.register() 与 system.auditThresholds() 之前。
-local bootSettings = require("backend.store.settings").load() or {}
+local bootSettings = settings.load() or {}
 mode.register("threshold", thresholdMode)
 mode.register("rate", rateMode)
 if mode.has(bootSettings.mode) then
-    state.system.mode = bootSettings.mode
+    state.write.setMode(bootSettings.mode)
 else
-    state.system.mode = "threshold"
+    state.write.setMode("threshold")
     if bootSettings.mode ~= nil and bootSettings.mode ~= "" then
         logs.warn("未知调度模式 " .. tostring(bootSettings.mode) .. "，已回退阈值调度")
     end
 end
-state.system.enforceThreshold = models.bool(bootSettings.enforce_threshold, true)
+state.write.setEnforce(models.bool(bootSettings.enforce_threshold, true))
+
+-- 能源仓利用因子（%）：可用功率 = 折算最大功率 × 因子；缺键/非法回落默认，并在首次启动补写一行
+local factor = tonumber(bootSettings.energy_factor)
+if not factor or factor ~= math.floor(factor)
+    or factor < CONFIG.ENERGY.FACTOR_MIN or factor > CONFIG.ENERGY.FACTOR_MAX then
+    factor = CONFIG.ENERGY.FACTOR_DEFAULT
+end
+state.write.setEnergyFactor(factor)
+if bootSettings[CONFIG.ENERGY.FACTOR_KEY] == nil then
+    settings.set(CONFIG.ENERGY.FACTOR_KEY, factor)
+end
 
 -- 速率配置（权重 + T7 增产倍率）：缺键会补默认值并落盘；同样必须早于任何 suggest()/evaluate()/audit()
 rates_config.load()
@@ -114,25 +123,25 @@ trace.start(appDir, bootstrap.version())
 if memwatch then memwatch.traceBoot(bootFree, bootTotal) end -- 两行内存读数只在 --debug 下写
 
 logs.system(bootstrap.versionLine())
-logs.system("调度模式：" .. mode.labelOf(state.system.mode))
--- 下列都是排查信息（不是用户要看的东西）：应用目录、任务与事件条数、各数据文件的加载行数……
-logs.debug("[调试] 应用目录 " .. appDir
+logs.system("调度模式：" .. mode.labelOf(state.read.mode()))
+-- 下列为 debug 信息：应用目录、任务/事件条数、加载行数
+logs.debug("应用目录 " .. appDir
     .. (removed > 0 and ("（已清掉 " .. removed .. " 个旧模块缓存）") or ""))
 
 -- ③ 任务、数据、事件
 local taskCount = jobs.register()
-logs.debug(string.format("[调试] 已注册 %d 个定时任务；日志级别 = %s", taskCount, logs.getLevel()))
+logs.debug(string.format("已注册 %d 个定时任务；日志级别 = %s", taskCount, logs.getLevel()))
 
 -- 注册后已各跑一次（T1 拿到功率、T2 拿到水位），此时读盘才有意义
 local _, ruleText             = levels_config.load()
 local gotHistory, historyText = history.load()
 power.refresh()
-logs.debug("[调试] " .. tostring(ruleText))
-logs.debug("[调试] " .. tostring(historyText))
+logs.debug(tostring(ruleText))
+logs.debug(tostring(historyText))
 
--- 【事件接线本身不能删】下面这行才是"把事件表挂上"的动作；条数只是排查信息
+-- 事件接线不能删；条数只是 debug 信息
 local subCount = handlers.subscribe()
-logs.debug(string.format("[调试] 已订阅 %d 类事件", subCount))
+logs.debug(string.format("已订阅 %d 类事件", subCount))
 
 -- 【首轮建议】由 jobs.register() 的首轮观测发布（台数 0→N 会触发），这里不重复发布
 system.auditThresholds()
@@ -142,28 +151,29 @@ runtime.bindQuitKeys()
 
 -- 【开机默认值】运行模式是**永久配置**：存过就用存的，没存过才用 config 默认
 -- （其余界面开关如无线广播仍只活在内存里，重启回到 config）
-local savedSettings = require("backend.store.settings").load()
+local savedSettings = settings.load()
 if savedSettings and (savedSettings.priority == "high" or savedSettings.priority == "low") then
-    state.system.priority = savedSettings.priority
+    state.write.setPriority(savedSettings.priority)
     logs.system(string.format("运行模式：%s（来自上次保存）",
         savedSettings.priority == "high" and "高级水优先" or "低级水优先"))
 else
-    state.system.priority = CONFIG.SYSTEM.PRIORITY_DEFAULT or "low"
+    state.write.setPriority(CONFIG.SYSTEM.PRIORITY_DEFAULT or "low")
 end
 -- 开机自启：真源在 $HOME/.shrc（勾选与否 = 那段标记块在不在）；这里只读回状态 + 按需写一行日志
 autostart.refresh()
 
-net.setEnabled(CONFIG.NET.ENABLED == true)
+-- 无线广播：开关与范围都存 settings.txt（缺键首启补写默认值）；重启保持上次设置
+netApp.loadSettings(savedSettings)
 
 -- ④ 广播（T7）：快照来源由这里注入，避免 net 反过来 require api 造成环依赖
 if net.register() then
     net.setSource(api.snapshot)
-    logs.debug(string.format("[调试] 广播任务已注册（当前 %s）",
-        state.net.enabled and "开" or "关"))
+    logs.debug(string.format("广播任务已注册（当前 %s）",
+        state.read.net().enabled and "开" or "关"))
 end
 
 render.boot()
-logs.system("界面已就绪（点按钮或快捷键 X/P/R/T）")
+logs.system("界面已就绪")
 
 -- 无人值守机房：想让程序一启动就自动开调度，把 CONFIG.SYSTEM.START_ON_BOOT 改成 true
 if CONFIG.SYSTEM.START_ON_BOOT then
@@ -180,7 +190,7 @@ do
     render.restoreResolution()
     bootstrap.releaseConsole()
     local learnedCount = learning.count()
-    if state.system.running then
+    if state.read.running() then
         system.stop("程序退出")
     end
     local okHistory, historyNote = history.save()
@@ -191,15 +201,15 @@ do
     local j       = jobs.last()
     local memText = memwatch and memwatch.summary()     -- 没带 --debug 时为 nil，摘要里就没有内存那段
     trace.stop(runtime.quitReason(), string.format(
-        "运行 %.0f 秒，硬件扫描 %d 次，水位 %s，总功率 %s，本次学习 %d 级，历史 %d 点%s",
+        "运行 %.0f 秒，硬件扫描 %d 次，水位 %s，总功率 %s，本次学习并行 %d 级，历史 %d 点%s",
         jobs.elapsed(), j.scanCount,
         j.fluidOk and "读取成功" or ("读取失败(" .. tostring(j.fluidErr) .. ")"),
         utils.formatNumber(j.powerBefore or 0), learnedCount,
-        state.chart and #state.chart.points or 0,
+        #state.read.chart().points,
         memText and ("，内存 " .. memText) or ""))
 end
 print("已退出：" .. tostring(runtime.quitReason() or "未说明"))
 print("运行痕迹：" .. tostring(trace.path()))
-if state.system.autostart then
-    print("已开启开机自启：下次开机会自动运行；现在要重开执行 lua " .. appDir .. "/main.lua")
+if state.read.autostart() then
+    print("开机自启已开启：下次开机自动运行；重新运行：lua " .. appDir .. "/main.lua")
 end

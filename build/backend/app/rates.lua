@@ -1,3 +1,4 @@
+local scheduler    = require("core.scheduler")
 local CONFIG       = require("shared.config")
 local constants    = require("shared.constants")
 local logs         = require("shared.logs")
@@ -9,29 +10,29 @@ local plan         = require("backend.app.plan")
 local system       = require("backend.app.system")
 local IDLE_NOTE    = "（当前模式不生效，已保存待用）"
 local app          = {}
-local function afterChange(reason)
+local function afterSuggestChange(reason)
     system.publish()
     plan.forget()
     system.auditThresholds()
     system.requestPlan(reason)
 end
 function app.toggleMode()
-    local nextId = (state.system.mode == "rate") and "threshold" or "rate"
-    state.system.mode = nextId
+    local nextId = (state.read.mode() == "rate") and "threshold" or "rate"
+    state.write.setMode(nextId)
     local ok = settings.set("mode", nextId)
     logs.system(string.format("调度模式：%s%s", mode.labelOf(nextId),
         ok and "（已保存，下次启动沿用）" or "（保存失败，重启会回到默认）"))
-    afterChange("调度模式切换")
+    scheduler.emit("mode_changed", { mode = nextId })
     return nextId
 end
 function app.toggleEnforceThreshold()
-    state.system.enforceThreshold = not state.system.enforceThreshold
-    local ok = settings.set("enforce_threshold", state.system.enforceThreshold)
+    state.write.setEnforce(not state.read.enforceThreshold())
+    local ok = settings.set("enforce_threshold", state.read.enforceThreshold())
     logs.system(string.format("速率模式：%s水位阈值约束%s",
-        state.system.enforceThreshold and "受" or "不受",
+        state.read.enforceThreshold() and "受" or "不受",
         ok and "（已保存，下次启动沿用）" or "（保存失败，重启会回到默认）"))
-    afterChange("阈值约束切换")
-    return state.system.enforceThreshold
+    scheduler.emit("enforce_changed", { on = state.read.enforceThreshold() })
+    return state.read.enforceThreshold()
 end
 function app.setWeight(level, weight)
     level, weight = tonumber(level), tonumber(weight)
@@ -45,8 +46,8 @@ function app.setWeight(level, weight)
     local ok, err = rates_config.setWeight(level, weight)
     if not ok then return false, "写配置失败（settings.txt）：" .. tostring(err) end
     logs.system(string.format("%s 权重 = %d%s", constants.levelLabel(level), weight,
-        system.effect().weight and "" or IDLE_NOTE))
-    afterChange("权重变更")
+        system.effectiveConfig().weight and "" or IDLE_NOTE))
+    scheduler.emit("rates_changed", { why = "权重变更" })
     return true, ""
 end
 function app.setT7Boost(value)
@@ -61,8 +62,20 @@ function app.setT7Boost(value)
     local ok, err = rates_config.setBoost(value)
     if not ok then return false, "写配置失败（settings.txt）：" .. tostring(err) end
     logs.system(string.format("T7 增产倍率：×%s%s", tostring(value),
-        system.effect().boost and "" or IDLE_NOTE))
-    afterChange("T7 增产倍率变更")
+        system.effectiveConfig().boost and "" or IDLE_NOTE))
+    scheduler.emit("rates_changed", { why = "T7 增产倍率变更" })
     return true, ""
+end
+function app.onModeChanged()
+    afterSuggestChange("调度模式切换")
+end
+function app.onRatesChanged(payload)
+    logs.debug(tostring(payload and payload.why or "速率配置已更新"))
+    if not system.effectiveConfig().weight then return end
+    afterSuggestChange(payload and payload.why or "权重变化")
+end
+function app.onEnforceChanged()
+    plan.forget()
+    system.requestPlan("阈值约束切换")
 end
 return app

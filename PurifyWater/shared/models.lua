@@ -1,19 +1,20 @@
 --------------------------------------------------------------------------------
 -- shared/models.lua
 --------------------------------------------------------------------------------
--- 【职责】把"原始文本"变成规范数据 / 变回去（**纯函数**，不读写文件、不碰组件）
--- 【不做什么】不做 IO（那是 backend/store/files），不做判断（那是 domain/*）
--- 【依赖】无（纯文本转换）
--- 【被谁用】backend/store/*（配置文件取值）、frontend/viewmodel（显示）
+-- 【职责】原始文本 <-> 规范数据（纯函数）
+-- 【不做什么】不 IO（store/files）、不判断（domain/*）
+-- 【依赖】无
+-- 【被谁用】store/*、frontend/viewmodel
 --
--- 【键=值配置的取值容错】手改 `settings.txt` 是常规操作：数字用 tonumber 兜默认值，
---   布尔一律走 `models.bool()`（true/false、1/0、yes/no、on/off 都认）。
+-- settings.txt 手改容错：数字 tonumber 兜底，布尔走 models.bool()。
 --------------------------------------------------------------------------------
+
+local constants = require("shared.constants")
 
 local models    = {}
 
---- 文本 -> 布尔（配置手改容错）
--- 认得出的一律按字面（false/0/no/off 为假）；认不出的按"真"（与旧勾选口径一致）；空值用默认
+--- 文本 -> 布尔（手改容错）
+-- false/0/no/off 为假，其余为真，空值用默认。
 -- @param value any 配置文件里的原值
 -- @param default boolean|nil 默认 true
 -- @return boolean
@@ -26,20 +27,14 @@ function models.bool(value, default)
 end
 
 --------------------------------------------------------------------------------
--- 广播快照：接口数据 <-> 文本（无线发出去的、镜像端读回来的都是这一套）
+-- 广播快照：接口数据 <-> 文本
 --------------------------------------------------------------------------------
--- OC 的无线消息只能传字符串、单条最多 8192 字节；发端与收端共用这一套格式，改字段只改一处。
--- 【格式】一行一个域，用 `|` 分隔，行首字母是标记：
---   V 版本
---   S 运行|锁定|优先级|主机总开关
---   H 主机|单元|能量仓|缺失清单
---   P 可用功率|已用功率|开着的等级
---   L 等级|台数|开关|在跑台数|水量|实际阈值
--- 【只送镜像端真正要画的字段】每秒一条、OC 的无线收发与解析都不便宜：L 行从 15 域减到 6 域
---   （8 级就是每帧少 72 个域）；F 行（水位读法）已删（那是调试信息）—— SNAP_VERSION = 8。
--- 文本字段里的 `|` 与换行会被换成 `/`；解析遇到坏行直接跳过。
+-- 无线消息单条上限 8192 字节；收发共用此格式。
+-- 一行一域，| 分隔，行首标记：V 版本 / S 系统 / H 硬件 / P 功率 / L 等级 / M 逐台机器 / C 曲线 / G 日志。
+-- L 行只含镜像端要画的域；M 每台一行（跟在所属 L 行后面）；C 每点一行（降频发）；G 每次带最近几行。
+-- | 与换行替换为 /；坏行跳过。
 
-models.SNAP_VERSION = 8
+models.SNAP_VERSION = 11 -- v11：L 补学习并行 + M 逐台机器（详情页双端一致）
 
 --- 文本字段清理（分隔符/换行会让整帧解析崩掉）
 -- @param value any
@@ -94,12 +89,15 @@ function models.snapshot(payload)
 
     lines[#lines + 1] = table.concat({ "V", models.SNAP_VERSION }, "|")
     lines[#lines + 1] = table.concat({
-        "S", flagOf(sy.running), flagOf(sy.locked), clean(sy.priority),
-        flagOf((payload.host or {}).switch)
+        "S", flagOf(sy.running), flagOf(sy.awaiting), clean(sy.priority),
+        flagOf((payload.host or {}).switch), clean(sy.mode), flagOf(sy.enforceThreshold),
+        flagOf((sy.effectiveConfig or {}).enabled),
+        numOf((payload.host or {}).progress), numOf((payload.host or {}).progressMax),
+        flagOf((payload.net or {}).enabled)
     }, "|")
     lines[#lines + 1] = table.concat({
         "H", numOf(hw.host), numOf(hw.units), numOf(hw.energy),
-        clean(table.concat(hw.missing or {}, ","))
+        clean(table.concat(hw.missing or {}, ",")), flagOf(hw.me)
     }, "|")
     lines[#lines + 1] = table.concat({
         "P", numOf(pw.all), numOf(pw.used), clean(table.concat(plan.opened or {}, ","))
@@ -109,13 +107,43 @@ function models.snapshot(payload)
         lines[#lines + 1] = table.concat({
             "L", numOf(row.level), numOf(row.deployed), flagOf(row.switch),
             numOf(row.active), numOf(row.water),
-            numOf(row.rule and (row.rule.effectiveThreshold or row.rule.threshold))
+            numOf(row.rule and (row.rule.effectiveThreshold or row.rule.threshold)),
+            flagOf(row.rule and row.rule.enabled),
+            numOf(row.sample), numOf(row.suggest), numOf(row.success),
+            numOf(row.parallel) -- 学习并行（逐台没确认值时的兜底）
         }, "|")
+
+        -- M 逐台机器（详情页那张表）：一行一台，紧跟所属 L 行
+        for _, machine in ipairs(row.machines or {}) do
+            lines[#lines + 1] = table.concat({
+                "M", numOf(row.level), flagOf(machine.active), numOf(machine.current),
+                numOf(machine.confirmed), numOf(machine.success)
+            }, "|")
+        end
     end
+
+    -- C 曲线（降频发：调用方决定 payload.history 有没有）：一点一行
+    if payload.history then
+        local times  = payload.history.times or {}
+        local values = payload.history.values or {}
+        for i = 1, #times do
+            local nums = { "C", math.floor(times[i] or 0) }
+            for level = 1, constants.LEVEL_COUNT do
+                nums[#nums + 1] = math.floor((values[level] and values[level][i]) or 0)
+            end
+            lines[#lines + 1] = table.concat(nums, "|")
+        end
+    end
+
+    -- G 日志（最近几行，每拍带）
+    for _, text in ipairs(payload.logs or {}) do
+        lines[#lines + 1] = "G|" .. clean(text)
+    end
+
     return table.concat(lines, "\n") .. "\n"
 end
 
---- 文本 -> 快照（收端；形状与 api.read.* 一致，界面/镜像端可以直接用）
+--- 文本 -> 快照（收端；形状同 api.read.*）
 -- @param text string
 -- @return table|nil payload
 -- @return string|nil 失败原因
@@ -125,7 +153,8 @@ function models.parseSnapshot(text)
         hardware = {},
         power = {},
         plan = { opened = {} },
-        levels = {}
+        levels = {},
+        logs = {}
     }
     local seen = false
 
@@ -138,10 +167,18 @@ function models.parseSnapshot(text)
         elseif mark == "S" then
             payload.system = {
                 running = readFlag(f[2]),
-                locked = readFlag(f[3]),
-                priority = f[4]
+                awaiting = readFlag(f[3]),
+                priority = f[4],
+                mode = (f[6] and f[6] ~= "-") and f[6] or nil,
+                enforceThreshold = readFlag(f[7]),
+                effectiveConfig = { enabled = readFlag(f[8]) == true }
             }
-            payload.host = { switch = readFlag(f[5] or "-") }
+            payload.host = {
+                switch = readFlag(f[5] or "-"),
+                progress = tonumber(f[9] or ""),
+                progressMax = tonumber(f[10] or "")
+            }
+            payload.net = { enabled = readFlag(f[11]) == true, available = false }
         elseif mark == "H" then
             local missing = {}
             if f[5] and f[5] ~= "-" and f[5] ~= "" then
@@ -151,7 +188,8 @@ function models.parseSnapshot(text)
                 host = tonumber(f[2]) or 0,
                 units = tonumber(f[3]) or 0,
                 energy = tonumber(f[4]) or 0,
-                missing = missing
+                missing = missing,
+                me = readFlag(f[6]) == true
             }
         elseif mark == "P" then
             payload.power = {
@@ -175,9 +213,46 @@ function models.parseSnapshot(text)
                     switch = readFlag(f[4]),
                     active = tonumber(f[5]),
                     water = tonumber(f[6]),
-                    rule = { threshold = tonumber(f[7]) or 0 }
+                    rule = {
+                        threshold          = tonumber(f[7]) or 0,
+                        effectiveThreshold = tonumber(f[7]) or 0,
+                        enabled            = readFlag(f[8]) == true
+                    },
+                    sample   = tonumber(f[9]),
+                    suggest  = tonumber(f[10]),
+                    success  = tonumber(f[11]),
+                    parallel = tonumber(f[12])
                 }
             end
+        elseif mark == "M" then
+            -- 逐台机器：挂在所属等级的 L 行下面
+            local level = tonumber(f[2])
+            local row   = level and payload.levels[level]
+            if row then
+                row.machines = row.machines or {}
+                row.machines[#row.machines + 1] = {
+                    active    = readFlag(f[3]),
+                    current   = tonumber(f[4]),
+                    confirmed = tonumber(f[5]),
+                    success   = tonumber(f[6])
+                }
+            end
+        elseif mark == "C" then
+            local t = tonumber(f[2])
+            if t then
+                local h = payload.history
+                if not h then
+                    h = { times = {}, values = {} }
+                    for level = 1, constants.LEVEL_COUNT do h.values[level] = {} end
+                    payload.history = h
+                end
+                h.times[#h.times + 1] = t
+                for level = 1, constants.LEVEL_COUNT do
+                    h.values[level][#h.values[level] + 1] = tonumber(f[2 + level]) or 0
+                end
+            end
+        elseif mark == "G" then
+            payload.logs[#payload.logs + 1] = tostring(f[2] or "")
         end
     end
 

@@ -29,6 +29,7 @@ local logs      = require("shared.logs")
 local api       = require("backend.api")
 local viewmodel = require("frontend.viewmodel")
 local fstate    = require("frontend.state")
+local viewinput = require("frontend.viewinput")
 
 local input     = {}
 
@@ -51,8 +52,7 @@ end
 -- 没有 ENTER/ESCAPE/BACKSPACE：阈值改由配置页虚拟键盘输入，物理键盘不进输入框。
 
 --- 切页（页签与 T 键共用）
--- 清掉选中与缓冲：配置页的"选中/半填的缓冲"不跨页保留，回来是干净状态
---   （也免得缓冲默默留在内存里）。
+-- 清选中与缓冲：不跨页保留，回来是干净状态。
 -- @param tab string "overview" | "config"
 local function switchTab(tab)
     if fstate.currentTab == tab then return end
@@ -80,13 +80,27 @@ local function selectCell(level, field)
     end
 end
 
+--- 点标题行右侧的"利用因子" = 选中它（全局字段，无等级）
+local function selectFactor()
+    local sys = fstate.lastData and fstate.lastData.system
+    fstate.editLevel, fstate.editField = nil, "factor"
+    fstate.editBuf = tostring(math.floor(tonumber(sys and sys.energyFactor) or 100))
+end
+
+--- 点标题行右侧的"无线范围" = 选中它（全局字段，无等级）
+local function selectStrength()
+    local netState = fstate.lastData and fstate.lastData.net
+    fstate.editLevel, fstate.editField = nil, "strength"
+    fstate.editBuf = tostring(math.floor(tonumber(netState and netState.strength) or CONFIG.NET.STRENGTH))
+end
+
 --- 放下没提交的东西（保存完 / 点 ✘ / 切页都走这里）
 local function clearEdit()
     fstate.editLevel, fstate.editField, fstate.editBuf = nil, nil, nil
 end
 
 --- 点表格里的某一格
--- 勾选格 = **点一下直接切换**（老习惯，不开键盘）；其它可编辑格 = 选中它，键盘槽换成那一列的键盘。
+-- 勾选格点即切换，不开键盘；其它格选中后换对应键盘。
 -- 取反是界面语义：后端只认"设成什么"（level_enabled_set(level, enabled)），不做读-改-写。
 -- @param level number
 -- @param field string "enabled" / "threshold" / "weight" / "boost"
@@ -110,11 +124,12 @@ end
 -- @param key table { kind = , value = }
 local function applyKey(key)
     local field, level = fstate.editField, fstate.editLevel
-    if not field or not level then return end
+    if not field then return end
+    if field ~= "factor" and field ~= "strength" and not level then return end
     local kind = key.kind
 
     if kind == "cancel" then
-        logs.debug("[调试] 退出编辑（用户点了 ✘）")
+        logs.debug("退出编辑（✘）")
         clearEdit()
         return
     end
@@ -130,13 +145,17 @@ local function applyKey(key)
 
     -- ② 数字列（阈值 / 权重）：改缓冲，点 ✔ 才提交
     local isThreshold = (field == "threshold")
+    local isFactor    = (field == "factor")
+    local isStrength  = (field == "strength")
     local limit       = isThreshold and (CONFIG.UI.MAX_THRESHOLD_KILO or 100000000000000)
+        or isFactor and CONFIG.ENERGY.FACTOR_MAX
+        or isStrength and CONFIG.NET.STRENGTH_MAX
         or (CONFIG.RATES.MAX_WEIGHT or 100)
 
     if kind == "commit" then
         local value = tonumber(fstate.editBuf or "")
         if not value then
-            logs.ui("还没填数字，未保存")
+            logs.ui("未填数字，未保存")
             return
         end
         if isThreshold then
@@ -145,6 +164,19 @@ local function applyKey(key)
                 return
             end
             fire("level_rules_set", level, value * 1000, nil)
+        elseif isFactor then
+            if value < CONFIG.ENERGY.FACTOR_MIN or value > limit then
+                logs.ui(string.format("利用因子需为 %d-%d 的整数，未保存",
+                    CONFIG.ENERGY.FACTOR_MIN, limit))
+                return
+            end
+            fire("energy_factor_set", value)
+        elseif isStrength then
+            if value < 0 or value > limit then
+                logs.ui(string.format("无线范围需为 0-%d 的整数（方块），未保存", limit))
+                return
+            end
+            fire("net_strength_set", value) -- 超卡上限由后端/网卡夹取
         else
             if value < 0 or value > limit then
                 logs.ui(string.format("权重需为 0-%d 的整数，未保存", limit))
@@ -177,9 +209,15 @@ local function applyKey(key)
 
     if buf ~= "" then
         local value = tonumber(buf)
-        if not value or value >= limit then
-            logs.ui(isThreshold and "超过上限（≥ 1e14 kL），这一下没生效"
-                or string.format("权重上限 %d，这一下没生效", limit))
+        -- 上界：阈值"≥上限即拒绝"（独占）；权重 / 因子含端点（> 才拒绝）
+        local over
+        if not value then over = true
+        elseif isThreshold then over = (value >= limit)
+        else over = (value > limit) end
+        if over then
+            local name = isFactor and "利用因子" or isStrength and "无线范围" or "权重"
+            logs.ui(isThreshold and "超过上限（≥ 1e14 kL），未生效"
+                or string.format("%s上限 %d，未生效", name, limit))
             return
         end
     end
@@ -232,22 +270,9 @@ local function onClick(x, y)
     end
 
     -- 【净水状态面板】详情态：点这块矩形任意处 -> 返回列表；列表态：点某一行 -> 看该级详情
-    -- 不 invalidateAll：详情与列表是同一格位的两套内容，只让 status 的指纹变，
-    --   下一帧只重画这一块。
-    -- 【必须限定总览页】报表页是整屏面板，它盖住同一片坐标（不限定就会把报表页的可编辑格吃掉）
-    if fstate.currentTab == "overview" and fstate.hit(fstate.areas.status, x, y) then
-        if fstate.detailLevel then
-            fstate.detailLevel = nil
-        else
-            for level, box in pairs(fstate.levelRows or {}) do
-                if fstate.hit(box, x, y) then
-                    fstate.detailLevel = level
-                    break
-                end
-            end
-        end
-        return
-    end
+    -- 命中判定与镜像端共用（frontend/viewinput）；不 invalidateAll：详情与列表是同一格位的
+    --   两套内容，只让 status 的指纹变，下一帧只重画这一块。
+    if viewinput.statusArea(x, y) then return end
 
     -- 日志面板标题 -> 切 user/debug
     if fstate.hit(fstate.logTitle, x, y) then
@@ -255,12 +280,10 @@ local function onClick(x, y)
         return
     end
 
-    -- 图表标题行的等级按钮（0 = 全部）
-    for level, box in pairs(fstate.chartChips or {}) do
-        if fstate.hit(box, x, y) then
-            setChartLevel(level)
-            return
-        end
+    -- 图表标题行的等级按钮（0 = 全部）：命中判定与镜像端共用；主端要让窗口秒数跟着重算
+    if viewinput.chartChip(x, y) then
+        viewmodel.expire()
+        return
     end
 
     -- 配置页：先键盘槽（细），再表格的每一格 —— 键盘槽在表格外面，格子之间不重叠
@@ -272,12 +295,21 @@ local function onClick(x, y)
                 return
             end
         end
-        -- ② 「运行设置」卡的自启子项行：整行都是热区（说明行不登记，免得读个字就碰反）
+        -- ② 标题行右侧的两个全局字段：无线范围 / 利用因子
+        if fstate.hit(fstate.strengthCell, x, y) then
+            selectStrength()
+            return
+        end
+        if fstate.hit(fstate.factorCell, x, y) then
+            selectFactor()
+            return
+        end
+        -- ③ 运行设置自启行：整行热区；说明行不登记。
         if fstate.hit(fstate.autostartRow, x, y) then
             fire("autostart_toggle")
             return
         end
-        -- ③ 表格：勾选格点一下直接切换；阈值 / 权重 / 增产格 = 选中它（"增产"只有 T7 那一行登记热区）
+        -- ④ 表格：勾选格点一下直接切换；阈值 / 权重 / 增产格 = 选中它（"增产"只有 T7 那一行登记热区）
         for level, cell in pairs(fstate.cells or {}) do
             for field, box in pairs(cell) do
                 if fstate.hit(box, x, y) then

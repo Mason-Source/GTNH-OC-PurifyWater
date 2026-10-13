@@ -21,7 +21,7 @@ function settings.setMany(values)
     local keys = {}
     for k in pairs(all) do keys[#keys + 1] = k end
     table.sort(keys)
-    local lines = { "# 程序配置（全部可手改；改完 5 秒内生效）" }
+    local lines = { "# 程序配置（全部可手改；重启后生效）" }
     for _, k in ipairs(keys) do
         lines[#lines + 1] = string.format("%s=%s", k, all[k])
     end

@@ -9,29 +9,23 @@ function tracker.feed(address, value, progress)
         tracker.reset(address)
         return "discard", "并行读数无效"
     end
-    local t = state.tracker[address]
+    local t = state.read.tracker()[address]
     if not t then
-        state.tracker[address] = {
+        state.write.trackerSet(address, {
             progress   = tonumber(progress),
-            cycleValue = value,
-            samples    = 1
-        }
-        return "discard", string.format("首读 %d（等第 1 个运行周期结束）", value)
+            cycleValue = value
+        })
+        return "discard", string.format("首读 %d（待首周期结束）", value)
     end
     t.cycleValue = value
-    local closed = false
-    if type(progress) == "number" and type(t.progress) == "number" then
-        if progress < t.progress then closed = true end
-        t.progress = progress
-    else
-        t.samples = (t.samples or 0) + 1
-        if t.samples >= math.max(1, CONFIG.PARALLEL_FALLBACK_SAMPLES or 24) then
-            t.samples = 0
-            closed    = true
-        end
+    if type(progress) ~= "number" then
+        return "discard", "进度不可读（不结算）"
     end
+    local closed = false
+    if type(t.progress) == "number" and progress < t.progress then closed = true end
+    t.progress = progress
     if not closed then
-        return "discard", string.format("本周期读到 %d（等周期结束）", value)
+        return "discard", string.format("本周期读到 %d（周期未结束）", value)
     end
     if t.value == value then
         t.streak = (t.streak or 0) + 1
@@ -46,15 +40,15 @@ function tracker.feed(address, value, progress)
     return "discard", string.format("周期值 %d（%d/%d 个周期）", value, t.streak, limit())
 end
 function tracker.reset(address)
-    state.tracker[address] = nil
+    state.write.trackerDelete(address)
 end
 function tracker.clear(list)
     for _, item in ipairs(list or {}) do
         local address = (type(item) == "table") and item.address or item
-        if address then state.tracker[address] = nil end
+        if address then state.write.trackerDelete(address) end
     end
 end
 function tracker.resetAll()
-    state.tracker = {}
+    state.write.trackerReset()
 end
 return tracker

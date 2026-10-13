@@ -1,18 +1,15 @@
 --------------------------------------------------------------------------------
 -- backend/app/rates.lua
 --------------------------------------------------------------------------------
--- 【职责】"调度模式切换 + 速率模式配置"的**控制用例**：改内存 -> 落盘 -> 重判/重排/写日志
---   toggleMode()              主模式：阈值 <-> 速率
---   toggleEnforceThreshold()  速率模式子参数：是否仍受水位阈值约束（默认开）
---   setWeight(level, weight)  改某级权重（0..MAX 的整数；越界直接拒）
---   setT7Boost(value)         设 T7 增产倍率（只收 1 / 1.25 / 1.5 / 1.75 / 2 这五档）
--- 【不生效也照存】权重 / 增产在阈值模式下不算数，但照样写盘（切到速率模式就用）；
---   只有日志多一句"当前模式不生效，已保存待用"（判据 = system.effect()，与界面灰显同一份）。
--- 【不做什么】不算数（domain/rates）、不画界面、不碰机器、不判定能不能开
--- 【依赖】shared/{config,constants,logs,state}、store/{settings,rates_config}、
---         domain/mode、app/{plan,system}
--- 【被谁用】backend/api（命令入口）；Step 5 的界面按钮也走这里
+-- 【职责】模式切换 + 速率配置控制：改内存 -> 落盘 -> 发事实事件；事件入口做发布/审计/重排
+-- 【不做什么】不算数（domain/rates）、不画界面、不碰机器
+-- 【依赖】core/scheduler、shared/*、store/{settings,rates_config}、domain/mode、app/{plan,system}
+-- 【被谁用】backend/api（命令入口）、backend/handlers（事件入口）
+--
+-- 不生效也照存（阈值模式下照写盘），日志加"当前模式不生效，已保存待用"。
 --------------------------------------------------------------------------------
+
+local scheduler    = require("core.scheduler")
 
 local CONFIG       = require("shared.config")
 local constants    = require("shared.constants")
@@ -27,48 +24,48 @@ local mode         = require("backend.domain.mode")
 local plan         = require("backend.app.plan")
 local system       = require("backend.app.system")
 
--- 不生效的配置照样保存：日志尾巴上这一句（只在"当前模式用不到它"时加）
+-- 不生效配置照样保存的日志尾巴
 local IDLE_NOTE    = "（当前模式不生效，已保存待用）"
 
 local app          = {}
 
---- 变更后统一收尾：发布建议（模式切换/权重/倍率都会改建议）-> 忘掉旧方案 -> 审计 -> 重排
--- 【顺序】publish 必须在 audit 之前：审计（rate.audit）读的是发布出来的明细
+--- 变更后统一收尾：发布 -> 忘掉旧方案 -> 审计 -> 重排
+-- publish 必须最先：审计读发布明细、requestPlan 里的基线比较都在 publish 后
 -- @param reason string
-local function afterChange(reason)
+local function afterSuggestChange(reason)
     system.publish()
     plan.forget()
     system.auditThresholds()
     system.requestPlan(reason)
 end
 
---- 主模式切换（阈值 <-> 速率）：改内存 + 落盘 + 重判重排
+--- 主模式切换：改内存 + 落盘 + 重判重排
 -- @return string 新的模式 id
 function app.toggleMode()
-    local nextId = (state.system.mode == "rate") and "threshold" or "rate"
-    state.system.mode = nextId
+    local nextId = (state.read.mode() == "rate") and "threshold" or "rate"
+    state.write.setMode(nextId)
 
     local ok = settings.set("mode", nextId)
     logs.system(string.format("调度模式：%s%s", mode.labelOf(nextId),
         ok and "（已保存，下次启动沿用）" or "（保存失败，重启会回到默认）"))
-    afterChange("调度模式切换")
+    scheduler.emit("mode_changed", { mode = nextId })
     return nextId
 end
 
---- 速率模式子参数：是否受水位阈值约束（默认开）
+--- 阈值约束开关
 -- @return boolean 新的取值
 function app.toggleEnforceThreshold()
-    state.system.enforceThreshold = not state.system.enforceThreshold
+    state.write.setEnforce(not state.read.enforceThreshold())
 
-    local ok = settings.set("enforce_threshold", state.system.enforceThreshold)
+    local ok = settings.set("enforce_threshold", state.read.enforceThreshold())
     logs.system(string.format("速率模式：%s水位阈值约束%s",
-        state.system.enforceThreshold and "受" or "不受",
+        state.read.enforceThreshold() and "受" or "不受",
         ok and "（已保存，下次启动沿用）" or "（保存失败，重启会回到默认）"))
-    afterChange("阈值约束切换")
-    return state.system.enforceThreshold
+    scheduler.emit("enforce_changed", { on = state.read.enforceThreshold() })
+    return state.read.enforceThreshold()
 end
 
---- 改某级权重（0..MAX 的整数；越界/非整数直接拒）
+--- 改单级权重（0..MAX 整数）
 -- @param level number
 -- @param weight number
 -- @return boolean ok
@@ -87,12 +84,12 @@ function app.setWeight(level, weight)
     if not ok then return false, "写配置失败（settings.txt）：" .. tostring(err) end
 
     logs.system(string.format("%s 权重 = %d%s", constants.levelLabel(level), weight,
-        system.effect().weight and "" or IDLE_NOTE))
-    afterChange("权重变更")
+        system.effectiveConfig().weight and "" or IDLE_NOTE))
+    scheduler.emit("rates_changed", { why = "权重变更" })
     return true, ""
 end
 
---- 设 T7 增产倍率（只收 T7_BOOST_OPTIONS 里的档位；界面用选项键盘点即提交）
+--- 设 T7 增产倍率（只收档位表里的值）
 -- @param value number|string
 -- @return boolean ok
 -- @return string 说明（失败原因）
@@ -111,9 +108,30 @@ function app.setT7Boost(value)
     if not ok then return false, "写配置失败（settings.txt）：" .. tostring(err) end
 
     logs.system(string.format("T7 增产倍率：×%s%s", tostring(value),
-        system.effect().boost and "" or IDLE_NOTE))
-    afterChange("T7 增产倍率变更")
+        system.effectiveConfig().boost and "" or IDLE_NOTE))
+    scheduler.emit("rates_changed", { why = "T7 增产倍率变更" })
     return true, ""
+end
+
+-- 事件入口：配置类事实 -> 发布 / 审计 / 重排（publish 必须最先）
+
+--- 主模式切换：发布实现整套换掉
+function app.onModeChanged()
+    afterSuggestChange("调度模式切换")
+end
+
+--- 权重 / T7 倍率变化（命令或启动读入两条来源汇到这里）
+function app.onRatesChanged(payload)
+    logs.debug(tostring(payload and payload.why or "速率配置已更新"))
+    -- 生效性门：这两个输入只在速率模式生效；不生效只保存，不动运行时
+    if not system.effectiveConfig().weight then return end
+    afterSuggestChange(payload and payload.why or "权重变化")
+end
+
+--- 阈值约束开关：只影响判定（evaluate），不影响发布输入 -> 忘方案 + 重排
+function app.onEnforceChanged()
+    plan.forget()
+    system.requestPlan("阈值约束切换")
 end
 
 return app

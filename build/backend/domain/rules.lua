@@ -8,7 +8,7 @@ function rules.reserveLine(level)
         * constants.STOCK_PER_PARALLEL
 end
 function rules.lines(level)
-    local rule = state.rules[level]
+    local rule = state.read.rules()[level]
     local user = 0
     if rule and rule.enabled and (rule.threshold or 0) > 0 then
         user = rule.threshold
@@ -26,14 +26,14 @@ function rules.lines(level)
 end
 function rules.materialBlocked(level)
     if level <= 1 then return false end
-    return state.fluids[level - 1] < rules.reserveLine(level)
+    return state.read.fluids()[level - 1] < rules.reserveLine(level)
 end
 function rules.belowThreshold(level)
-    return state.fluids[level] < rules.lines(level).actual
+    return state.read.fluids()[level] < rules.lines(level).actual
 end
 function rules.hasPositiveThreshold()
     for level = 1, state.serviceTop() do
-        local rule = state.rules[level]
+        local rule = state.read.rules()[level]
         if rule and (rule.threshold or 0) > 0 then return true end
     end
     return false

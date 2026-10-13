@@ -1,9 +1,10 @@
 --------------------------------------------------------------------------------
 -- frontend/render.lua
 --------------------------------------------------------------------------------
--- 【职责】前端入口：boot（取 gpu + 可选改分辨率 + 算布局 + 订阅输入）+ frame（每帧：取数据 -> 按指纹重绘）
+-- 【职责】前端入口：boot = setup（gpu/分辨率/布局）+ bindInput（订阅输入）+ frame（每帧：取数据 -> 按指纹重绘）
+--   镜像端只用 setup + renderAll（不加载 input）
 -- 【不做什么】不取业务数据的**判断**（数据经 viewmodel，命令经 input -> api.exec）
--- 【依赖】frontend/{state,theme,layout,viewmodel,input,panels/*}、core/scheduler、shared/config
+-- 【依赖】frontend/{state,theme,layout,panels/*}、core/scheduler、shared/config（viewmodel / input 懒加载）
 -- 【被谁用】main.lua（T8 = runtime 的帧钩子，每帧调 `render.frame()`）；monitor.lua 用 restore/boot 的一部分
 --
 -- 【重绘模型：谁变谁重绘】
@@ -16,8 +17,6 @@
 local fstate        = require("frontend.state")
 local theme         = require("frontend.theme")
 local layout        = require("frontend.layout")
-local viewmodel     = require("frontend.viewmodel")
-local input         = require("frontend.input")
 local CONFIG        = require("shared.config")
 local logs          = require("shared.logs")
 local scheduler     = require("core.scheduler")
@@ -91,19 +90,28 @@ function render.restoreResolution()
     end
 end
 
---- 取 gpu、算布局、订阅输入事件
--- 只订阅 key_down / touch：别的外部事件（component_* 等）与界面无关
-function render.boot()
+--- 取 gpu、按配置调分辨率、算布局（主端与镜像端共用；不接输入）
+function render.setup()
     fstate.gpu = require("component").gpu
     render.applyResolution()
     layout.calculate()
+    fstate.invalidateAll()
+end
 
+--- 订阅输入事件（**只有主端调**；镜像端不加载 input）
+-- 只订阅 key_down / touch：别的外部事件（component_* 等）与界面无关
+function render.bindInput()
+    local input = require("frontend.input") -- 懒加载：镜像端不 require 它，结构上就没有命令出口
     scheduler.on("key_down", function(payload) input.handle("key_down", payload) end)
     scheduler.on("touch", function(payload) input.handle("touch", payload) end)
     -- 分辨率变化：重算布局（否则面板会画到屏幕外）
     scheduler.on("screen_resized", function() layout.calculate() end)
+end
 
-    fstate.invalidateAll()
+--- 主端启动：setup + 接输入
+function render.boot()
+    render.setup()
+    render.bindInput()
 end
 
 --------------------------------------------------------------------------------
@@ -144,8 +152,9 @@ end
 --- 一帧：取数据 -> 重绘（谁变了画谁）
 -- 取数据在前：指纹比较要用这一帧的数据，必须同帧一致
 function render.frame()
-    local data = viewmodel.build()
-    input.attach(data)
+    -- 主端专用：镜像端用自己的收帧循环，不走这里（懒加载 = 镜像端不拉 backend/api）
+    local data = require("frontend.viewmodel").build()
+    require("frontend.input").attach(data)
     render.renderAll()
 end
 

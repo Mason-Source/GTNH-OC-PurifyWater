@@ -99,7 +99,7 @@ local function lines(row, level)
     -- 不做 K/M/G 缩写，写完整值（千分位只为了好读）
     local num      = utils.formatNumber
     -- 没在跑 -> 这些"当前"值是上次运行留下的，标一下（不清零）
-    local stale    = running and "" or "  (上次运行)"
+    local stale    = running and "" or "（上次运行）"
     local liveWatt = running and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_DISABLED
 
     local out      = {}

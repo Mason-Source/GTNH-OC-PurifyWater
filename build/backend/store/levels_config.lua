@@ -52,27 +52,27 @@ function levels_config.load(snapshot)
     local text = fingerprint(rules)
     if text == lastText then return false, "阈值配置未变化" end
     lastText   = text
-    state.rules = rules
+    state.write.setRules(rules)
     return true, string.format("阈值配置已更新（%d 级）", constants.LEVEL_COUNT)
 end
 function levels_config.set(level, threshold, enabled)
-    local current = state.rules[level] or defaultOf(level)
-    state.rules[level] = {
+    local current = state.read.rules()[level] or defaultOf(level)
+    state.write.setRuleLevel(level, {
         threshold = threshold or current.threshold,
         enabled   = (enabled == nil) and current.enabled or (enabled == true)
-    }
+    })
     return levels_config.saveAll()
 end
 function levels_config.saveAll()
     local pairsToSet = {}
     for level = 1, constants.LEVEL_COUNT do
-        local rule = state.rules[level] or defaultOf(level)
+        local rule = state.read.rules()[level] or defaultOf(level)
         pairsToSet[thresholdKey(level)] = math.floor(tonumber(rule.threshold) or 0)
         pairsToSet[enabledKey(level)]   = rule.enabled and "true" or "false"
     end
     local ok, err = settings.setMany(pairsToSet)
     if not ok then return false, err end
-    lastText = fingerprint(state.rules)
+    lastText = fingerprint(state.read.rules())
     return true
 end
 return levels_config

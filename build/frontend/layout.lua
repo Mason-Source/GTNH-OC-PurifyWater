@@ -7,9 +7,9 @@ layout.MIN_CONTROL_H = 11
 layout.MIN_LOG_H     = 6
 layout.STATUS_TWO_H  = 19
 layout.STATUS_ONE_H  = 12
-layout.CONFIG_HEAD_H   = 11
+layout.CONFIG_HEAD_H   = 13
 layout.KEYPAD_H        = 6
-layout.CONFIG_CARD_H   = 18
+layout.CONFIG_CARD_H   = 20
 layout.CARD_GAP        = 1
 layout.SETTINGS_CARD_H = 5
 layout.MIN_CHART_H   = 10
@@ -89,7 +89,7 @@ function layout.calculate()
     fstate.areas.config   = { x = configX, y = bodyY, w = configW, h = configH }
     fstate.areas.keypad   = { x = innerX, y = keypadY, w = innerW, h = keypadH }
     fstate.areas.settings = { x = configX, y = settingsY, w = configW, h = settingsH }
-    logs.debug(string.format("[调试] 布局 控制 %dx%d@%d,%d 状态 %dx%d@%d,%d 图表 %dx%d@%d,%d 日志 %dx%d@%d,%d",
+    logs.debug(string.format("布局 控制 %dx%d@%d,%d 状态 %dx%d@%d,%d 图表 %dx%d@%d,%d 日志 %dx%d@%d,%d",
         fstate.areas.control.w, fstate.areas.control.h, fstate.areas.control.x, fstate.areas.control.y,
         fstate.areas.status.w, fstate.areas.status.h, fstate.areas.status.x, fstate.areas.status.y,
         fstate.areas.chart.w, fstate.areas.chart.h, fstate.areas.chart.x, fstate.areas.chart.y,

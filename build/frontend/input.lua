@@ -5,6 +5,7 @@ local logs      = require("shared.logs")
 local api       = require("backend.api")
 local viewmodel = require("frontend.viewmodel")
 local fstate    = require("frontend.state")
+local viewinput = require("frontend.viewinput")
 local input     = {}
 local function fire(command, ...)
     local ok, text = api.exec(command, ...)
@@ -32,6 +33,16 @@ local function selectCell(level, field)
         fstate.editBuf = nil
     end
 end
+local function selectFactor()
+    local sys = fstate.lastData and fstate.lastData.system
+    fstate.editLevel, fstate.editField = nil, "factor"
+    fstate.editBuf = tostring(math.floor(tonumber(sys and sys.energyFactor) or 100))
+end
+local function selectStrength()
+    local netState = fstate.lastData and fstate.lastData.net
+    fstate.editLevel, fstate.editField = nil, "strength"
+    fstate.editBuf = tostring(math.floor(tonumber(netState and netState.strength) or CONFIG.NET.STRENGTH))
+end
 local function clearEdit()
     fstate.editLevel, fstate.editField, fstate.editBuf = nil, nil, nil
 end
@@ -46,10 +57,11 @@ local function applyCell(level, field)
 end
 local function applyKey(key)
     local field, level = fstate.editField, fstate.editLevel
-    if not field or not level then return end
+    if not field then return end
+    if field ~= "factor" and field ~= "strength" and not level then return end
     local kind = key.kind
     if kind == "cancel" then
-        logs.debug("[调试] 退出编辑（用户点了 ✘）")
+        logs.debug("退出编辑（✘）")
         clearEdit()
         return
     end
@@ -61,12 +73,16 @@ local function applyKey(key)
         return
     end
     local isThreshold = (field == "threshold")
+    local isFactor    = (field == "factor")
+    local isStrength  = (field == "strength")
     local limit       = isThreshold and (CONFIG.UI.MAX_THRESHOLD_KILO or 100000000000000)
+        or isFactor and CONFIG.ENERGY.FACTOR_MAX
+        or isStrength and CONFIG.NET.STRENGTH_MAX
         or (CONFIG.RATES.MAX_WEIGHT or 100)
     if kind == "commit" then
         local value = tonumber(fstate.editBuf or "")
         if not value then
-            logs.ui("还没填数字，未保存")
+            logs.ui("未填数字，未保存")
             return
         end
         if isThreshold then
@@ -75,6 +91,19 @@ local function applyKey(key)
                 return
             end
             fire("level_rules_set", level, value * 1000, nil)
+        elseif isFactor then
+            if value < CONFIG.ENERGY.FACTOR_MIN or value > limit then
+                logs.ui(string.format("利用因子需为 %d-%d 的整数，未保存",
+                    CONFIG.ENERGY.FACTOR_MIN, limit))
+                return
+            end
+            fire("energy_factor_set", value)
+        elseif isStrength then
+            if value < 0 or value > limit then
+                logs.ui(string.format("无线范围需为 0-%d 的整数（方块），未保存", limit))
+                return
+            end
+            fire("net_strength_set", value) 
         else
             if value < 0 or value > limit then
                 logs.ui(string.format("权重需为 0-%d 的整数，未保存", limit))
@@ -105,9 +134,14 @@ local function applyKey(key)
     end
     if buf ~= "" then
         local value = tonumber(buf)
-        if not value or value >= limit then
-            logs.ui(isThreshold and "超过上限（≥ 1e14 kL），这一下没生效"
-                or string.format("权重上限 %d，这一下没生效", limit))
+        local over
+        if not value then over = true
+        elseif isThreshold then over = (value >= limit)
+        else over = (value > limit) end
+        if over then
+            local name = isFactor and "利用因子" or isStrength and "无线范围" or "权重"
+            logs.ui(isThreshold and "超过上限（≥ 1e14 kL），未生效"
+                or string.format("%s上限 %d，未生效", name, limit))
             return
         end
     end
@@ -144,28 +178,14 @@ local function onClick(x, y)
             return
         end
     end
-    if fstate.currentTab == "overview" and fstate.hit(fstate.areas.status, x, y) then
-        if fstate.detailLevel then
-            fstate.detailLevel = nil
-        else
-            for level, box in pairs(fstate.levelRows or {}) do
-                if fstate.hit(box, x, y) then
-                    fstate.detailLevel = level
-                    break
-                end
-            end
-        end
-        return
-    end
+    if viewinput.statusArea(x, y) then return end
     if fstate.hit(fstate.logTitle, x, y) then
         fire("log_level_toggle")
         return
     end
-    for level, box in pairs(fstate.chartChips or {}) do
-        if fstate.hit(box, x, y) then
-            setChartLevel(level)
-            return
-        end
+    if viewinput.chartChip(x, y) then
+        viewmodel.expire()
+        return
     end
     if fstate.currentTab == "config" then
         for _, box in ipairs(fstate.keys or {}) do
@@ -173,6 +193,14 @@ local function onClick(x, y)
                 applyKey(box)
                 return
             end
+        end
+        if fstate.hit(fstate.strengthCell, x, y) then
+            selectStrength()
+            return
+        end
+        if fstate.hit(fstate.factorCell, x, y) then
+            selectFactor()
+            return
         end
         if fstate.hit(fstate.autostartRow, x, y) then
             fire("autostart_toggle")

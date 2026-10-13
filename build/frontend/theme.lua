@@ -5,6 +5,7 @@ theme.COLORS     = {
     BORDER_ALERT      = 0x991b1b,
     TEXT              = 0xe2e8f0,
     TEXT_CYAN         = 0x38bdf8,
+    TEXT_VIOLET       = 0xa78bfa,
     TEXT_GREEN        = 0x22c55e,
     TEXT_YELLOW       = 0xf59e0b,
     TEXT_RED          = 0xef4444,
@@ -56,17 +57,17 @@ end
 function theme.borderColor(highFirst)
     return highFirst and theme.COLORS.BORDER_ALERT or theme.COLORS.BORDER
 end
-function theme.systemStatus(system, hardware)
-    local missing = hardware and hardware.missing or {}
-    if #missing > 0 then
-        return "硬件缺失", theme.COLORS.TEXT_RED
-    end
-    if system.locked then
-        return "已锁定", theme.COLORS.TEXT_RED
-    end
+function theme.systemStatus(system, hardware, host)
     if system.running then
         return "自动调度中", theme.COLORS.TEXT_GREEN
     end
-    return "已停机", theme.COLORS.TEXT_YELLOW
+    local missing = (hardware and hardware.missing) or {}
+    if #missing > 0 or ((host or {}).switch == false) then
+        return "硬件未就绪", theme.COLORS.TEXT_RED
+    end
+    if system.awaiting then
+        return "等待用户处理", theme.COLORS.TEXT_YELLOW
+    end
+    return "停机待启动", theme.COLORS.TEXT_DISABLED
 end
 return theme

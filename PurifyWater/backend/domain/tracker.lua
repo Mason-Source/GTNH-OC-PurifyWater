@@ -1,28 +1,18 @@
 --------------------------------------------------------------------------------
 -- backend/domain/tracker.lua
 --------------------------------------------------------------------------------
--- 【职责】并行"采样 -> 可信"的唯一判定：同一个值**连续 N 个运行周期**才算数
+-- 【职责】并行采样 -> 可信的唯一判定：连续 N 个运行周期同值
 -- 【不做什么】不写学习值（那是 domain/learning）、不算功率（那是 domain/power）
 -- 【依赖】shared/config、shared/state
 -- 【被谁用】backend/app/watch（parallel_sample 事件）
 --
--- 【按运行周期确认】并行 = "这台机器在一个完整配方里能吃多少水"，周期内恒定、只在周期之间变
---   （刚启动 / 刚改并行时会吐过渡值），所以"连续 N 个**周期**同值"才算稳定；
---   按秒数数（连续 3 次采样 = 15 秒）可能只落在一个周期里。
+-- 并行在配方周期内恒定、周期之间变：连续 N 个周期同值才稳定。
+-- 周期边界 = 进度回落；进度读不到 = 异常：不结算、不猜周期，等恢复。
+-- 周期值取该周期最后一次读数。
 --
--- 【周期边界】`getWorkProgress` **回落**（本次 < 上次）即新周期开始；单元空闲时进度为 0、
---   周期末回落（见 hardware/probes）。读不到进度时退化为"每 N 次采样算一个周期"
---   （CONFIG.PARALLEL_FALLBACK_SAMPLES），仍能收敛。
---
--- 【周期值取哪一个】取该周期内**最后一次**读到的并行（周期内值恒定，最后一次最接近周期末真值）。
---
--- 【状态】state.tracker[address] = { progress, cycleValue, value, streak, samples, confirmed }
---   progress   上次看到的进度（判断回落用）
---   cycleValue 本周期内最后一次读到的并行（周期结算时作为"这个周期的值"）
---   value      上一个周期结算下来的值（连续比较的基准）
---   streak     已经连续多少个周期同值
---   samples    读不到进度时的采样计数（退化口径用）
---   confirmed  **这台机器被确认过的学习并行**（连续 N 周期同值那一刻记下；详情页逐台展示用）
+-- tracker[address] = { progress, cycleValue, value, streak, confirmed }
+--   progress 上次进度；cycleValue 本周期最后读数；value 上周期结算值；streak 连续同值数；
+--   confirmed 已确认学习并行（详情页逐台展示）。
 --------------------------------------------------------------------------------
 
 local CONFIG  = require("shared.config")
@@ -39,7 +29,7 @@ end
 --- 喂一个采样
 -- @param address string 机器地址
 -- @param value number 本次读到的并行
--- @param progress number|nil 本次读到的运行进度（判断周期边界；nil = 读不到）
+-- @param progress number|nil 本次进度（判周期边界；nil = 读取失败）
 -- @return string "write"|"discard"
 -- @return string why 说明（写日志用）
 function tracker.feed(address, value, progress)
@@ -48,69 +38,63 @@ function tracker.feed(address, value, progress)
         return "discard", "并行读数无效"
     end
 
-    local t = state.tracker[address]
+    local t = state.read.tracker()[address]
     if not t then
-        -- 首读：只记下本周期代表值，等第一个周期结束（那时才有"一个完整周期"可结算）
-        state.tracker[address] = {
+        -- 首读：记代表值，等首周期结束
+        state.write.trackerSet(address, {
             progress   = tonumber(progress),
-            cycleValue = value,
-            samples    = 1
-        }
-        return "discard", string.format("首读 %d（等第 1 个运行周期结束）", value)
+            cycleValue = value
+        })
+        return "discard", string.format("首读 %d（待首周期结束）", value)
     end
 
-    t.cycleValue = value -- 本周期内以"最后一次读到的值"为该周期的值
+    t.cycleValue = value -- 本周期最后读数
 
-    -- ① 这个周期结束了没？进度回落算结束；读不到进度就按采样次数退化
+    -- ① 周期结束？进度回落算结束。读不到进度 = 异常：不结算（等恢复，不猜周期）
+    if type(progress) ~= "number" then
+        return "discard", "进度不可读（不结算）"
+    end
     local closed = false
-    if type(progress) == "number" and type(t.progress) == "number" then
-        if progress < t.progress then closed = true end
-        t.progress = progress
-    else
-        t.samples = (t.samples or 0) + 1
-        if t.samples >= math.max(1, CONFIG.PARALLEL_FALLBACK_SAMPLES or 24) then
-            t.samples = 0
-            closed    = true
-        end
-    end
+    if type(t.progress) == "number" and progress < t.progress then closed = true end
+    t.progress = progress
     if not closed then
-        return "discard", string.format("本周期读到 %d（等周期结束）", value)
+        return "discard", string.format("本周期读到 %d（周期未结束）", value)
     end
 
-    -- ② 周期结算：连续几个周期是同值？
+    -- ② 周期结算：连续同值？
     if t.value == value then
         t.streak = (t.streak or 0) + 1
     else
         t.value, t.streak = value, 1
     end
     if t.streak >= limit() then
-        -- 确认过就不再每轮重复写盘；下次真的变了再重新数
+        -- 已确认；下次变再数
         t.streak    = 0
-        -- 【留一份逐台确认值】详情页要看"每台机器分别"的学习并行，所以这里留一份。
+        -- 逐台确认值（详情页展示）
         t.confirmed = value
         return "write", string.format("连续 %d 个运行周期均为 %d", limit(), value)
     end
     return "discard", string.format("周期值 %d（%d/%d 个周期）", value, t.streak, limit())
 end
 
---- 复位某台机器（开关变化 / 停机时报的读数不算数）
+--- 复位单台（开关变化/停机时读数无效）
 -- @param address string
 function tracker.reset(address)
-    state.tracker[address] = nil
+    state.write.trackerDelete(address)
 end
 
---- 忘掉一批机器（机器增删、开关变化时调用）
+--- 清一批机器（增删/开关变化时调用）
 -- @param list table 机器表数组（{address=...}）或地址数组
 function tracker.clear(list)
     for _, item in ipairs(list or {}) do
         local address = (type(item) == "table") and item.address or item
-        if address then state.tracker[address] = nil end
+        if address then state.write.trackerDelete(address) end
     end
 end
 
 --- 全清（硬件变更、系统停机时用）
 function tracker.resetAll()
-    state.tracker = {}
+    state.write.trackerReset()
 end
 
 return tracker

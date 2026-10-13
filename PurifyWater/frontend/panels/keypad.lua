@@ -1,19 +1,13 @@
 --------------------------------------------------------------------------------
 -- frontend/panels/keypad.lua
 --------------------------------------------------------------------------------
--- 【职责】配置页「调度配置」卡内的**固定键盘槽**：按选中的列换成那一列自己的键盘
---   threshold -> 三段键盘（数字 / 倍数 / 档位 + =上级）
---   weight    -> 数字 + ← / C / ✔ / ✘
---   boost     -> 选项键盘（1 / 1.25 / 1.5 / 1.75 / 2，当前档高亮，点即提交）
---   （勾选不走这里：表格里点一下那个格子就直接切换开关，见 frontend/input.applyCell）
--- 【不做什么】不画表格（panels/config）、不碰后端（提交在 input）、不判断业务
+-- 【职责】调度配置卡内的固定键盘槽：按选中列换键盘
+--   threshold = 三段键盘；weight = 数字；boost = 选项键盘；勾选不走这里。
+-- 【不做什么】不画表格（panels/config）、不碰后端
 -- 【依赖】unicode、frontend/{state,theme,widgets}
 -- 【被谁用】frontend/render
 --
--- 【为什么固定槽】键盘换样子但**位置不动**：点哪一格都在同一片按键区操作，鼠标不用追着格子跑。
---   槽内第一行永远是"正在改什么 / 怎么用"的提示；键在剩下的行里垂直居中。
--- 【单位 kL】缓冲是**纯数字串**（不带逗号、不带单位）；单位只在表格表头写一次。
--- 【关键位】数字键 / 倍数键 / 档位直选 / =上级（抄上一级）/ ← 退格 / C 清空 / ✔ 确定 / ✘ 取消。
+-- 固定槽位置不动；槽首行为提示。缓冲为纯数字串，单位只在表头。
 --------------------------------------------------------------------------------
 
 local unicode = require("unicode")
@@ -22,6 +16,7 @@ local fstate  = require("frontend.state")
 local theme   = require("frontend.theme")
 local widgets = require("frontend.widgets")
 
+local CONFIG    = require("shared.config")
 local constants = require("shared.constants")
 
 local keypad  = {}
@@ -33,7 +28,7 @@ local SEP     = 3  -- 阈值键盘的段间空隙（含那条竖线）
 local OPT_W   = 10 -- 选项键宽（"×1.25" 这类档位都放得下）
 
 -- 阈值键盘：三段键盘，行 × 列，每键 = { 显示文本, 语义 kind, 参数 value }
--- 【kind 的语义在 input.applyKey】这里只管"长什么样、点在哪儿"
+-- kind 语义在 input.applyKey；这里只管长相与位置
 local DIGITS  = {
     { { "7", "digit", "7" }, { "8", "digit", "8" }, { "9", "digit", "9" } },
     { { "4", "digit", "4" }, { "5", "digit", "5" }, { "6", "digit", "6" } },
@@ -59,7 +54,7 @@ local WEIGHTS = {
     { { "6", "digit", "6" }, { "7", "digit", "7" }, { "8", "digit", "8" }, { "9", "digit", "9" }, { "0", "digit", "0" } },
     { { "←", "back", "" }, { "C", "clear", "" }, { "✔", "commit", "" }, { "✘", "cancel", "" } }
 }
---- 一张键盘表要占多宽（不画，先量）
+--- 键盘表宽度（不画先量）
 -- @param rows table 行 × 列
 -- @return number
 local function padWidth(rows)
@@ -68,7 +63,7 @@ local function padWidth(rows)
     return cols * (KEY_W + KEY_GAP) - KEY_GAP
 end
 
---- 这个键现在能不能按：都要先选中对应列；"抄上级"还要真的有上一级
+--- 键是否可点：需先选中列；抄上级需有上一级
 -- @param field string 正在改的列
 -- @param kind string 键的语义
 -- @return boolean
@@ -78,9 +73,8 @@ local function keyEnabled(kind)
     return true
 end
 
---- 画一张键盘表并登记热区
--- 【列数按满格算，不按每行自己的长度】表里允许有 nil 空位（数字键盘的 "0" 就靠空位居中），
---   带洞的行 `#row` 是不确定的（Lua 只保证返回某个边界）—— 所以一律扫到 cols。
+--- 画键盘表并登记热区
+-- 列数按满格算（含 nil 空位；带洞行 #row 不可靠），一律扫到 cols。
 -- @param x, y number 左上角
 -- @param rows table 行 × 列（行里可以有 nil 空位）
 -- @param shift table|nil 可选：`shift[r]` = 这一行额外右移的列数（列数不足的行想居中时用）
@@ -123,7 +117,7 @@ local function drawOptions(x, y, w, options)
         }
     end
 end
---- 档位文本：整数不带小数点（1 / 1.25 / 1.5 / 1.75 / 2）
+--- 档位文本：整数不带小数点
 -- @param value number
 -- @return string
 local function numberText(value)
@@ -132,7 +126,7 @@ local function numberText(value)
     return string.format("%g", value)
 end
 
---- 槽内第一行的提示：正在改什么 / 没选中时怎么用
+--- 槽内第一行提示
 -- @param data table viewmodel 数据（取等级名与当前档位）
 -- @return string
 -- @return number 颜色
@@ -140,16 +134,24 @@ local function hintText(data)
     local field = fstate.editField
     local label = "T" .. tostring(fstate.editLevel or "")
     if field == "threshold" then
-        return string.format("正在改 %s 阈值（kL）：%s_   ✔ 保存，✘ 取消", label, fstate.editBuf or ""),
+        return string.format("正在编辑 %s 阈值（kL）：%s_   ✔ 保存 · ✘ 取消", label, fstate.editBuf or ""),
             theme.COLORS.TEXT_YELLOW
     elseif field == "weight" then
-        return string.format("正在改 %s 权重：%s_   ✔ 保存，✘ 取消", label, fstate.editBuf or ""),
+        return string.format("正在编辑 %s 权重：%s_   ✔ 保存 · ✘ 取消", label, fstate.editBuf or ""),
             theme.COLORS.TEXT_YELLOW
     elseif field == "boost" then
-        return string.format("正在改 T7 增产倍率（当前 ×%s）：点下面任意一档即生效",
+        return string.format("正在编辑 T7 增产倍率（当前 ×%s）：点击切换档位",
             numberText((data and data.system or {}).t7Boost)), theme.COLORS.TEXT_YELLOW
+    elseif field == "factor" then
+        return string.format("正在编辑 能源仓利用因子（%d-%d%%）：%s_   ✔ 保存 · ✘ 取消",
+            CONFIG.ENERGY.FACTOR_MIN, CONFIG.ENERGY.FACTOR_MAX, fstate.editBuf or ""),
+            theme.COLORS.TEXT_YELLOW
+    elseif field == "strength" then
+        return string.format("正在编辑 无线范围（方块，上限 %d）：%s_   ✔ 保存 · ✘ 取消",
+            CONFIG.NET.STRENGTH_MAX, fstate.editBuf or ""),
+            theme.COLORS.TEXT_YELLOW
     end
-    return "点表格里任意一格选中，再用这里的键盘改（勾选格点一下就是切换）", theme.COLORS.TEXT_DISABLED
+    return "选中后编辑；勾选切换", theme.COLORS.TEXT_DISABLED
 end
 
 --- 画键盘槽：提示行 + 当前列自己的键盘（键在剩下的行里垂直居中）
@@ -189,9 +191,10 @@ function keypad.draw(data)
             widgets.drawText(xC + math.floor(SEP / 2), ky + r, "│", theme.CHART_AXIS)
         end
         drawPad(xC + SEP, ky, PRESETS)
-    elseif fstate.editField == "weight" then
+    elseif fstate.editField == "weight" or fstate.editField == "factor"
+        or fstate.editField == "strength" then
         local kx = area.x + math.max(0, math.floor((area.w - padWidth(WEIGHTS)) / 2))
-        -- 最后一行只有 4 个键：整排右移半格，看起来才是居中的
+        -- 末行 4 键：右移半格居中
         drawPad(kx, slotY(#WEIGHTS), WEIGHTS, { [3] = math.floor((KEY_W + KEY_GAP) / 2) })
     elseif fstate.editField == "boost" then
         local current = tonumber((data and data.system or {}).t7Boost) or 1
@@ -206,8 +209,7 @@ function keypad.draw(data)
     end
 end
 
---- 指纹：槽尺寸 + 选中（列 / 级 / 缓冲）+ 选中那一行现在的值 + T7 档位
--- 值进指纹是因为选项键盘"当前档高亮"要跟着数据走（档位在别处改了也得重画）。
+--- 指纹：槽尺寸 + 选中态 + 行值 + T7 档位
 -- @param data table
 -- @return string
 function keypad.fingerprint(data)
