@@ -24,7 +24,8 @@ local otherReg        = {}
 -- 能量仓机器名特征（公式见 energy.lua）
 local ENERGY_PATTERNS = {
     "hatch.energytunnel", "hatch.energywirelesstunnel",
-    "hatch.energymulti", "hatch.energywirelessmulti"
+    "hatch.energymulti", "hatch.energywirelessmulti",
+    "wirelessenergyhatch"
 }
 
 --- 是否能量仓（按机器名）

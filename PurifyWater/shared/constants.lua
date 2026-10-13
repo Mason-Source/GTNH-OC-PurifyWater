@@ -96,7 +96,6 @@ constants.LEVEL_NAMES             = {
 }
 
 -- ---- 电压档（GT EU/t） ----
--- 档位电压表（暂无人引用，保留备查）。
 constants.VOLTAGE_TIERS           = {
     { name = "ULV", eu = 8 }, { name = "LV", eu = 32 },
     { name = "MV",  eu = 128 }, { name = "HV", eu = 512 },
