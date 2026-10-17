@@ -70,6 +70,11 @@ function logs.append(text, level)
         buf[#buf + 1] = line
         while #buf > maxLines do table.remove(buf, 1) end
     end
+    local cur = buffers[currentLevel]
+    if cur and cur ~= buf and visible(lv) then
+        cur[#cur + 1] = line
+        while #cur > maxLines do table.remove(cur, 1) end
+    end
     if not visible(level) then return end
     pending[#pending + 1] = line
     pushed = pushed + 1

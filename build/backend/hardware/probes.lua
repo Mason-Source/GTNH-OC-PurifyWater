@@ -22,4 +22,9 @@ function probes.sensor(address)
     if type(lines) ~= "table" then return nil, err or "传感器无数据" end
     return gtInfodata.parse(lines), nil
 end
+function probes.sensorLines(address)
+    local lines, err = device.invoke(address, "getSensorInformation")
+    if type(lines) ~= "table" then return nil, err or "传感器无数据" end
+    return lines, nil
+end
 return probes

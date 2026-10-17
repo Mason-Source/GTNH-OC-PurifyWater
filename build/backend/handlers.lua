@@ -2,6 +2,7 @@ local scheduler = require("core.scheduler")
 local watch     = require("backend.app.watch")
 local system    = require("backend.app.system")
 local rates     = require("backend.app.rates")
+local produceApp = require("backend.app.produce")
 local handlers  = {}
 function handlers.subscribe()
     scheduler.on("hardware_missing", system.onHardwareMissing)
@@ -18,7 +19,9 @@ function handlers.subscribe()
     scheduler.on("parallel_write", system.onParallelWrite)
     scheduler.on("switch_mismatch", system.onSwitchMismatch)
     scheduler.on("rules_audit", system.auditThresholds)
+    scheduler.on("produce_changed", system.onProduceChanged)
+    scheduler.on("produce_cycle", produceApp.onCycleStarted)
     scheduler.on("schedule_now", system.onScheduleRequest)
-    return 15
+    return 17
 end
 return handlers

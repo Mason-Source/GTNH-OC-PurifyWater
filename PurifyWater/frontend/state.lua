@@ -37,6 +37,8 @@ local fstate = {
     -- 配置页「调度配置」大表：点某一格选中 -> 表格下方的固定键盘槽换成那一列自己的键盘
     cells          = {},                       -- 每格热区 { [level] = { enabled=, threshold=, weight=, boost= } }
     keys           = {},                       -- 键盘槽热区（数组；每项带 kind/value，语义在 input）
+    produceHits    = {},                       -- 制作自动化面板热区（数组；每项带 act/…，语义在 input）
+    producePage    = 1,                        -- 制作自动化面板的机器翻页（前端本地状态）
     editLevel      = nil,                      -- 选中的等级（1..8；nil = 未选中）
     editField      = nil,                      -- 选中的列（"threshold" / "weight" / "boost"；勾选不走选中）
     editBuf        = nil,                      -- 数字列的输入缓冲（纯数字串；选项列用不着）
@@ -78,7 +80,7 @@ end
 --- 清空所有热区（布局变化时必须清，否则会点到旧坐标）
 function fstate.clearHitboxes()
     fstate.buttons, fstate.tabs, fstate.chartChips = {}, {}, {}
-    fstate.cells, fstate.keys = {}, {}
+    fstate.cells, fstate.keys, fstate.produceHits = {}, {}, {}
     fstate.levelRows = {}
     fstate.logTitle = nil
     fstate.autostartRow = nil

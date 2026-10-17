@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- backend/hardware/machines.lua
 --------------------------------------------------------------------------------
--- 【职责】T0-8 机器注册表：把 device 收集的地址按 getName() 归类，分出能量仓
+-- 【职责】T0-8 机器注册表：把 device 收集的地址按 getName() 归类（缓存坐标），分出能量仓
 -- 【不做什么】不读开关/活动/传感器（那是 probes）；不判断业务
 -- 【依赖】shared/constants、hardware/device
 -- 【被谁用】hardware/energy、backend/jobs(T1/T3)、store/inventory、frontend（详情页）
@@ -49,18 +49,21 @@ function machines.classify()
     for _, address in ipairs(device.machines()) do
         local name = device.name(address)
         if name then
+            -- 坐标一起缓存（界面"机器不写地址写坐标"；拿不到时为 nil）
+            local x, y, z = device.coordinates(address)
+            local item = { address = address, name = name, x = x, y = y, z = z }
             local level = constants.MACHINE_NAMES[name]
             if level then
-                reg[level][#reg[level] + 1] = { address = address, name = name }
+                reg[level][#reg[level] + 1] = item
             elseif isEnergy(name) then
                 -- 单仓：只认第一台，其余入其它
                 if energyItem then
-                    otherReg[#otherReg + 1] = { address = address, name = name }
+                    otherReg[#otherReg + 1] = item
                 else
-                    energyItem = { address = address, name = name }
+                    energyItem = item
                 end
             else
-                otherReg[#otherReg + 1] = { address = address, name = name }
+                otherReg[#otherReg + 1] = item
             end
         end
     end

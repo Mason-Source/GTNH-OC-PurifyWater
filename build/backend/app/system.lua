@@ -197,6 +197,9 @@ end
 function system.onScheduleRequest(payload)
     system.requestPlan(payload and payload.reason or "事件")
 end
+function system.onProduceChanged(payload)
+    system.requestPlan(payload and payload.reason or "制作自动化变化")
+end
 function system.toggle(reason)
     if state.read.running() then
         system.stop(reason or "手动")

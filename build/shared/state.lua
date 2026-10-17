@@ -9,7 +9,8 @@ local F = {
     plan    = { suggest = {}, lastPlan = {}, notes = {}, budget = 0 },
     chart   = { points = {} },
     net     = { enabled = false, frame = 0, warned = nil },
-    tracker = {}
+    tracker = {},
+    produce = { cycle = { lastProgress = nil, seq = 0 }, levels = {}, subs = {}, binds = {}, binding = nil, online = {} }
 }
 local state = {}
 local read  = {}
@@ -50,6 +51,15 @@ function read.budget()   return F.plan.budget or 0 end
 function read.chart()    return F.chart end
 function read.net()      return F.net end
 function read.tracker()  return F.tracker end
+function read.produce() return F.produce end
+function read.produceLevel(level)
+    local l = F.produce.levels[level]
+    if not l then
+        l = { enabled = false, valid = false, validReason = "无扫描结果" }
+        F.produce.levels[level] = l
+    end
+    return l
+end
 function read.serviceTop()
     local top = 0
     for level = 1, constants.LEVEL_COUNT do
@@ -141,6 +151,28 @@ function write.netSetWarned(v)  F.net.warned = v end
 function write.trackerSet(address, t) F.tracker[address] = t end
 function write.trackerDelete(address) F.tracker[address] = nil end
 function write.trackerReset()         F.tracker = {} end
+function write.produceSetLevel(level, fields)
+    local entry = read.produceLevel(level)
+    for key, value in pairs(fields or {}) do entry[key] = value end
+end
+function write.produceSetSubs(t) F.produce.subs = t or {} end
+function write.produceSetSub(addr, fields)
+    local sub = F.produce.subs[addr]
+    if not sub then return end
+    for key, value in pairs(fields or {}) do sub[key] = value end
+end
+function write.produceSetCycle(fields)
+    local cycle = F.produce.cycle
+    for key, value in pairs(fields or {}) do cycle[key] = value end
+end
+function write.produceSetBinds(list) F.produce.binds = list or {} end
+function write.produceSetBinding(binding) F.produce.binding = binding end
+function write.produceSetOnlineAll(map) F.produce.online = map or {} end
+function write.produceClearSides(machine)
+    local sub = F.produce.subs[machine]
+    if not sub then return end
+    sub.sides, sub.sideFail = nil, nil
+end
 state.read           = read
 state.write          = write
 state.serviceTop     = read.serviceTop

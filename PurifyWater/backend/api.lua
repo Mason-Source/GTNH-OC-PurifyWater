@@ -27,6 +27,7 @@ local autostart     = require("backend.app.autostart")
 local ratesApp      = require("backend.app.rates")
 local energyApp    = require("backend.app.energy")
 local netApp       = require("backend.app.net")
+local produceApp   = require("backend.app.produce")
 local power         = require("backend.domain.power")
 local rules         = require("backend.domain.rules")
 
@@ -120,6 +121,12 @@ function api.read.levels()
         }
     end
     return out
+end
+
+--- 制作自动化（配置表那一列的只读来源；不进无线快照）
+-- @return table { levels = { [n] = { enabled, state, reason, subs, ready } } }
+function api.read.produce()
+    return produceApp.read()
 end
 
 --- 功率（全厂可用 / 本轮已用）
@@ -295,6 +302,39 @@ COMMANDS.level_enabled_set = function(level, enabled)
     end
     if type(enabled) ~= "boolean" then return false, "勾选值无效" end
     return COMMANDS.level_rules_set(level, nil, enabled)
+end
+
+--- 切制作自动化开关（该级；开启前后端会跑静态检查）
+-- @param level number
+-- @param enabled boolean
+COMMANDS.level_produce_set = function(level, enabled)
+    local ok, text = produceApp.setEnabled(level, enabled)
+    if not ok then return false, text end
+    return true, ""
+end
+
+--- 开始绑定：选中的机器 + "随后出现的新转运器" 绑定（绑定中再放转运器）
+-- @param level number
+-- @param machine string 机器组件地址
+COMMANDS.produce_bind_begin = function(level, machine)
+    local ok, text = produceApp.beginBind(level, machine)
+    if not ok then return false, text end
+    return true, ""
+end
+
+--- 取消"绑定中"
+COMMANDS.produce_bind_cancel = function()
+    local ok, text = produceApp.cancelBind()
+    if not ok then return false, text end
+    return true, ""
+end
+
+--- 解绑某台机器（删绑定表里那一行）
+-- @param machine string 机器组件地址
+COMMANDS.produce_unbind = function(machine)
+    local ok, text = produceApp.unbind(machine)
+    if not ok then return false, text end
+    return true, ""
 end
 
 --- 切广播开关：内存 + settings.txt（重启保持）

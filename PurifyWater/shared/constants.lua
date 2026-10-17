@@ -16,6 +16,8 @@ constants.CODE_VERSION            = "v4.7"
 -- 等级：1~8 净水单元；0 = 净水主机
 constants.LEVEL_COUNT             = 8
 constants.HOST_LEVEL              = 0
+constants.T3_LEVEL                = 3    -- 絮凝单元
+constants.T4_LEVEL                = 4    -- pH 调节单元
 constants.T7_LEVEL                = 7    -- 支持增产的等级
 
 -- ---- 水位/并行 ----

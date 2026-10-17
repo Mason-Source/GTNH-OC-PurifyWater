@@ -4,7 +4,8 @@ CONFIG.FILES                     = {
     HARDWARE = "data/hardware.txt", 
     HISTORY  = "data/history.dat",  
     LOG      = "data/log.txt",      
-    TRACE    = "data/last_run.txt"  
+    TRACE    = "data/last_run.txt", 
+    PRODUCE  = "data/produce.txt"   
 }
 CONFIG.INTERVAL                  = {
     HARDWARE  = 10,
@@ -13,7 +14,9 @@ CONFIG.INTERVAL                  = {
     SCHEDULE  = 5,
     PERSIST   = 30,
     SAMPLE    = 1,
-    BROADCAST = 1
+    BROADCAST = 1,
+    PRODUCE   = 1,
+    PRODUCE_FEED = 0.05
 }
 CONFIG.UI                        = {
     MAX_THRESHOLD_KILO   = 100000000000000,
@@ -49,6 +52,10 @@ CONFIG.RATES                     = {
     MAX_WEIGHT       = 100,
     DEFAULT_T7_BOOST = 1,
     ZERO_MARGIN      = 0.05
+}
+CONFIG.PRODUCE                   = {
+    CHUNK_RATIO  = 0.05,
+    CYCLE_CUTOFF = 0.9
 }
 CONFIG.ENERGY                    = {
     FACTOR_KEY     = "energy_factor", 

@@ -10,9 +10,10 @@ local COLS      = {
     { key = "enabled", head = "勾选" },
     { key = "threshold", head = "阈值 kL", align = "right" },
     { key = "weight", head = "权重", align = "right" },
-    { key = "boost", head = "增产", align = "right" }
+    { key = "boost", head = "增产", align = "right" },
+    { key = "produce", head = "制作自动化", align = "right" }
 }
-local COL_W     = { 0.12, 0.12, 0.38, 0.20, 0.18 }
+local COL_W     = { 0.10, 0.12, 0.26, 0.16, 0.18, 0.18 }
 local function numberText(value)
     value = tonumber(value) or 0
     if value == math.floor(value) then return string.format("%d", value) end
@@ -56,6 +57,9 @@ function config.draw(data)
             widgets.drawText(cols[index].x, area.y + 3, col.head, theme.COLORS.TEXT_DISABLED)
         end
     end
+    widgets.clearArea(inner.x, area.y + layout.CONFIG_HEAD_H, inner.w, layout.CONFIG_SEP_H)
+    widgets.drawText(inner.x, area.y + layout.CONFIG_HEAD_H,
+        string.rep("─", inner.w), theme.CHART_AXIS)
     local selCol = nil
     for index, col in ipairs(COLS) do
         if col.key and col.key == fstate.editField then selCol = index end
@@ -67,7 +71,9 @@ function config.draw(data)
         if y > area.y + area.h - 2 then break end
         local sel  = (fstate.editLevel == level)
         local fp   = table.concat({
-            row.label, tostring(row.rule.enabled), tostring(row.rule.threshold),
+            row.label, tostring(row.rule.enabled), tostring(row.produceEnabled),
+            tostring(row.produceText or "-"),
+            tostring(row.rule.threshold),
             tostring(row.weight), tostring(row.thresholdOverridden),
             tostring(sys.t7Boost), tostring(sys.mode), tostring(sys.enforceThreshold),
             tostring(sel), tostring(sel and fstate.editField or ""),
@@ -107,13 +113,15 @@ function config.draw(data)
                 or ((sel and fstate.editField == "boost") and theme.COLORS.TEXT_YELLOW
                     or (eff.boost and theme.COLORS.TEXT or theme.COLORS.TEXT_DISABLED))
             widgets.drawTextRight(cols[5].x, cols[5].w, y, bText, bColor, cellBg(5))
+            widgets.drawTextRight(cols[6].x, cols[6].w, y, row.produceText or "未就绪", row.produceColor, cellBg(6))
         end
         fstate.cells[level] = {
             enabled   = { x = cols[2].x, y = y, w = cols[2].w, h = 1 },
             threshold = { x = cols[3].x, y = y, w = cols[3].w, h = 1 },
             weight    = { x = cols[4].x, y = y, w = cols[4].w, h = 1 },
             boost     = (level == constants.T7_LEVEL)
-                and { x = cols[5].x, y = y, w = cols[5].w, h = 1 } or nil
+                and { x = cols[5].x, y = y, w = cols[5].w, h = 1 } or nil,
+            produce   = row.produceClickable and { x = cols[6].x, y = y, w = cols[6].w, h = 1 } or nil
         }
     end
 end
@@ -133,8 +141,9 @@ function config.fingerprint(data)
     for level = 1, constants.LEVEL_COUNT do
         local row         = data.levels[level]
         parts[#parts + 1] = table.concat({
-            row.label, tostring(row.rule.enabled), tostring(row.rule.threshold),
-            tostring(row.weight), tostring(row.thresholdOverridden)
+            row.label, tostring(row.rule.enabled), tostring(row.produceEnabled),
+            tostring(row.produceText or "-"),
+            tostring(row.rule.threshold), tostring(row.weight), tostring(row.thresholdOverridden)
         }, ":")
     end
     return table.concat(parts, "\x1f")

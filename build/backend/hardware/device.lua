@@ -57,11 +57,29 @@ end
 function device.machines()
     return machineAddrs
 end
+function device.scanTransposers()
+    local out = {}
+    for address in component.list("transposer") do out[#out + 1] = address end
+    return out
+end
+function device.isTransposerOnline(address)
+    if not address or address == "" then return false end
+    local ok, ctype = pcall(component.type, address)
+    return ok and ctype == "transposer"
+end
 function device.name(address)
     if not address then return nil end
     local name = device.invoke(address, "getName")
     if type(name) == "string" and name ~= "" then return name end
     return nil
+end
+function device.coordinates(address)
+    if not address then return nil, nil, nil end
+    local ok, x, y, z = pcall(component.invoke, address, "getCoordinates")
+    if ok and type(x) == "number" and type(y) == "number" and type(z) == "number" then
+        return x, y, z
+    end
+    return nil, nil, nil
 end
 function device.invoke(address, method, ...)
     if not address then return nil, "地址为空" end

@@ -21,6 +21,15 @@ function utils.formatShortNumber(num)
     end
     return tostring(math.floor(num))
 end
+function utils.shortAddress(address)
+    local s = tostring(address or "")
+    if s == "" then return "-" end
+    return s:sub(1, 8)
+end
+function utils.sideLabel(side)
+    local names = { [0] = "下", [1] = "上", [2] = "北", [3] = "南", [4] = "西", [5] = "东" }
+    return names[side] or tostring(side)
+end
 function utils.normalizeFluidName(name)
     local clean = tostring(name or ""):lower():gsub("^gregtech:", ""):gsub("^%s+", ""):gsub("%s+$", "")
     return clean, "gregtech:" .. clean

@@ -17,7 +17,7 @@
 --   Q 退出不在这里：退出语义归 core/runtime（runtime.bindQuitKeys）。
 -- 【配置页输入】物理键盘不进输入框：点表格里某一格**选中**它，卡内键盘槽换成那一列的键盘。
 --   键的语义（kind/value）由面板随热区带过来 —— 键盘长什么样归面板，按下去怎么改归这里。
---   数字列（阈值 / 权重）先改缓冲再点 ✔ 提交；增产是选项键盘（点哪个键就提交哪个）；勾选点格子直接切换。
+--   数字列（阈值 / 权重）先改缓冲再点 ✔ 提交；增产是选项键盘（点哪个键就提交哪个）；勾选 / 制作自动化点格子直接切换。
 --   阈值缓冲是 kL 整数串，只在提交那一刻 ×1000 变 mB。
 -- 【不弹提示】命令结果只写系统日志（省掉那个几秒后消失的提示条）。
 --------------------------------------------------------------------------------
@@ -105,6 +105,12 @@ end
 -- @param level number
 -- @param field string "enabled" / "threshold" / "weight" / "boost"
 local function applyCell(level, field)
+    -- 制作自动化：点格子 = 打开该级面板（绑定 / 解绑 / 开关都在面板里）
+    if field == "produce" then
+        selectCell(level, "produce")
+        fstate.producePage = 1
+        return
+    end
     if field ~= "enabled" then
         selectCell(level, field)
         return
@@ -295,6 +301,25 @@ local function onClick(x, y)
                 return
             end
         end
+        -- ①b 制作自动化面板的热区（与键盘槽同一块区域，互斥出现）
+        for _, box in ipairs(fstate.produceHits or {}) do
+            if fstate.hit(box, x, y) then
+                if box.act == "page" then
+                    fstate.producePage = (fstate.producePage or 1) + (tonumber(box.value) or 0)
+                    viewmodel.expire()
+                elseif box.act == "bind" then
+                    fire("produce_bind_begin", fstate.editLevel, box.machine)
+                elseif box.act == "unbind" then
+                    fire("produce_unbind", box.machine)
+                elseif box.act == "cancel" then
+                    fire("produce_bind_cancel")
+                elseif box.act == "toggle" then
+                    local row = fstate.lastData and fstate.lastData.levels[fstate.editLevel]
+                    fire("level_produce_set", fstate.editLevel, not (row and row.produceEnabled == true))
+                end
+                return
+            end
+        end
         -- ② 标题行右侧的两个全局字段：无线范围 / 利用因子
         if fstate.hit(fstate.strengthCell, x, y) then
             selectStrength()
@@ -309,7 +334,7 @@ local function onClick(x, y)
             fire("autostart_toggle")
             return
         end
-        -- ④ 表格：勾选格点一下直接切换；阈值 / 权重 / 增产格 = 选中它（"增产"只有 T7 那一行登记热区）
+        -- ④ 表格：勾选 / 制作自动化格点一下直接切换；阈值 / 权重 / 增产格 = 选中它（"增产"只有 T7 那一行登记热区）
         for level, cell in pairs(fstate.cells or {}) do
             for field, box in pairs(cell) do
                 if fstate.hit(box, x, y) then

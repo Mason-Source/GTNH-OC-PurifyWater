@@ -36,6 +36,7 @@ if require("shared.logs").isDebug() then
     memwatch  = require("backend.debug.memwatch") 
 end
 local CONFIG        = require("shared.config")
+local constants     = require("shared.constants")
 local logs          = require("shared.logs")
 local state         = require("shared.state")
 local utils         = require("shared.utils")
@@ -60,6 +61,10 @@ local autostart     = require("backend.app.autostart")
 local mode          = require("backend.domain.mode")
 local thresholdMode = require("backend.domain.modes.threshold")
 local rateMode      = require("backend.domain.modes.rate")
+local produce       = require("backend.domain.produce")
+local produceT3     = require("backend.domain.produce.t3")
+local produceT4     = require("backend.domain.produce.t4")
+local produceT7     = require("backend.domain.produce.t7")
 local render        = require("frontend.render")
 files.setRoot(appDir)
 local bootSettings = settings.load() or {}
@@ -74,6 +79,9 @@ else
     end
 end
 state.write.setEnforce(models.bool(bootSettings.enforce_threshold, true))
+produce.register(constants.T3_LEVEL, produceT3)
+produce.register(constants.T4_LEVEL, produceT4)
+produce.register(constants.T7_LEVEL, produceT7)
 local factor = tonumber(bootSettings.energy_factor)
 if not factor or factor ~= math.floor(factor)
     or factor < CONFIG.ENERGY.FACTOR_MIN or factor > CONFIG.ENERGY.FACTOR_MAX then

@@ -21,7 +21,8 @@ local F = {
     plan    = { suggest = {}, lastPlan = {}, notes = {}, budget = 0 },
     chart   = { points = {} },
     net     = { enabled = false, frame = 0, warned = nil },
-    tracker = {}
+    tracker = {},
+    produce = { cycle = { lastProgress = nil, seq = 0 }, levels = {}, subs = {}, binds = {}, binding = nil, online = {} }
 }
 
 local state = {}
@@ -70,6 +71,21 @@ function read.budget()   return F.plan.budget or 0 end
 function read.chart()    return F.chart end
 function read.net()      return F.net end
 function read.tracker()  return F.tracker end
+
+--- 制作自动化：周期钟 + 各级配置 + 子系统表（原始引用；只读约定）
+function read.produce() return F.produce end
+
+--- 制作自动化的某级配置（缺省：未启用、未就绪）
+-- @param level number
+-- @return table { enabled, valid, validReason }
+function read.produceLevel(level)
+    local l = F.produce.levels[level]
+    if not l then
+        l = { enabled = false, valid = false, validReason = "无扫描结果" }
+        F.produce.levels[level] = l
+    end
+    return l
+end
 
 --- 在役前缀最高等级：T1 起连续部署的最后一级；T1 没机器 = 0。
 function read.serviceTop()
@@ -194,6 +210,45 @@ function write.netSetWarned(v)  F.net.warned = v end
 function write.trackerSet(address, t) F.tracker[address] = t end
 function write.trackerDelete(address) F.tracker[address] = nil end
 function write.trackerReset()         F.tracker = {} end
+
+--- produce：某级配置（store/produce_config、app/produce；仅覆盖传入的非 nil 键）
+function write.produceSetLevel(level, fields)
+    local entry = read.produceLevel(level)
+    for key, value in pairs(fields or {}) do entry[key] = value end
+end
+
+--- produce：子系统表整体替换（app/produce 的扫描接入）
+function write.produceSetSubs(t) F.produce.subs = t or {} end
+
+--- produce：单台子系统的运行期记录（仅覆盖传入的非 nil 键；不存在则忽略）
+function write.produceSetSub(addr, fields)
+    local sub = F.produce.subs[addr]
+    if not sub then return end
+    for key, value in pairs(fields or {}) do sub[key] = value end
+end
+
+--- produce：T0 周期钟（lastProgress / seq）
+function write.produceSetCycle(fields)
+    local cycle = F.produce.cycle
+    for key, value in pairs(fields or {}) do cycle[key] = value end
+end
+
+--- produce：绑定表（数组；只由 app/produce 整表替换：{ {level=, machine=, transposer=}, ... }）
+function write.produceSetBinds(list) F.produce.binds = list or {} end
+
+--- produce：正在进行的绑定（{ level, machine, snapshot } | nil）
+function write.produceSetBinding(binding) F.produce.binding = binding end
+
+--- produce：已绑定转运器的在线表（只由 app/produce 的在线检查 / 绑定变更时整表替换）
+function write.produceSetOnlineAll(map) F.produce.online = map or {} end
+
+--- produce：清掉某台子系统的侧位配置（app/produce 触发"重新配置"时调用）
+-- 输出面 sideTarget 不在这里清：粘住，重配置只重算输入侧
+function write.produceClearSides(machine)
+    local sub = F.produce.subs[machine]
+    if not sub then return end
+    sub.sides, sub.sideFail = nil, nil
+end
 
 --------------------------------------------------------------------------------
 -- 兼容出口：派生读函数

@@ -2,11 +2,12 @@ local unicode = require("unicode")
 local fstate  = require("frontend.state")
 local theme   = require("frontend.theme")
 local widgets = require("frontend.widgets")
+local utils   = require("shared.utils")
 local CONFIG    = require("shared.config")
 local constants = require("shared.constants")
 local keypad  = {}
 local KEY_W   = 8
-local KEY_GAP = 2
+local KEY_GAP = 3
 local SEP     = 3
 local OPT_W   = 10
 local DIGITS  = {
@@ -104,12 +105,128 @@ local function hintText(data)
     end
     return "选中后编辑；勾选切换", theme.COLORS.TEXT_DISABLED
 end
+local function sideFailText(reason)
+    if type(reason) ~= "string" or reason == "" then return nil end
+    local miss = reason:match("^输入侧缺流体：(.+)$")
+    if miss then
+        miss = miss:gsub("熔融超导粗胚（UV%-UMV 任意）", "粗胚")
+        return "缺 " .. miss
+    end
+    if reason:find("找不到空容器", 1, true) then return "无输出容器" end
+    if reason:find("有多个空容器", 1, true) then return "输出不唯一" end
+    return reason
+end
+local function fitText(text, width)
+    if unicode.wlen(text) <= width then return text end
+    return unicode.sub(text, 1, math.max(1, width - 1)) .. "…"
+end
+local function drawProduce(area, data)
+    local level = fstate.editLevel or 1
+    local pd    = (data and data.produce) or {}
+    local info  = (pd.levels or {})[level] or { count = 0, online = 0, machines = {} }
+    local list  = info.machines or {}
+    local row   = ((data or {}).levels or {})[level]
+    local NUM_W, COORD_W, TARGET_W, SIDE_W, ACT_W, GAPW = 4, 20, 14, 18, 8, 2
+    local blockW = NUM_W + COORD_W + TARGET_W + SIDE_W + ACT_W + GAPW * 4
+    local bx     = area.x + math.max(0, math.floor((area.w - blockW) / 2))
+    local xNum    = bx
+    local xCoord  = xNum + NUM_W + GAPW
+    local xTarget = xCoord + COORD_W + GAPW
+    local xSide   = xTarget + TARGET_W + GAPW
+    local xAct    = xSide + SIDE_W + GAPW
+    local perPage = math.max(1, area.h - 2)
+    local pages   = math.max(1, math.ceil(#list / perPage))
+    fstate.producePage = math.min(math.max(1, tonumber(fstate.producePage) or 1), pages)
+    local y  = area.y
+    local cx = area.x
+    local function put(text, color, act, value)
+        local w = unicode.wlen(text)
+        widgets.drawText(cx, y, text, color)
+        if act then
+            fstate.produceHits[#fstate.produceHits + 1] =
+                { x = cx, y = y, w = w, h = 1, act = act, value = value }
+        end
+        cx = cx + w
+    end
+    put(string.format("制作自动化 · %s", constants.levelLabel(level)), theme.COLORS.TEXT_CYAN)
+    cx = cx + 3
+    put(string.format("%d/%d 就绪", info.configured or 0, info.count or 0), theme.COLORS.TEXT)
+    if pages > 1 then
+        cx = cx + 2
+        if fstate.producePage > 1 then put("‹ ", theme.COLORS.TEXT_CYAN, "page", -1) end
+        put(string.format("%d/%d", fstate.producePage, pages), theme.COLORS.TEXT_DISABLED)
+        if fstate.producePage < pages then put(" ›", theme.COLORS.TEXT_CYAN, "page", 1) end
+    end
+    cx = cx + 2
+    local enabled = row and row.produceEnabled == true
+    local toggle  = enabled and "[关]" or "[开]"
+    put(toggle, enabled and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT, "toggle")
+    if info.state == "blocked" and info.reason then
+        cx = cx + 2
+        put("强制关断：" .. tostring(info.reason), theme.COLORS.TEXT_YELLOW)
+    end
+    local binding = pd.binding
+    if binding and binding.level == level then
+        cx = cx + 2
+        put("| 绑定中：放下转运器并接入网络", theme.COLORS.TEXT_YELLOW)
+        cx = cx + 2
+        put("[取消]", theme.COLORS.TEXT_RED, "cancel")
+    end
+    local hy = area.y + 1
+    widgets.drawText(xNum, hy, "#", theme.COLORS.TEXT_DISABLED)
+    widgets.drawText(xCoord, hy, "坐标", theme.COLORS.TEXT_DISABLED)
+    widgets.drawText(xTarget, hy, "转运器", theme.COLORS.TEXT_DISABLED)
+    widgets.drawText(xSide, hy, "侧位", theme.COLORS.TEXT_DISABLED)
+    widgets.drawText(xAct, hy, "操作", theme.COLORS.TEXT_DISABLED)
+    local first = (fstate.producePage - 1) * perPage + 1
+    for index = 1, perPage do
+        local ry   = hy + index
+        local item = list[first + index - 1]
+        if item and ry <= area.y + area.h - 1 then
+            widgets.drawText(xNum, ry, tostring(first + index - 1), theme.COLORS.TEXT)
+            widgets.drawText(xCoord, ry, unicode.sub(item.text or "-", 1, COORD_W), theme.COLORS.TEXT)
+            if item.sideState == "ok" then
+                widgets.drawText(xSide, ry, "配置就绪", theme.COLORS.TEXT_GREEN)
+            elseif item.sideState == "auto" then
+                local fail = sideFailText(item.sideFail)
+                if fail then
+                    widgets.drawText(xSide, ry, fitText("失败·" .. fail, SIDE_W), theme.COLORS.TEXT_RED)
+                else
+                    widgets.drawText(xSide, ry, "自动配置中", theme.COLORS.TEXT_YELLOW)
+                end
+            else
+                widgets.drawText(xSide, ry, "-", theme.COLORS.TEXT_DISABLED)
+            end
+            if item.bound and item.online == true then
+                widgets.drawText(xTarget, ry, utils.shortAddress(item.bound), theme.COLORS.TEXT)
+                local label = "[解绑]"
+                widgets.drawText(xAct, ry, label, theme.COLORS.TEXT)
+                fstate.produceHits[#fstate.produceHits + 1] = {
+                    x = xAct, y = ry, w = unicode.wlen(label), h = 1, act = "unbind", machine = item.address
+                }
+            else
+                local text = item.bound and utils.shortAddress(item.bound) or "未绑定"
+                widgets.drawText(xTarget, ry, text, theme.COLORS.TEXT_DISABLED)
+                local label = "[绑定]"
+                widgets.drawText(xAct, ry, label, theme.COLORS.TEXT_DISABLED)
+                fstate.produceHits[#fstate.produceHits + 1] = {
+                    x = xAct, y = ry, w = unicode.wlen(label), h = 1, act = "bind", machine = item.address
+                }
+            end
+        end
+    end
+end
 function keypad.draw(data)
     local area = fstate.areas.keypad
     if not area or area.w <= 0 or area.h <= 0 then return end
     widgets.clearArea(area.x, area.y, area.w, area.h)
     fstate.keys = {}
+    fstate.produceHits = {}
     if area.h < 2 then return end
+    if fstate.editField == "produce" then
+        drawProduce(area, data)
+        return
+    end
     local hint, color = hintText(data)
     if unicode.wlen(hint) > area.w then
         hint = unicode.sub(hint, 1, math.max(1, area.w - 1)) .. "…"
@@ -164,6 +281,18 @@ function keypad.fingerprint(data)
         parts[#parts + 1] = table.concat({
             tostring(row.rule.enabled), tostring(row.rule.threshold), tostring(row.weight)
         }, ":")
+    end
+    local pd = (data and data.produce) or {}
+    local pl = (pd.levels or {})[fstate.editLevel or -1] or {}
+    parts[#parts + 1] = table.concat({
+        tostring(fstate.producePage or 1),
+        tostring(pl.enabled), tostring(pl.ready), tostring(pl.reason),
+        tostring(pl.bound), tostring(pl.configured), tostring(pl.online), tostring(pl.count),
+        tostring((pd.binding or {}).level), tostring((pd.binding or {}).machine)
+    }, ":")
+    for _, m in ipairs(pl.machines or {}) do
+        parts[#parts + 1] = table.concat(
+            { m.address, tostring(m.bound), tostring(m.online), tostring(m.text), tostring(m.sideState), tostring(m.sideFail) }, ",")
     end
     return table.concat(parts, "\x1f")
 end

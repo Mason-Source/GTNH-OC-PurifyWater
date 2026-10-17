@@ -1,12 +1,12 @@
 --------------------------------------------------------------------------------
 -- frontend/panels/config.lua
 --------------------------------------------------------------------------------
--- 【职责】调度配置卡的表格段：边框 + 标题 + 表头 + 8 级 × 5 列
+-- 【职责】调度配置卡的表格段：边框 + 标题 + 表头 + 8 级 × 6 列 + 表段分隔线
 -- 【不做什么】不画键盘（panels/keypad）、不碰后端、不发命令
 -- 【依赖】frontend/{state,theme,widgets,layout}、shared/constants
 -- 【被谁用】frontend/render
 --
--- 8 级 ×（勾选/阈值/权重/增产）一张表；勾选格点即切换，其余列点开对应键盘。
+-- 8 级 ×（勾选/阈值/权重/增产/制作自动化）一张表；勾选点即切换，制作自动化格点开面板，其余列点开对应键盘。
 -- 增产是 T7 专属档位，其余行画 -。文字列左对齐、数值列右对齐。
 -- 生效性由 system.effectiveConfig() 决定：无效列灰显但照改照存；选中高亮压过灰显。
 -- 重画：只清标题+表头与变化的那一行，禁止先整段清空（未变行会永久消失）。
@@ -28,9 +28,11 @@ local COLS      = {
     { key = "enabled", head = "勾选" },
     { key = "threshold", head = "阈值 kL", align = "right" },
     { key = "weight", head = "权重", align = "right" },
-    { key = "boost", head = "增产", align = "right" }
+    { key = "boost", head = "增产", align = "right" },
+    { key = "produce", head = "制作自动化", align = "right" }
 }
-local COL_W     = { 0.12, 0.12, 0.38, 0.20, 0.18 }
+-- 列宽：制作自动化放最后一列（右对齐）
+local COL_W     = { 0.10, 0.12, 0.26, 0.16, 0.18, 0.18 }
 
 --- 数值文本：整数不带小数点（1 / 1.25 / 1.5 / 1.75 / 2）
 -- @param value number|nil
@@ -91,6 +93,11 @@ function config.draw(data)
         end
     end
 
+    -- 表格段与键盘槽之间：一条横线 + 空 1 行（键盘槽 / 制作自动化面板画在下面）
+    widgets.clearArea(inner.x, area.y + layout.CONFIG_HEAD_H, inner.w, layout.CONFIG_SEP_H)
+    widgets.drawText(inner.x, area.y + layout.CONFIG_HEAD_H,
+        string.rep("─", inner.w), theme.CHART_AXIS)
+
     -- 选中的是哪一列（画每行时要给那一格铺底色）
     local selCol = nil
     for index, col in ipairs(COLS) do
@@ -107,7 +114,9 @@ function config.draw(data)
         local sel  = (fstate.editLevel == level)
         -- 这一行画出来的每一样东西（含选中与缓冲）：变了才重画这一行
         local fp   = table.concat({
-            row.label, tostring(row.rule.enabled), tostring(row.rule.threshold),
+            row.label, tostring(row.rule.enabled), tostring(row.produceEnabled),
+            tostring(row.produceText or "-"),
+            tostring(row.rule.threshold),
             tostring(row.weight), tostring(row.thresholdOverridden),
             tostring(sys.t7Boost), tostring(sys.mode), tostring(sys.enforceThreshold),
             tostring(sel), tostring(sel and fstate.editField or ""),
@@ -158,15 +167,20 @@ function config.draw(data)
                 or ((sel and fstate.editField == "boost") and theme.COLORS.TEXT_YELLOW
                     or (eff.boost and theme.COLORS.TEXT or theme.COLORS.TEXT_DISABLED))
             widgets.drawTextRight(cols[5].x, cols[5].w, y, bText, bColor, cellBg(5))
+
+            -- ⑥ 制作自动化（数值列：右对齐）：点开该级面板；状态短文本 / 颜色由 decorate 给
+            widgets.drawTextRight(cols[6].x, cols[6].w, y, row.produceText or "未就绪", row.produceColor, cellBg(6))
+
         end
 
-        -- 热区每帧都登记（勾选格 = 点一下切换；阈值 / 权重格 = 点一下选中；"增产"只有 T7 那一行有）
+        -- 热区每帧都登记（勾选格 = 点一下切换；制作自动化格 = 点开面板；阈值 / 权重格 = 点一下选中；"增产"只有 T7 那一行有）
         fstate.cells[level] = {
             enabled   = { x = cols[2].x, y = y, w = cols[2].w, h = 1 },
             threshold = { x = cols[3].x, y = y, w = cols[3].w, h = 1 },
             weight    = { x = cols[4].x, y = y, w = cols[4].w, h = 1 },
             boost     = (level == constants.T7_LEVEL)
-                and { x = cols[5].x, y = y, w = cols[5].w, h = 1 } or nil
+                and { x = cols[5].x, y = y, w = cols[5].w, h = 1 } or nil,
+            produce   = row.produceClickable and { x = cols[6].x, y = y, w = cols[6].w, h = 1 } or nil
         }
     end
 end
@@ -191,8 +205,9 @@ function config.fingerprint(data)
     for level = 1, constants.LEVEL_COUNT do
         local row         = data.levels[level]
         parts[#parts + 1] = table.concat({
-            row.label, tostring(row.rule.enabled), tostring(row.rule.threshold),
-            tostring(row.weight), tostring(row.thresholdOverridden)
+            row.label, tostring(row.rule.enabled), tostring(row.produceEnabled),
+            tostring(row.produceText or "-"),
+            tostring(row.rule.threshold), tostring(row.weight), tostring(row.thresholdOverridden)
         }, ":")
     end
     return table.concat(parts, "\x1f")

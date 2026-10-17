@@ -17,6 +17,7 @@ local rates_config     = require("backend.store.rates_config")
 local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
 local system           = require("backend.app.system")
+local produceApp       = require("backend.app.produce")
 local jobs             = {}
 local last             = {
     scanCount = 0,
@@ -33,12 +34,18 @@ function jobs.elapsed()
     return computer.uptime() - startedAt
 end
 function jobs.last() return last end
-function jobs.scanHardware()
+function jobs.scanHardware(skipProducePatrol)
     device.sweep()
     device.scanMe()
     device.scanNet()
     device.scanMachines()
     local summary = machines.classify()
+    if produceApp.refresh() then
+        scheduler.emit("produce_changed", { reason = "制作自动化就绪性变化" })
+    end
+    if skipProducePatrol ~= true and produceApp.patrol() then
+        scheduler.emit("produce_changed", { reason = "制作自动化原料状态变化" })
+    end
     local hatch   = machines.energy()
     local euMax
     if hatch then
@@ -92,6 +99,10 @@ function jobs.scanSettings()
     if ratesChanged then
         scheduler.emit("rates_changed", { why = ratesWhy })
     end
+    local produceChanged, produceWhy = produceApp.reload(snapshot)
+    if produceChanged then
+        scheduler.emit("produce_changed", { reason = produceWhy })
+    end
 end
 function jobs.readFluids()
     local amounts, ok, err = fluid.readAll()
@@ -121,6 +132,7 @@ function jobs.observePlants()
             local act = probes.active(machine.address)
             if level == constants.HOST_LEVEL and sw ~= false then
                 hostProgress, hostProgressMax = probes.progress(machine.address)
+                produceApp.onCycleProgress(hostProgress, hostProgressMax)
             end
             local fact = { address = machine.address, switch = sw, active = act }
             if sw == true then
@@ -148,7 +160,7 @@ function jobs.observePlants()
                         address  = machine.address,
                         parallel = value,
                         success  = success,
-                        progress = hostProgress
+                        seq      = state.read.produce().cycle.seq
                     })
                 end
             end
@@ -215,12 +227,14 @@ function jobs.register()
     add("observePlants", CONFIG.INTERVAL.OBSERVE, jobs.observePlants) 
     add("schedule", CONFIG.INTERVAL.SCHEDULE, jobs.schedule)          
     add("persist", CONFIG.INTERVAL.PERSIST, jobs.persist)             
+    add("produce", CONFIG.INTERVAL.PRODUCE, produceApp.tick)          
+    add("produce_feed", CONFIG.INTERVAL.PRODUCE_FEED, produceApp.pump, { enabled = false }) 
     if logs.isDebug() then
         memwatch = require("backend.debug.memwatch")
         add("sampleMemory", CONFIG.INTERVAL.SAMPLE, memwatch.sample) 
     end
     jobs.scanSettings()
-    jobs.scanHardware()
+    jobs.scanHardware(true)
     jobs.readFluids()
     jobs.observePlants()
     return n

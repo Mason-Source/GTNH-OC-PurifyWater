@@ -8,7 +8,7 @@
 -- 【被谁用】main.lua（启动时调 jobs.register()）
 --
 -- 任务清单见 ARCHITECTURE.md §3：T1 硬件(10s) / T2 水位(5s) / T3 观测(5s) /
--- T4 调度(5s) / T5 落盘(30s) / T6 内存(1s, --debug) / T7 广播(1s)；
+-- T4 调度(5s) / T5 落盘(30s) / T6 内存(1s, --debug) / T7 广播(1s) / T8 制作自动化(1s)；
 -- T2s 设置对账只在启动时跑一次（不再周期扫描 settings.txt）。
 --------------------------------------------------------------------------------
 
@@ -33,6 +33,7 @@ local rates_config     = require("backend.store.rates_config")
 local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
 local system           = require("backend.app.system")
+local produceApp       = require("backend.app.produce")
 
 local jobs             = {}
 
@@ -70,13 +71,24 @@ function jobs.last() return last end
 -- T1 硬件扫描（10 秒）：机器 + 能量仓 + ME 接口 + 拓扑清单
 --------------------------------------------------------------------------------
 
-function jobs.scanHardware()
+--- @param skipProducePatrol boolean|nil 启动首轮传 true：先让界面起来，重型侧位扫描留给首个 T1
+function jobs.scanHardware(skipProducePatrol)
     device.sweep()
     device.scanMe()
     device.scanNet()
     device.scanMachines()
 
     local summary = machines.classify()
+    -- 制作自动化：已绑件在线检查（只探测已绑地址）+ 重算各级就绪性；就绪性变了就通知调度。
+    -- scanSettings() 里的 reload() 发生在 device.scanMachines() 之前，不能用它代替这一轮。
+    if produceApp.refresh() then
+        scheduler.emit("produce_changed", { reason = "制作自动化就绪性变化" })
+    end
+    -- 原料巡检（侧位配置 / 原料检查 + 强制开关）；状态变了就通知调度。
+    -- 启动首轮刻意跳过：侧位扫描会逐罐逐槽调用组件，不能挡在主界面 boot 前面。
+    if skipProducePatrol ~= true and produceApp.patrol() then
+        scheduler.emit("produce_changed", { reason = "制作自动化原料状态变化" })
+    end
     -- 单仓：取这台仓的功率；无仓 -> 0 进 missing
     local hatch   = machines.energy()
     -- 激光仓电流可调，真值从缓冲容量换算；只认 number，拿不到退回名字值
@@ -151,6 +163,11 @@ function jobs.scanSettings()
     if ratesChanged then
         scheduler.emit("rates_changed", { why = ratesWhy })
     end
+
+    local produceChanged, produceWhy = produceApp.reload(snapshot)
+    if produceChanged then
+        scheduler.emit("produce_changed", { reason = produceWhy })
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -217,6 +234,8 @@ function jobs.observePlants()
             -- 进度只在主机这一轮读；主机开关关着时不用读（进度不会变，读了也没意义）
             if level == constants.HOST_LEVEL and sw ~= false then
                 hostProgress, hostProgressMax = probes.progress(machine.address)
+                -- 制作自动化：周期边界检测（复用这次全局周期读数；只做边沿判定）
+                produceApp.onCycleProgress(hostProgress, hostProgressMax)
             end
             -- 逐台原始读数（后面读传感器时还会往里补 success）
             local fact = { address = machine.address, switch = sw, active = act }
@@ -245,13 +264,13 @@ function jobs.observePlants()
                     if not minSample or value < minSample then minSample = value end
                     if success and (not minSuccess or success < minSuccess) then minSuccess = success end
                     samples = samples + 1
-                    -- progress 一起带上：tracker 按“运行周期”确认并行（进度回落 = 新周期）
+                    -- seq 一起带上：tracker 按 produce 周期钟确认并行（周期号变化 = 新周期）
                     scheduler.emit("parallel_sample", {
                         level    = level,
                         address  = machine.address,
                         parallel = value,
                         success  = success,
-                        progress = hostProgress
+                        seq      = state.read.produce().cycle.seq
                     })
                 end
             end
@@ -359,6 +378,8 @@ function jobs.register()
     add("observePlants", CONFIG.INTERVAL.OBSERVE, jobs.observePlants) -- T3
     add("schedule", CONFIG.INTERVAL.SCHEDULE, jobs.schedule)          -- T4
     add("persist", CONFIG.INTERVAL.PERSIST, jobs.persist)             -- T5
+    add("produce", CONFIG.INTERVAL.PRODUCE, produceApp.tick)          -- T8
+    add("produce_feed", CONFIG.INTERVAL.PRODUCE_FEED, produceApp.pump, { enabled = false }) -- 投料泵（有任务才启用）
     -- T6 内存观测：仅 --debug 装模块、注册任务。
     if logs.isDebug() then
         memwatch = require("backend.debug.memwatch")
@@ -369,7 +390,7 @@ function jobs.register()
     -- 首次采集不必等 10 秒：注册后立刻各跑一次，屏幕马上有数据
     -- T2s 设置对账也只在这一次跑（之后不再周期扫描 settings.txt）
     jobs.scanSettings()
-    jobs.scanHardware()
+    jobs.scanHardware(true) -- 首轮只做轻量扫描；T1 下一轮再配置侧位
     jobs.readFluids()
     jobs.observePlants()
     return n

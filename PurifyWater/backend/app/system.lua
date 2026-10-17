@@ -290,6 +290,12 @@ function system.onScheduleRequest(payload)
     system.requestPlan(payload and payload.reason or "事件")
 end
 
+--- 制作自动化（开关 / 就绪性 / 缺料）变化 -> 重判（可开启性判定里含 produce.blocked）
+-- @param payload table|nil { reason }
+function system.onProduceChanged(payload)
+    system.requestPlan(payload and payload.reason or "制作自动化变化")
+end
+
 --- 开关系统（界面一个键搞定）
 function system.toggle(reason)
     if state.read.running() then

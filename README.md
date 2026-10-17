@@ -56,9 +56,9 @@ installer.lua --monitor    # 镜像端：只装公共 + 镜像端文件（不会
 
 ```bash
 cd PurifyWater
-./main.lua            # 主控端（按 Q 退出）
-./main.lua --debug    # 打开调度/采样细节
-./monitor.lua [端口]  # 镜像端（等控制端开了【无线广播】再跑；Q 退出）
+main.lua            # 主控端（按 Q 退出）
+main.lua --debug    # 打开调度/采样细节
+monitor.lua [端口]  # 镜像端（等控制端开了【无线广播】再跑；Q 退出）
 ```
 
 
@@ -78,9 +78,9 @@ cd PurifyWater
 
 ```bash
 cd /home/PurifyWater
-./main.lua                # 控制端（按 Q 退出）
-./main.lua --debug        # 打开 debug 级日志（调度/采样细节）
-./monitor.lua [端口]      # 镜像端（另一台电脑 + 无线网卡，不调度）
+main.lua                # 控制端（按 Q 退出）
+main.lua --debug        # 打开 debug 级日志（调度/采样细节）
+monitor.lua [端口]      # 镜像端（另一台电脑 + 无线网卡，不调度）
 ```
 
 **首次启动不需要任何配置文件**：`data/settings.txt` 会按「阈值 0 + 全部勾选」自动生成

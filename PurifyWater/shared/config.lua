@@ -16,7 +16,8 @@ CONFIG.FILES                     = {
     HARDWARE = "data/hardware.txt", -- 硬件拓扑清单（有变化才写）
     HISTORY  = "data/history.dat",  -- 曲线点（一行一点）
     LOG      = "data/log.txt",      -- 日志（T5 每 30 秒把内存里的新行追加进来）
-    TRACE    = "data/last_run.txt"  -- 启动/退出痕迹 + 内存紧张时的留痕
+    TRACE    = "data/last_run.txt", -- 启动/退出痕迹 + 内存紧张时的留痕
+    PRODUCE  = "data/produce.txt"   -- 制作自动化绑定表（绑定程序写入；一行一台机器）
 }
 
 -- ---- 定时任务周期（秒） ----
@@ -27,7 +28,9 @@ CONFIG.INTERVAL                  = {
     SCHEDULE  = 5,  -- T4 贪心调度
     PERSIST   = 30, -- T5 落盘（抽曲线点 + 写历史/日志）
     SAMPLE    = 1,  -- T6 内存采样（仅 --debug 注册）
-    BROADCAST = 1   -- T7 无线广播（门控：总开关 + 网卡在位）
+    BROADCAST = 1,  -- T7 无线广播（门控：总开关 + 网卡在位）
+    PRODUCE   = 1,  -- T8 制作自动化（绑定检测 + T0 周期钟；只有"绑定中"才枚举转运器）
+    PRODUCE_FEED = 0.05 -- 投料泵（每拍一笔；0.05s ≈ 一个 game tick）
 }
 
 -- ---- 界面（可调） ----
@@ -94,6 +97,13 @@ CONFIG.RATES                     = {
     -- w=0 纯过路级的库存余量（垫住取整亏欠）
     ZERO_MARGIN      = 0.05
 }
+
+-- ---- 制作自动化 ----
+CONFIG.PRODUCE                   = {
+    CHUNK_RATIO  = 0.05, -- 单笔上限 = floor(rate*0.05)；≤ 此值保证 transferFluid 永不触发 context.pause
+    CYCLE_CUTOFF = 0.9   -- 周期尾段保护：周期进度超过 90% 时不再开始新机器
+}
+
 
 -- ---- 能源仓利用因子（可用功率 = 折算最大功率 × 因子%） ----
 CONFIG.ENERGY                    = {

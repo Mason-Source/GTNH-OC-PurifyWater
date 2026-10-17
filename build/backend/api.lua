@@ -10,6 +10,7 @@ local autostart     = require("backend.app.autostart")
 local ratesApp      = require("backend.app.rates")
 local energyApp    = require("backend.app.energy")
 local netApp       = require("backend.app.net")
+local produceApp   = require("backend.app.produce")
 local power         = require("backend.domain.power")
 local rules         = require("backend.domain.rules")
 local levels_config = require("backend.store.levels_config")
@@ -82,6 +83,9 @@ function api.read.levels()
         }
     end
     return out
+end
+function api.read.produce()
+    return produceApp.read()
 end
 function api.read.power()
     return {
@@ -200,6 +204,26 @@ COMMANDS.level_enabled_set = function(level, enabled)
     end
     if type(enabled) ~= "boolean" then return false, "勾选值无效" end
     return COMMANDS.level_rules_set(level, nil, enabled)
+end
+COMMANDS.level_produce_set = function(level, enabled)
+    local ok, text = produceApp.setEnabled(level, enabled)
+    if not ok then return false, text end
+    return true, ""
+end
+COMMANDS.produce_bind_begin = function(level, machine)
+    local ok, text = produceApp.beginBind(level, machine)
+    if not ok then return false, text end
+    return true, ""
+end
+COMMANDS.produce_bind_cancel = function()
+    local ok, text = produceApp.cancelBind()
+    if not ok then return false, text end
+    return true, ""
+end
+COMMANDS.produce_unbind = function(machine)
+    local ok, text = produceApp.unbind(machine)
+    if not ok then return false, text end
+    return true, ""
 end
 COMMANDS.net_toggle = function()
     return true, netApp.toggle()

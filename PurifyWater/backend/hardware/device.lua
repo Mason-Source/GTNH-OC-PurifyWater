@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- backend/hardware/device.lua
 --------------------------------------------------------------------------------
--- 【职责】按名字找组件并缓存：ME 接口、网卡/隧道；枚举 gt_machine
+-- 【职责】按名字找组件并缓存：ME 接口、网卡/隧道；枚举 gt_machine 与转运器
 -- 【不做什么】不读业务状态量（probes/energy/fluid）、不判业务
 -- 【依赖】component
 -- 【被谁用】hardware/{machines,energy,fluid,net}、backend/jobs(T1)
@@ -22,6 +22,7 @@ local NET_CANDIDATES = { "modem", "tunnel" }
 local cache          = { me = false, net = false } -- false = 查过、没有
 local sweepList      = {}                          -- 上次 sweep 的全量结果 {address, ctype}
 local machineAddrs   = {}                          -- gt_machine 地址表
+
 
 local function inCandidates(ctype, list)
     for _, candidate in ipairs(list) do
@@ -96,6 +97,24 @@ function device.machines()
     return machineAddrs
 end
 
+--- 即时枚举全部转运器地址（只有"点[绑定]"与"绑定中"才调用；平时的在线检查见 isTransposerOnline）
+-- @return table 地址数组
+function device.scanTransposers()
+    local out = {}
+    for address in component.list("transposer") do out[#out + 1] = address end
+    return out
+end
+
+--- 某个地址现在是否还是"在网且类型为 transposer"的组件（单点探测，不枚举全部转运器）
+-- 只用于"已绑定件还在不在"的在线检查（T1 每轮，10 秒一次）。
+-- @param address string|nil
+-- @return boolean
+function device.isTransposerOnline(address)
+    if not address or address == "" then return false end
+    local ok, ctype = pcall(component.type, address)
+    return ok and ctype == "transposer"
+end
+
 --- 机器名（getName()；取不到返回 nil）
 -- @param address string 组件地址
 -- @return string|nil
@@ -104,6 +123,21 @@ function device.name(address)
     local name = device.invoke(address, "getName")
     if type(name) == "string" and name ~= "" then return name end
     return nil
+end
+
+--- 机器坐标（gt_machine.getCoordinates；选项关闭 / 不可用时返回 nil）
+-- device.invoke 只带三个返回值，getCoordinates 是多返回值，故这里直接 pcall。
+-- @param address string 组件地址
+-- @return number|nil x
+-- @return number|nil y
+-- @return number|nil z
+function device.coordinates(address)
+    if not address then return nil, nil, nil end
+    local ok, x, y, z = pcall(component.invoke, address, "getCoordinates")
+    if ok and type(x) == "number" and type(y) == "number" and type(z) == "number" then
+        return x, y, z
+    end
+    return nil, nil, nil
 end
 
 --- 调用组件方法：全工程统一出口。

@@ -65,7 +65,7 @@ function watch.onPlantObserved(payload)
 end
 function watch.onParallelSample(payload)
     if not state.read.running() then return end
-    local verdict, why = tracker.feed(payload.address, payload.parallel, payload.progress)
+    local verdict, why = tracker.feed(payload.address, payload.parallel, payload.seq)
     if verdict ~= "write" then
         scheduler.emit("parallel_discarded", {
             level = payload.level, value = payload.parallel, why = why

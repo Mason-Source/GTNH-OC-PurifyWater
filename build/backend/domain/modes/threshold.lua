@@ -1,6 +1,7 @@
 local constants = require("shared.constants")
 local state     = require("shared.state")
 local rules     = require("backend.domain.rules")
+local produce   = require("backend.domain.produce")
 local threshold = {}
 function threshold.label() return "阈值调度" end
 function threshold.publish()
@@ -23,6 +24,7 @@ end
 function threshold.evaluate(level)
     local snap = state.read.plant(level)
     if (snap.deployed or 0) <= 0 then return false end
+    if produce.blocked(level) then return false end
     if rules.materialBlocked(level) then return false end
     return rules.belowThreshold(level)
 end

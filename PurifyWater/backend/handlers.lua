@@ -18,6 +18,8 @@
 --   派生类  parallel_write     -> system（内存学习 + 重算规则 + 重排）
 --           switch_mismatch    -> system（停会话 + 等待用户，不动机器）
 --           主机开关             -> 不走事件：watch 每轮观测对一次（电平语义，见 app/system）
+--   制作自动化类 produce_changed -> system（开关 / 就绪性 / 缺料变化 -> 重判）
+--                produce_cycle   -> produce（周期任务单，只入队不干活）
 --   控制类  schedule_now       -> system（界面刷新触发一次立即调度）
 --------------------------------------------------------------------------------
 
@@ -26,6 +28,7 @@ local scheduler = require("core.scheduler")
 local watch     = require("backend.app.watch")
 local system    = require("backend.app.system")
 local rates     = require("backend.app.rates")
+local produceApp = require("backend.app.produce")
 
 local handlers  = {}
 
@@ -52,10 +55,14 @@ function handlers.subscribe()
     scheduler.on("switch_mismatch", system.onSwitchMismatch)
     scheduler.on("rules_audit", system.auditThresholds)
 
+    -- 制作自动化类
+    scheduler.on("produce_changed", system.onProduceChanged)
+    scheduler.on("produce_cycle", produceApp.onCycleStarted)
+
     -- 控制类
     scheduler.on("schedule_now", system.onScheduleRequest)
 
-    return 15
+    return 17
 end
 
 return handlers

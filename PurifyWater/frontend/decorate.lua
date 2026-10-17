@@ -50,6 +50,28 @@ function M.apply(data)
                 rule = { threshold = 0, effectiveThreshold = 0, enabled = false } }
             data.levels[level] = row
         end
+        -- 制作自动化（配置表那一列）：四态文案 / 颜色 / 可点（点格子 = 打开该级面板）
+        -- 镜像端无此域 -> 画 -
+        local pr = (data.produce and data.produce.levels and data.produce.levels[level]) or {}
+        row.produceEnabled = pr.enabled == true
+        if pr.state == "off" then
+            row.produceText      = "[ ]"
+            row.produceColor     = theme.COLORS.TEXT_DISABLED
+            row.produceClickable = true
+        elseif pr.state == "ok" then
+            row.produceText      = "[√]"
+            row.produceColor     = theme.COLORS.TEXT_GREEN
+            row.produceClickable = true
+        elseif pr.state == "blocked" then
+            row.produceText      = "[!]"
+            row.produceColor     = theme.COLORS.TEXT_YELLOW
+            row.produceClickable = true
+        else
+            row.produceText      = "未就绪"
+            row.produceColor     = theme.COLORS.TEXT_DISABLED
+            row.produceClickable = true
+        end
+
         row.label = row.label or constants.levelLabel(level)
         row.rule  = row.rule or { threshold = 0, effectiveThreshold = 0, enabled = false }
         row.running        = (row.deployed > 0) and ((row.active or 0) > 0) or false

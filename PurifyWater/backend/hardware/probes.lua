@@ -2,10 +2,11 @@
 -- backend/hardware/probes.lua
 --------------------------------------------------------------------------------
 -- 【职责】单台机器的原子读取：开关 `isWorkAllowed` / 活动 `isMachineActive` /
---         进度 `getWorkProgress` / 传感器 `getSensorInformation`（解析交给 gt_infodata）
+--         进度 `getWorkProgress` / 传感器 `getSensorInformation`（解析交给 gt_infodata；
+--         原始行 sensorLines 给制作自动化）
 -- 【不做什么】只读；不写 state（聚合在 jobs 的采集任务里做）；不下发任何指令
 -- 【依赖】hardware/{device,gt_infodata}
--- 【被谁用】backend/jobs（T3）
+-- 【被谁用】backend/jobs（T3）、backend/app/produce（sensorLines）
 --
 -- 一律走 device.invoke（proxy 索引拿不到 gt_machine 方法）。
 -- 读失败返回 nil + 错误文本，不隐式当 false。
@@ -35,7 +36,7 @@ function probes.active(address)
 end
 
 --- 运行进度（getWorkProgress/getWorkMaxProgress）
--- 只对主机调（周期同步）。用途：界面周期条、tracker 判周期边界。
+-- 只对主机调（周期同步）。用途：界面周期条、produce 周期钟（T3 边沿检测）。
 -- @param address string 组件地址
 -- @return number|nil progress
 -- @return number|nil maxProgress
@@ -55,6 +56,16 @@ function probes.sensor(address)
     local lines, err = device.invoke(address, "getSensorInformation")
     if type(lines) ~= "table" then return nil, err or "传感器无数据" end
     return gtInfodata.parse(lines), nil
+end
+
+--- 传感器原始文本行（制作自动化解需求用；调度侧继续用 sensor()）
+-- @param address string 组件地址
+-- @return table|nil 文本行数组
+-- @return string|nil 错误说明
+function probes.sensorLines(address)
+    local lines, err = device.invoke(address, "getSensorInformation")
+    if type(lines) ~= "table" then return nil, err or "传感器无数据" end
+    return lines, nil
 end
 
 return probes

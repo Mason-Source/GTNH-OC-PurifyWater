@@ -13,6 +13,7 @@ local utils     = require("shared.utils")
 
 local rules     = require("backend.domain.rules")
 local rates     = require("backend.domain.rates")
+local produce   = require("backend.domain.produce")
 
 local rate      = {}
 
@@ -52,7 +53,7 @@ function rate.publish()
     return limitText(plan)
 end
 
---- 可开启性：未部署/断点外/无需求/原料不足 -> 关；受阈值约束走水位判定。
+--- 可开启性：未部署/断点外/无需求/原料不足/制作自动化拦 -> 关；受阈值约束走水位判定。
 -- @param level number
 -- @return boolean
 function rate.evaluate(level)
@@ -64,6 +65,8 @@ function rate.evaluate(level)
     -- 无需求（rates.wanted）
     if not rates.wanted(level) then return false end
     if rules.materialBlocked(level) then return false end
+    -- 制作自动化拦住（启用且未就绪 / 被拦）-> 本轮不开
+    if produce.blocked(level) then return false end
 
     if state.read.enforceThreshold() then return rules.belowThreshold(level) end
     return true

@@ -108,11 +108,11 @@ end
 
 --- 并行采样（只对在跑单元读）
 -- 过渡值不直接写，连续 N 个运行周期同值才算数（判定在 tracker）。
--- @param payload table { level, address, parallel, success, progress }
+-- @param payload table { level, address, parallel, success, seq }
 function watch.onParallelSample(payload)
     if not state.read.running() then return end
 
-    local verdict, why = tracker.feed(payload.address, payload.parallel, payload.progress)
+    local verdict, why = tracker.feed(payload.address, payload.parallel, payload.seq)
     if verdict ~= "write" then
         scheduler.emit("parallel_discarded", {
             level = payload.level, value = payload.parallel, why = why

@@ -15,6 +15,8 @@ local fstate = {
     autostartRow   = nil,
     cells          = {},
     keys           = {},
+    produceHits    = {},
+    producePage    = 1,
     editLevel      = nil,
     editField      = nil,
     editBuf        = nil,
@@ -41,7 +43,7 @@ function fstate.invalidateAll()
 end
 function fstate.clearHitboxes()
     fstate.buttons, fstate.tabs, fstate.chartChips = {}, {}, {}
-    fstate.cells, fstate.keys = {}, {}
+    fstate.cells, fstate.keys, fstate.produceHits = {}, {}, {}
     fstate.levelRows = {}
     fstate.logTitle = nil
     fstate.autostartRow = nil

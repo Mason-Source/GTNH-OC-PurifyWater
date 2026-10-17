@@ -3,6 +3,7 @@ local state     = require("shared.state")
 local utils     = require("shared.utils")
 local rules     = require("backend.domain.rules")
 local rates     = require("backend.domain.rates")
+local produce   = require("backend.domain.produce")
 local rate      = {}
 function rate.label() return "速率调度" end
 local function limitText(plan)
@@ -34,6 +35,7 @@ function rate.evaluate(level)
     if state.serviceTop() < level then return false end
     if not rates.wanted(level) then return false end
     if rules.materialBlocked(level) then return false end
+    if produce.blocked(level) then return false end
     if state.read.enforceThreshold() then return rules.belowThreshold(level) end
     return true
 end

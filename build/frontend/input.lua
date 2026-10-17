@@ -47,6 +47,11 @@ local function clearEdit()
     fstate.editLevel, fstate.editField, fstate.editBuf = nil, nil, nil
 end
 local function applyCell(level, field)
+    if field == "produce" then
+        selectCell(level, "produce")
+        fstate.producePage = 1
+        return
+    end
     if field ~= "enabled" then
         selectCell(level, field)
         return
@@ -191,6 +196,24 @@ local function onClick(x, y)
         for _, box in ipairs(fstate.keys or {}) do
             if fstate.hit(box, x, y) then
                 applyKey(box)
+                return
+            end
+        end
+        for _, box in ipairs(fstate.produceHits or {}) do
+            if fstate.hit(box, x, y) then
+                if box.act == "page" then
+                    fstate.producePage = (fstate.producePage or 1) + (tonumber(box.value) or 0)
+                    viewmodel.expire()
+                elseif box.act == "bind" then
+                    fire("produce_bind_begin", fstate.editLevel, box.machine)
+                elseif box.act == "unbind" then
+                    fire("produce_unbind", box.machine)
+                elseif box.act == "cancel" then
+                    fire("produce_bind_cancel")
+                elseif box.act == "toggle" then
+                    local row = fstate.lastData and fstate.lastData.levels[fstate.editLevel]
+                    fire("level_produce_set", fstate.editLevel, not (row and row.produceEnabled == true))
+                end
                 return
             end
         end

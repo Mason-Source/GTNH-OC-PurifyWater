@@ -17,6 +17,7 @@ function vm.build(force)
         hardware = api.read.hardware(),
         power    = api.read.power(),
         levels   = api.read.levels(),
+        produce  = api.read.produce(),
         net      = api.read.net(),
         host     = api.read.host(),
         logs     = api.read.logs(CONFIG.LOG.MAX_LINES)

@@ -6,7 +6,8 @@
 -- 【依赖】shared/config
 -- 【被谁用】core/*、backend/*、frontend/panels/log、store/log_file
 --
--- user/debug 各自留 MAX_LINES 行；切换级别只换显示哪一级。
+-- user/debug 各自留 MAX_LINES 行；切换级别只换显示哪一级；
+-- 当前是 debug 时，user 行也进 debug 缓冲 —— 面板上屏要能同时看到警告/系统行与调试明细。
 -- 当前级别可见的行同时进待落盘队列，T5 写 data/log.txt（保留 FILE_LINES 行）。
 -- 前缀即种类：[警告][调度][系统][界面][调试]，无前缀 = info；界面按前缀上色。
 -- 新代码用 logs.warn/schedule/system/ui/debug()，前缀由本模块统一加。
@@ -135,6 +136,13 @@ function logs.append(text, level)
     if buf then
         buf[#buf + 1] = line
         while #buf > maxLines do table.remove(buf, 1) end
+    end
+    -- 【上屏】低级别的行也进"当前级别"的缓冲：否则 --debug 时面板只画 [调试] 行，
+    --   警告 / 系统行只落盘不上屏（面板按到达顺序混排）。
+    local cur = buffers[currentLevel]
+    if cur and cur ~= buf and visible(lv) then
+        cur[#cur + 1] = line
+        while #cur > maxLines do table.remove(cur, 1) end
     end
     if not visible(level) then return end
     pending[#pending + 1] = line

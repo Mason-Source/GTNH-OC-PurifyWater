@@ -40,6 +40,23 @@ function utils.formatShortNumber(num)
     return tostring(math.floor(num))
 end
 
+--- 短地址（日志 / 界面用；取前 8 位）
+-- @param address string|nil
+-- @return string
+function utils.shortAddress(address)
+    local s = tostring(address or "")
+    if s == "" then return "-" end
+    return s:sub(1, 8)
+end
+
+--- 侧位中文名（OC 方向编号：0 下 / 1 上 / 2 北 / 3 南 / 4 西 / 5 东）
+-- @param side number|nil
+-- @return string
+function utils.sideLabel(side)
+    local names = { [0] = "下", [1] = "上", [2] = "北", [3] = "南", [4] = "西", [5] = "东" }
+    return names[side] or tostring(side)
+end
+
 --- 归一化流体名：返回（去前缀小写名, 补全的完整名）
 -- @param name string
 -- @return string clean

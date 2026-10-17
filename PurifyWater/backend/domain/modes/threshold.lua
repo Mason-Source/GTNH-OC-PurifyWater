@@ -11,6 +11,7 @@ local constants = require("shared.constants")
 local state     = require("shared.state")
 
 local rules     = require("backend.domain.rules")
+local produce   = require("backend.domain.produce")
 
 local threshold = {}
 
@@ -39,12 +40,14 @@ function threshold.publish()
 end
 
 --- 可开启性判定（从上到下短路）
--- ① 未部署 ② 原料不足 ③ 水位 < 实际执行阈值
+-- ① 未部署 ② 制作自动化拦 ③ 原料不足 ④ 水位 < 实际执行阈值
 -- @param level number 1..LEVEL_COUNT
 -- @return boolean 能不能开
 function threshold.evaluate(level)
     local snap = state.read.plant(level)
     if (snap.deployed or 0) <= 0 then return false end
+    -- 制作自动化拦住（启用且未就绪 / 被拦）-> 本轮不开
+    if produce.blocked(level) then return false end
     if rules.materialBlocked(level) then return false end
     return rules.belowThreshold(level)
 end

@@ -22,17 +22,19 @@ function machines.classify()
     for _, address in ipairs(device.machines()) do
         local name = device.name(address)
         if name then
+            local x, y, z = device.coordinates(address)
+            local item = { address = address, name = name, x = x, y = y, z = z }
             local level = constants.MACHINE_NAMES[name]
             if level then
-                reg[level][#reg[level] + 1] = { address = address, name = name }
+                reg[level][#reg[level] + 1] = item
             elseif isEnergy(name) then
                 if energyItem then
-                    otherReg[#otherReg + 1] = { address = address, name = name }
+                    otherReg[#otherReg + 1] = item
                 else
-                    energyItem = { address = address, name = name }
+                    energyItem = item
                 end
             else
-                otherReg[#otherReg + 1] = { address = address, name = name }
+                otherReg[#otherReg + 1] = item
             end
         end
     end
