@@ -22,6 +22,7 @@ local NET_CANDIDATES = { "modem", "tunnel" }
 local cache          = { me = false, net = false } -- false = 查过、没有
 local sweepList      = {}                          -- 上次 sweep 的全量结果 {address, ctype}
 local machineAddrs   = {}                          -- gt_machine 地址表
+local transposerSet  = nil                         -- 最近一次枚举到的 transposer 地址集合
 
 
 local function inCandidates(ctype, list)
@@ -33,11 +34,13 @@ end
 
 --- 全量枚举组件一次，结果存 sweepList；由 T1 每周期调用
 function device.sweep()
-    local out = {}
+    local out, transposers = {}, {}
     for address, ctype in component.list() do
         out[#out + 1] = { address = address, ctype = ctype }
+        if ctype == "transposer" then transposers[address] = true end
     end
     sweepList = out
+    transposerSet = transposers
 end
 
 --- 从 sweepList 里找 ME 接口并写缓存
@@ -100,17 +103,23 @@ end
 --- 即时枚举全部转运器地址（只有"点[绑定]"与"绑定中"才调用；平时的在线检查见 isTransposerOnline）
 -- @return table 地址数组
 function device.scanTransposers()
-    local out = {}
-    for address in component.list("transposer") do out[#out + 1] = address end
+    local out, transposers = {}, {}
+    for address in component.list("transposer") do
+        out[#out + 1] = address
+        transposers[address] = true
+    end
+    transposerSet = transposers
     return out
 end
 
---- 某个地址现在是否还是"在网且类型为 transposer"的组件（单点探测，不枚举全部转运器）
+--- 某个地址现在是否还是"在网且类型为 transposer"的组件（有缓存集合时直接查集合）
 -- 只用于"已绑定件还在不在"的在线检查（T1 每轮，10 秒一次）。
 -- @param address string|nil
 -- @return boolean
 function device.isTransposerOnline(address)
     if not address or address == "" then return false end
+    -- T1 的 sweep / 绑定检测已经枚举过组件，直接用集合；没有缓存时才单点探测。
+    if transposerSet then return transposerSet[address] == true end
     local ok, ctype = pcall(component.type, address)
     return ok and ctype == "transposer"
 end

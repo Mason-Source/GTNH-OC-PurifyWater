@@ -19,12 +19,15 @@ GTNH 净水线自动控制程序（OpenComputers）。一台 OC 电脑接上 ME 
 
 ## 目录
 
-| 目录 | 内容 |
+| 文件 | 内容 |
 |---|---|
 | `installer.lua` | **稳定引导器**：每次运行自动获取最新 `installer_core.lua` 并执行 |
 | `installer_core.lua` | 实际安装器核心，由引导器下载，成功后自动删除 |
-| `PurifyWater/` | **带注释的源码**（要改就改这里） |
-| `build/` | 同一份源码**去注释后的版本**，整份丢进 OC 电脑的 `home/` 就能跑 |
+| `PurifyWater/` | 供人查看的带注释源码（安装器不会下载逐文件源码） |
+| `build/payload_main.bundle` | 主控端去注释载荷（公共 + 主控端） |
+| `build/payload_monitor.bundle` | 镜像端去注释载荷（公共 + `monitor.lua`） |
+
+载荷是明文的 PW1 长度前缀格式，安装时在本地分拆成真实文件。**不需要数据卡，不使用压缩。**
 
 ## 快速开始
 
@@ -34,23 +37,35 @@ GTNH 净水线自动控制程序（OpenComputers）。一台 OC 电脑接上 ME 
 
 ```bash
 wget -f https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/installer.lua installer.lua
-installer.lua              # 主控端（默认；不会装 monitor.lua）
-installer.lua --monitor    # 镜像端：只装公共 + 镜像端文件（不会出现 backend/ 与 main.lua）
+./installer.lua              # 主控端（默认；不会装 monitor.lua）
+./installer.lua --monitor    # 镜像端：只装公共 + 镜像端文件（不会出现 backend/ 与 main.lua）
 ```
 
 > **参数传法（OpenOS 特性）**：`lua` 命令在执行脚本前会先摘掉 `--xxx` / `-x` 参数（`shell.parse`），
 > 脚本收不到 —— 带参数时请**直接执行**程序（`./installer.lua --monitor`）；若必须用 `lua` 前缀，
 > 参数前要加 `--`：`lua installer.lua -- --monitor`。不带参数时两种写法等价。
 
-装到「当前目录/PurifyWater」，默认拉 `build/`（去注释版）。安装器参数：
+安装器参数：
 
 | 参数 | 作用 |
 |---|---|
-| （无） | 安装控制端（公共文件 + 控制端专属文件） |
-| `--monitor` | 安装镜像端（公共文件 + `monitor.lua`；不下载 `backend/` 与 `main.lua`） |
-| `--source=PurifyWater` | 拉带注释的源码（默认 `build/` 去注释版） |
+| （无） | 安装控制端（下载 `payload_main.bundle`） |
+| `--monitor` | 安装镜像端（下载 `payload_monitor.bundle`；不装 `backend/` 与 `main.lua`） |
 | `--mirror` / `-m` | 优先使用备用下载通道 |
 | `--debug` / `-d` | 输出完整过程到 `installer.log` |
+
+首次安装或版本更新时固定只有两次网络下载：
+
+```text
+installer_core.lua
+一个角色载荷（payload_*.bundle）
+```
+
+重复运行安装器且版本与角色都没变时，只下载 `installer_core.lua`，载荷会直接跳过。
+
+装到「当前目录/PurifyWater」，安装后仍是正常真实目录。安装器使用 `data/install_manifest.txt`
+清理上游已删除或改名的旧代码文件；`data/` 中的阈值、权重、曲线、痕迹不会被碰。
+载荷下载或分拆失败时，旧代码保持不变。
 
 装完：
 
@@ -61,36 +76,16 @@ main.lua --debug    # 打开调度/采样细节
 monitor.lua [端口]  # 镜像端（等控制端开了【无线广播】再跑；Q 退出）
 ```
 
-
-安装器使用清单同步代码，会清理上游已删除或改名的旧文件；`data/`（阈值、权重、曲线、痕迹）
-不会被碰。下载和替换失败时，旧代码保持不变。
-
-下载默认走 GitHub 直连；任一文件下载失败即整体切换备用通道，失败文件与尚未下载的文件在新通道重试
-（两通道交替，默认最多 4 轮，不在单个文件上重复等待）。引导器下载核心时遵循同一规则，并将实际使用的
-通道传给核心，核心不再从直连重试。
-
-排查下载失败：加 `--debug` 重跑（`./installer.lua --debug`），完整过程写入安装目录下的
-`installer.log`（含轮次、网址与失败原因）；普通安装不写该日志。
-
-### 手动放置
-
-把 `build/`（或 `PurifyWater/`）整个目录放到 OC 电脑的 `home/` 下：
-
-```bash
-cd /home/PurifyWater
-main.lua                # 控制端（按 Q 退出）
-main.lua --debug        # 打开 debug 级日志（调度/采样细节）
-monitor.lua [端口]      # 镜像端（另一台电脑 + 无线网卡，不调度）
-```
+排查下载失败：加 `--debug` 重跑（`./installer.lua --debug`），完整过程写入当前目录下的
+`installer.log`（含通道、载荷文件名与失败原因）；普通安装不写该日志。
 
 **首次启动不需要任何配置文件**：`data/settings.txt` 会按「阈值 0 + 全部勾选」自动生成
-（键 `threshold.N` / `enabled.N`），此时实际阈值仍受下一级 N 倍保供线约束；
+（键 `threshold.N` / `enabled.N`），此时实际阈值仍受下一级保供线约束；
 先到配置页把各档阈值填上再点【启动系统】。
 
 > 速率调度：总览控制面板「模式」按钮行左键切到速率调度，再到配置页「速率权重」卡给各级填权重
 > （0-100 的整数；填 0 表示本级不主动补水，仅在下游需要时作为过路级运行）。建议并行变化时系统会停机并
 > 进入锁定，按新建议调整机器并行后点【启动系统】继续。
-
 ## 镜像端（只读监视）
 
 镜像端在另一台 OC 电脑上运行，只显示控制端广播的快照，不参与调度。

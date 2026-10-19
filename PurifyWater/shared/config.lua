@@ -30,7 +30,7 @@ CONFIG.INTERVAL                  = {
     SAMPLE    = 1,  -- T6 内存采样（仅 --debug 注册）
     BROADCAST = 1,  -- T7 无线广播（门控：总开关 + 网卡在位）
     PRODUCE   = 1,  -- T8 制作自动化（绑定检测 + T0 周期钟；只有"绑定中"才枚举转运器）
-    PRODUCE_FEED = 0.05 -- 投料泵（每拍一笔；0.05s ≈ 一个 game tick）
+    PRODUCE_RUNTIME = 0.5 -- 制作自动化 operation runtime（空队列时只扫一个小表）
 }
 
 -- ---- 界面（可调） ----
@@ -94,6 +94,7 @@ CONFIG.RATES                     = {
     DEFAULT_WEIGHT   = 0,   -- 新装权重全 0（到配置页填写）
     MAX_WEIGHT       = 100, -- 权重上限（界面/命令同一判据）
     DEFAULT_T7_BOOST = 1,   -- T7 增产倍率默认档
+    DEFAULT_T6_DUAL_LITHIUM = false, -- T6 是否使用双锂数据收集
     -- w=0 纯过路级的库存余量（垫住取整亏欠）
     ZERO_MARGIN      = 0.05
 }
@@ -101,7 +102,7 @@ CONFIG.RATES                     = {
 -- ---- 制作自动化 ----
 CONFIG.PRODUCE                   = {
     CHUNK_RATIO  = 0.05, -- 单笔上限 = floor(rate*0.05)；≤ 此值保证 transferFluid 永不触发 context.pause
-    CYCLE_CUTOFF = 0.9   -- 周期尾段保护：周期进度超过 90% 时不再开始新机器
+    CYCLE_CUTOFF = 0.9,  -- 周期尾段保护：周期进度超过 90% 时不再开始新机器
 }
 
 

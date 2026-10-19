@@ -20,6 +20,8 @@ local reg             = {}
 local energyItem      = nil
 -- 非净水厂的 gt_machine（计数用）
 local otherReg        = {}
+-- 名称/坐标缓存：地址稳定，T1 重扫时不再重复调用两块组件方法（每次约 50ms）
+local metaCache       = {}
 
 -- 能量仓机器名特征（公式见 energy.lua）
 local ENERGY_PATTERNS = {
@@ -47,15 +49,22 @@ function machines.classify()
     energyItem, otherReg = nil, {}
 
     for _, address in ipairs(device.machines()) do
-        local name = device.name(address)
-        if name then
-            -- 坐标一起缓存（界面"机器不写地址写坐标"；拿不到时为 nil）
-            local x, y, z = device.coordinates(address)
-            local item = { address = address, name = name, x = x, y = y, z = z }
-            local level = constants.MACHINE_NAMES[name]
+        local meta = metaCache[address]
+        if not meta then
+            local name = device.name(address)
+            if name then
+                -- 坐标一起缓存（界面"机器不写地址写坐标"；拿不到时为 nil）
+                local x, y, z = device.coordinates(address)
+                meta = { name = name, x = x, y = y, z = z }
+                metaCache[address] = meta
+            end
+        end
+        if meta then
+            local item = { address = address, name = meta.name, x = meta.x, y = meta.y, z = meta.z }
+            local level = constants.MACHINE_NAMES[meta.name]
             if level then
                 reg[level][#reg[level] + 1] = item
-            elseif isEnergy(name) then
+            elseif isEnergy(meta.name) then
                 -- 单仓：只认第一台，其余入其它
                 if energyItem then
                     otherReg[#otherReg + 1] = item

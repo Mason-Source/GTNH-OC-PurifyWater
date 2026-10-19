@@ -6,8 +6,10 @@
 -- 【依赖】shared/{config,constants,state}
 -- 【被谁用】domain/modes/rate、domain/power.suggest
 --
--- 模型：每并行吃 1000L 上一级、产 900L 本级；回流级（T1/T2/T6）多吃 90L 换 +15% 成功率；
--- T7 有增产倍率。需求从最高在役级向 T1 推：需求ₙ = 权重ₙ + 1000×总并行ₙ₊₁。
+-- 模型：每并行吃 1000L 上一级、产 900L 本级；回流级多吃 90L 换 +15% 成功率
+-- （默认等级取 constants.RATE_REFLUX_LEVELS，T1/T2 可由 settings 覆盖）；
+-- T6 可选双锂数据收集（基础成功率 0.8 → 0.9）；T7 有增产倍率。
+-- 需求从最高在役级向 T1 推：需求ₙ = 权重ₙ + 1000×总并行ₙ₊₁。
 --
 -- 四条规则：
 --   ① 只在役前缀（T1..T_N 连续）参与链条/建议/审计，段外预填不算错不报警。
@@ -38,6 +40,8 @@ end
 -- @param level number
 -- @return boolean
 local function refluxOf(level)
+    local configured = state.read.reflux()[level]
+    if type(configured) == "boolean" then return configured end
     return constants.RATE_REFLUX_LEVELS[level] == true
 end
 
@@ -46,6 +50,9 @@ end
 -- @return number 0..1
 function rates.successOf(level)
     local s = constants.RATE_SUCCESS[level] or 0
+    if level == constants.T6_LEVEL and state.read.t6DualLithium() then
+        s = constants.RATE_SUCCESS_DUAL_LITHIUM
+    end
     if refluxOf(level) then s = s + constants.RATE_REFLUX_BONUS end
     return math.min(1, s)
 end

@@ -66,6 +66,15 @@ function utils.normalizeFluidName(name)
     return clean, "gregtech:" .. clean
 end
 
+--- 成功率归一化：0～1 -> 0～100；其余原样转数字
+-- @param value any
+-- @return number|nil
+function utils.toPercent(value)
+    local num = tonumber(value)
+    if num == nil then return nil end
+    return num <= 1 and num * 100 or num
+end
+
 --- key_down 的 char 载荷 -> 单个小写字符
 -- char 是 ASCII 码数字，不是字符。
 -- @param char number|string|nil

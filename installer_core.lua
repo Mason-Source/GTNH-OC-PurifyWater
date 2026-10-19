@@ -1,12 +1,11 @@
 --------------------------------------------------------------------------------
--- installer_core.lua —— PurifyWater 实际安装器
+-- installer_core.lua —— PurifyWater 实际安装器（PW1 单载荷版）
 --------------------------------------------------------------------------------
--- 【职责】下载应用代码到 staging，按 manifest 同步到 <当前目录>/PurifyWater。
--- 【不做什么】不碰 data/ 中的用户数据；不删除清单外文件。
--- 【通道策略】一轮用一个通道；**某个文件失败就立刻换另一个通道**（失败的那个 + 本轮还没试的
---   一起在新通道重试）。首选通道 = 参数 --mirror 或引导器传入的实际通道。
--- 【参数】--monitor = 装镜像端（只装公共 + 镜像端文件）；不写 = 主控端。
---   --mirror/-m 首选镜像通道；--debug/-d 写 installer.log；--source=build|PurifyWater。
+-- 【职责】下载一个角色载荷，分拆到 staging，再按 manifest 同步到 <当前目录>/PurifyWater。
+-- 【不做什么】不碰 data/ 中的用户数据；不删除清单外文件；不使用数据卡/压缩。
+-- 【载荷】build/payload_main.bundle / build/payload_monitor.bundle
+-- 【参数】--monitor = 装镜像端；--mirror/-m = 首选备用通道；
+--         --debug/-d = 写 installer.log。
 --------------------------------------------------------------------------------
 
 local component  = require("component")
@@ -14,40 +13,36 @@ local filesystem = require("filesystem")
 local shell      = require("shell")
 
 local ARGS       = { ... }
-local SRC        = "build"
 local PREFER     = 1
-local ROLE       = "main" -- "main" = 主控端（公共 + 主控专属）；"monitor" = 镜像端（公共 + monitor.lua）
+local ROLE       = "main"
 local LOG_ON     = false
 
 for _, a in ipairs(ARGS) do
     if a == "--debug" or a == "-d" then LOG_ON = true end
     if a == "--mirror" or a == "-m" then PREFER = 2 end
     if a == "--monitor" then ROLE = "monitor" end
-    if a == "--source=PurifyWater" or a == "--src=PurifyWater" then SRC = "PurifyWater" end
-    if a == "--source=build" or a == "--src=build" then SRC = "build" end
 end
 
-local REPO_URL      = "https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/"
-local BASE_URL      = REPO_URL .. SRC .. "/"
-local MIRROR_PREFIX = "https://github.xutongxin.me/"
-local RETRY_ROUNDS  = 3
+local BUNDLE_VERSION = "v5.0"
+local REPO_URL       = "https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/build/"
+local MIRROR_PREFIX  = "https://github.xutongxin.me/"
+local RETRY_ROUNDS   = 3
 
-local CWD           = shell.getWorkingDirectory():gsub("//+", "/")
-local APP_DIR       = (CWD .. "/PurifyWater"):gsub("//+", "/")
-local STAGE_DIR     = (CWD .. "/.PurifyWater.update"):gsub("//+", "/")
-local BACKUP_DIR    = (CWD .. "/.PurifyWater.backup"):gsub("//+", "/")
-local LOG_PATH      = (CWD .. "/installer.log"):gsub("//+", "/")
-local MANIFEST_REL  = "data/install_manifest.txt"
+local CWD            = shell.getWorkingDirectory():gsub("//+", "/")
+local APP_DIR        = (CWD .. "/PurifyWater"):gsub("//+", "/")
+local STAGE_DIR      = (CWD .. "/.PurifyWater.update"):gsub("//+", "/")
+local BACKUP_DIR     = (CWD .. "/.PurifyWater.backup"):gsub("//+", "/")
+local PAYLOAD_PATH   = (CWD .. "/.PurifyWater.payload"):gsub("//+", "/")
+local LOG_PATH       = (CWD .. "/installer.log"):gsub("//+", "/")
+local MANIFEST_REL   = "data/install_manifest.txt"
 
 -- 首次从旧安装器迁移时，需要明确清理的旧文件。以后依赖 manifest 自动计算。
 local RETIRED_FILES = {
     "backend/store/records.lua",
-    "start.lua", -- 历史启动器：不再生成；老机器靠这条清掉
+    "start.lua",
 }
 
--- 文件清单由 build_deploy.py 按依赖闭包生成，分三张：
---   COMMON  = 两端都要；MAIN = 仅主控端；MONITOR = 仅镜像端（monitor.lua）
--- 于是：主控机没有 monitor.lua，镜像机没有 backend/ 与 main.lua（结构性只读）。
+-- 文件清单由 build_deploy.py 按依赖闭包生成。
 local FILE_LIST_COMMON = {
     "core/bootstrap.lua",
     "core/locate.lua",
@@ -84,6 +79,15 @@ local FILE_LIST_MAIN = {
     "backend/app/net.lua",
     "backend/app/plan.lua",
     "backend/app/produce.lua",
+    "backend/app/produce/binding.lua",
+    "backend/app/produce/executor.lua",
+    "backend/app/produce/jobs.lua",
+    "backend/app/produce/patrol.lua",
+    "backend/app/produce/readiness.lua",
+    "backend/app/produce/sides.lua",
+    "backend/app/produce/view.lua",
+    "backend/app/produce_job.lua",
+    "backend/app/produce_runtime.lua",
     "backend/app/rates.lua",
     "backend/app/system.lua",
     "backend/app/watch.lua",
@@ -96,9 +100,14 @@ local FILE_LIST_MAIN = {
     "backend/domain/modes/threshold.lua",
     "backend/domain/power.lua",
     "backend/domain/produce.lua",
+    "backend/domain/produce/check.lua",
+    "backend/domain/produce/interface.lua",
     "backend/domain/produce/t3.lua",
     "backend/domain/produce/t4.lua",
+    "backend/domain/produce/t5.lua",
+    "backend/domain/produce/t6.lua",
     "backend/domain/produce/t7.lua",
+    "backend/domain/produce/t8.lua",
     "backend/domain/rates.lua",
     "backend/domain/rules.lua",
     "backend/domain/tracker.lua",
@@ -119,6 +128,7 @@ local FILE_LIST_MAIN = {
     "backend/store/levels_config.lua",
     "backend/store/log_file.lua",
     "backend/store/produce.lua",
+    "backend/store/produce/format.lua",
     "backend/store/produce_config.lua",
     "backend/store/rates_config.lua",
     "backend/store/settings.lua",
@@ -133,7 +143,6 @@ local FILE_LIST_MONITOR = {
     "monitor.lua",
 }
 
--- 本次要装的文件 = 公共 + 本角色专属
 local FILE_LIST = {}
 for _, rel in ipairs(FILE_LIST_COMMON) do FILE_LIST[#FILE_LIST + 1] = rel end
 local extra = (ROLE == "monitor") and FILE_LIST_MONITOR or FILE_LIST_MAIN
@@ -185,105 +194,185 @@ local function safeRel(rel)
 end
 
 local function readManifest()
-    local set, count = {}, 0
-    if not filesystem.exists(APP_DIR .. "/" .. MANIFEST_REL) then return set end
+    local set, count, meta = {}, 0, {}
+    if not filesystem.exists(APP_DIR .. "/" .. MANIFEST_REL) then return set, count, meta end
     local f = io.open(APP_DIR .. "/" .. MANIFEST_REL, "r")
-    if not f then return set end
+    if not f then return set, count, meta end
     local text = f:read("*a") or ""
     f:close()
     for line in text:gmatch("[^\r\n]+") do
         line = line:gsub("^%s+", ""):gsub("%s+$", "")
-        if line ~= "" and line:sub(1, 1) ~= "#" and safeRel(line) then
+        if line:sub(1, 1) == "#" then
+            local key, value = line:match("^#%s*([%w_]+)=([^%s]+)")
+            if key then meta[key] = value end
+        elseif line ~= "" and safeRel(line) then
             set[line] = true
             count = count + 1
         end
     end
-    return set, count
+    return set, count, meta
 end
 
 local function writeManifest(root, list)
     ensureDir(root .. "/data")
     local f, err = io.open(root .. "/" .. MANIFEST_REL, "w")
     if not f then return false, err end
-    f:write("# PurifyWater install manifest v1\n")
-    f:write("# role=" .. ROLE .. "\n")
+    f:write("# PurifyWater install manifest v2\n")
+    f:write("# bundle_version=" .. BUNDLE_VERSION .. "\n")
+    f:write("# bundle_role=" .. ROLE .. "\n")
     for _, rel in ipairs(list) do f:write(rel .. "\n") end
     f:close()
     return true
 end
 
+local function installedCurrent(manifest, count, meta)
+    if meta.bundle_version ~= BUNDLE_VERSION
+        or meta.bundle_role ~= ROLE then
+        return false
+    end
+    if count ~= #FILE_LIST then return false end
+    for _, rel in ipairs(FILE_LIST) do
+        if not manifest[rel] or not filesystem.exists(APP_DIR .. "/" .. rel) then
+            return false
+        end
+    end
+    return true
+end
+
+local function payloadName()
+    return ((ROLE == "monitor") and "payload_monitor" or "payload_main") .. ".bundle"
+end
+
 local function urlFor(ch, rel)
-    local direct = BASE_URL .. rel
+    local direct = REPO_URL .. rel
     if ch == 2 and MIRROR_PREFIX ~= "" then return MIRROR_PREFIX .. direct end
     return direct
 end
 
-local function fetch(url, dest)
-    local tmp = dest .. ".tmp"
+local function fetchPayload(url, dest)
+    local tmp = dest .. ".download"
     filesystem.remove(tmp)
+    filesystem.remove(dest)
     local rc = shell.execute("wget -f " .. url .. " " .. tmp)
     if not filesystem.exists(tmp) or filesystem.size(tmp) == 0 then
         filesystem.remove(tmp)
-        return false, "没下到内容（wget 返回 " .. tostring(rc) .. "）"
-    end
-    local okLoad, chunk, lerr = pcall(loadfile, tmp)
-    if not okLoad or not chunk then
-        log("      [诊断] loadfile 未通过（不判失败）：" .. tostring(not okLoad and chunk or lerr))
+        return false, "没下到载荷（wget 返回 " .. tostring(rc) .. "）"
     end
     local size = filesystem.size(tmp)
-    filesystem.remove(dest)
     local _, mvErr = filesystem.rename(tmp, dest)
     if filesystem.exists(tmp) then
         filesystem.remove(tmp)
-        return false, "改名失败：" .. tostring(mvErr)
+        return false, "载荷改名失败：" .. tostring(mvErr)
     end
     return true, size
 end
 
-local function downloadAll()
+local function readExact(f, size)
+    local chunks, remaining = {}, size
+    while remaining > 0 do
+        local chunk = f:read(math.min(remaining, 4096))
+        if not chunk or #chunk == 0 then return nil end
+        chunks[#chunks + 1] = chunk
+        remaining = remaining - #chunk
+    end
+    return table.concat(chunks)
+end
+
+local function extractPayload(path)
+    local f, err = io.open(path, "rb")
+    if not f then return false, "打不开载荷：" .. tostring(err) end
+
     removeTree(STAGE_DIR)
     ensureDir(STAGE_DIR)
+    local expected = {}
+    for _, rel in ipairs(FILE_LIST) do expected[rel] = true end
 
-    local pending = {}
-    for i, rel in ipairs(FILE_LIST) do pending[i] = rel end
-    local reasons, ch, round = {}, PREFER, 0
-
-    -- 【失败即换通道】一轮用一个通道；某个文件失败就立刻中止本轮、换另一个通道，
-    --   把"失败的那个"与"本轮还没试的"一起放到下一轮重试（一次失败只多花 1 次 wget）。
-    while true do
-        print(string.format("── 第 %d 轮：%s 通道，待下 %d 个", round + 1, CH_NAME[ch], #pending))
-        local failed = {}
-        for i, rel in ipairs(pending) do
-            local dir = rel:match("^(.*)/[^/]*$")
-            if dir then ensureDir(STAGE_DIR .. "/" .. dir) end
-            local url = urlFor(ch, rel)
-            local ok, info = fetch(url, STAGE_DIR .. "/" .. rel)
-            if ok then
-                print(string.format("  [%2d/%2d] %-36s OK (%s 字节)", i, #pending, rel, info))
-                log(string.format("第 %d 轮 %s %s -> OK (%s 字节)", round + 1, CH_NAME[ch], rel, info))
-            else
-                failed[#failed + 1] = rel
-                reasons[rel] = tostring(info)
-                print(string.format("  [%2d/%2d] %-36s 失败（%s）", i, #pending, rel, info))
-                print(string.format("  → 立刻换到另一通道，把剩下的 %d 个（含这个）放下一轮重试",
-                    #pending - i + 1))
-                log(string.format("第 %d 轮 %s %s -> %s", round + 1, CH_NAME[ch], rel, info))
-                -- 本轮还没试的文件全部顺延到下一轮（用另一个通道）
-                for k = i + 1, #pending do failed[#failed + 1] = pending[k] end
-                if MIRROR_PREFIX ~= "" then ch = (ch == 1) and 2 or 1 end
-                break
-            end
+    local ok, reason = xpcall(function()
+        local header = f:read("*l")
+        if not header then error("载荷缺头部") end
+        local magic, rest = header:match("^(%S+)%s+(.*)$")
+        if magic ~= "PW1" then error("载荷 magic 不对") end
+        local meta = {}
+        for key, value in rest:gmatch("([%w_]+)=([^%s]+)") do meta[key] = value end
+        if meta.role ~= ROLE then error("载荷角色不一致：" .. tostring(meta.role)) end
+        if meta.version ~= BUNDLE_VERSION then
+            error("载荷版本不一致：" .. tostring(meta.version) .. " / " .. BUNDLE_VERSION)
+        end
+        local count = tonumber(meta.count)
+        if not count or count < 1 or count ~= #FILE_LIST then
+            error("载荷文件数不一致：" .. tostring(meta.count) .. " / " .. #FILE_LIST)
         end
 
-        pending = failed
-        if #pending == 0 then return true end
-        if round >= RETRY_ROUNDS then break end
-        round = round + 1
-    end
+        local seen = {}
+        for _ = 1, count do
+            local rel = f:read("*l")
+            if not rel or not safeRel(rel) then error("载荷路径非法：" .. tostring(rel)) end
+            if seen[rel] then error("载荷路径重复：" .. rel) end
+            if not expected[rel] then error("载荷含清单外文件：" .. rel) end
+            local sizeLine = f:read("*l")
+            local size = tonumber(sizeLine)
+            if not size or size < 0 or size % 1 ~= 0 then
+                error("载荷长度非法：" .. rel .. " / " .. tostring(sizeLine))
+            end
+            local content = readExact(f, size)
+            if content == nil then error("载荷内容截断：" .. rel) end
+            local sep = f:read(1)
+            if sep ~= "\n" then error("载荷缺分隔换行：" .. rel) end
 
-    local lines = { "下载失败：" }
-    for _, rel in ipairs(pending) do lines[#lines + 1] = "  " .. rel .. "：" .. tostring(reasons[rel]) end
-    error(table.concat(lines, "\n"))
+            local dir = rel:match("^(.*)/[^/]*$")
+            if dir then ensureDir(STAGE_DIR .. "/" .. dir) end
+            local out, openErr = io.open(STAGE_DIR .. "/" .. rel, "wb")
+            if not out then error("无法写入 staging：" .. rel .. " / " .. tostring(openErr)) end
+            out:write(content)
+            out:close()
+            seen[rel] = true
+        end
+        if f:read(1) ~= nil then error("载荷尾部有多余内容") end
+        for rel in pairs(expected) do
+            if not seen[rel] then error("载荷缺文件：" .. rel) end
+        end
+    end, debug.traceback)
+
+    f:close()
+    if not ok then
+        removeTree(STAGE_DIR)
+        return false, reason
+    end
+    return true
+end
+
+local function downloadPayload()
+    local rel = payloadName()
+    local tryOrder = (PREFER == 2) and { 2, 1 } or { 1, 2 }
+    local last = "未知错误"
+
+    if PREFER == 2 and MIRROR_PREFIX == "" then tryOrder = { 1 } end
+
+    for round = 1, RETRY_ROUNDS do
+        for _, ch in ipairs(tryOrder) do
+            local url = urlFor(ch, rel)
+            print(string.format("下载载荷：%s（%s，第 %d 轮）", rel, CH_NAME[ch], round))
+            local ok, info = fetchPayload(url, PAYLOAD_PATH)
+            if ok then
+                print(string.format("  下载完成：%s 字节", tostring(info)))
+                log(string.format("载荷 %s %s -> OK (%s 字节)", CH_NAME[ch], url, tostring(info)))
+                local extracted, why = extractPayload(PAYLOAD_PATH)
+                if extracted then
+                    filesystem.remove(PAYLOAD_PATH)
+                    return true
+                end
+                last = why
+                print("  分拆失败：" .. tostring(why))
+                log(string.format("载荷 %s 分拆失败：%s", CH_NAME[ch], tostring(why)))
+            else
+                last = info
+                print("  下载失败：" .. tostring(info))
+                log(string.format("载荷 %s -> %s", CH_NAME[ch], tostring(info)))
+            end
+        end
+    end
+    filesystem.remove(PAYLOAD_PATH)
+    error("载荷下载失败：" .. tostring(last))
 end
 
 local function moveTo(src, dst)
@@ -299,7 +388,7 @@ end
 
 local function commit(oldManifest)
     local managed = {}
-    local newSet  = {}
+    local newSet = {}
     for _, rel in ipairs(FILE_LIST) do managed[#managed + 1] = rel; newSet[rel] = true end
     managed[#managed + 1] = MANIFEST_REL; newSet[MANIFEST_REL] = true
 
@@ -364,21 +453,26 @@ local function main()
     if not component.isAvailable("internet") then
         error("没检测到因特网卡（Internet Card）。")
     end
-    if PREFER == 2 and MIRROR_PREFIX == "" then PREFER = 1 end
 
     print("== 净化水线 安装器核心 ==")
-    print("角色：" .. (ROLE == "monitor" and "镜像端（公共 + monitor.lua）" or "主控端（公共 + 主控专属）"))
-    print("变体：" .. SRC)
+    print("角色：" .. (ROLE == "monitor" and "镜像端" or "主控端"))
+    print("版本：" .. BUNDLE_VERSION)
     print("目标：" .. APP_DIR)
     print("文件：" .. #FILE_LIST .. " 个")
 
-    local oldManifest, oldCount = readManifest()
-    downloadAll()
+    local oldManifest, oldCount, oldMeta = readManifest()
+    if installedCurrent(oldManifest, oldCount, oldMeta) then
+        print("当前版本与角色已安装，跳过载荷下载。")
+        flushLog("安装跳过：已是 " .. BUNDLE_VERSION .. " / " .. ROLE)
+        return true
+    end
+
+    downloadPayload()
 
     local managed = {}
     for _, rel in ipairs(FILE_LIST) do managed[#managed + 1] = rel end
     managed[#managed + 1] = MANIFEST_REL
-    local okM, errM = writeManifest(STAGE_DIR, managed)
+    local okM, errM = writeManifest(STAGE_DIR, FILE_LIST)
     if not okM then error("manifest 生成失败：" .. tostring(errM)) end
 
     print(string.format("同步：旧清单 %d 个，新清单 %d 个", oldCount or 0, #managed))
@@ -393,6 +487,7 @@ local ok, result, err = xpcall(main, debug.traceback)
 if not ok then
     print("\n[安装出错]\n" .. tostring(result))
     removeTree(STAGE_DIR)
+    filesystem.remove(PAYLOAD_PATH)
     flushLog("安装失败：" .. tostring(result))
     return false, result
 end

@@ -52,6 +52,8 @@ function api.read.system()
         mode             = state.read.mode(),
         enforceThreshold = state.read.enforceThreshold() == true,
         t7Boost          = state.read.t7Boost(),
+        reflux           = state.read.reflux(),
+        t6DualLithium    = state.read.t6DualLithium(),
         energyFactor     = state.read.energyFactor(), -- 能源仓利用因子（%）：可用 = 最大 × 因子
         -- 配置表格各列算不算数（勾选/阈值/权重/增产）：判定只有一处（app/system.effectiveConfig），
         --   界面照着灰显与写日志（不生效的照样能改，只是"已保存待用"）
@@ -252,6 +254,20 @@ end
 -- @param value number|string 只能是 constants.T7_BOOST_OPTIONS 里的档位
 COMMANDS.t7_boost_set = function(value)
     local ok, text = ratesApp.setT7Boost(value)
+    if not ok then return false, text end
+    return true, ""
+end
+
+--- 设置 T1/T2 是否启用回流数据收集
+COMMANDS.reflux_set = function(level, enabled)
+    local ok, text = ratesApp.setReflux(level, enabled)
+    if not ok then return false, text end
+    return true, ""
+end
+
+--- 设置 T6 是否使用双锂数据收集
+COMMANDS.t6_dual_lithium_set = function(enabled)
+    local ok, text = ratesApp.setT6DualLithium(enabled)
     if not ok then return false, text end
     return true, ""
 end

@@ -17,7 +17,7 @@
 
 local t4 = {}
 
-local ACID = "hydrochloricacid_gt5u" -- 氢氯酸（实机注册名，探针确认）
+local ACID = "hydrochloricacid_gt5u" -- 氢氯酸（实机注册名）
 local ALKALINE = {
     name   = "gregtech:gt.metaitem.01",
     damage = 2685,
@@ -28,19 +28,30 @@ local PH_TARGET    = 7
 local PH_TOLERANCE = 0.05
 local PH_PER_DUST  = 0.01
 local PH_PER_10_ACID = 0.01
+local MAX_DUST     = 250 -- 单轮最大实际需求
+local MAX_ACID     = 2500
+local STOCK_DUST   = 64  -- 物品开闸阈值：按大多数物品容器可读的一格堆叠量
+local FLUIDS = { ACID }
+local ITEMS  = { ALKALINE }
 
 
 --- 侧位自动配置用：输入侧需要氢氯酸（流体）
-function t4.requiredFluids() return { ACID } end
+function t4.requiredFluids() return FLUIDS end
 
 --- 侧位自动配置用：输入侧需要氢氧化钠粉（物品）
-function t4.requiredItems() return { ALKALINE } end
+function t4.requiredItems() return ITEMS end
 
 --- 该级同时用物品和流体（输出侧需要物品+流体存储空间）
 function t4.usesItems() return true end
 
---- 原料巡检按“当前 pH 的实际需求”检查（不是固定最大补差）
-function t4.patrolByNeed() return true end
+--- 原料巡检用：物品按单格 64、流体按单轮最大消耗检查，不按当前 pH 的临时需求。
+--- T4 初始 pH 范围为 4.5-9.5，实际单轮最大需求为 250 个粉 / 2500 L 酸；
+--- 但物品开闸按一格 64 检查，实际投料由安全泵分批补足。
+local STOCK = {
+    { item = ALKALINE, amount = STOCK_DUST, label = "氢氧化钠粉" },
+    { fluid = ACID, amount = MAX_ACID, label = "氢氯酸" }
+}
+function t4.stockRequirements() return STOCK end
 
 --- 该级最低转运速率（mB/s）
 function t4.minTransferRate() return 50000 end
@@ -48,25 +59,13 @@ function t4.minTransferRate() return 50000 end
 --- 氢氯酸单笔必须是 10L 的倍数（机器按 10L 取整，零头会被浪费）
 function t4.fluidUnit() return 10 end
 
---- 从传感器行读取 pH（行尾数字；去掉 § 颜色码）
--- @param lines table
--- @return number|nil
-local function phValue(lines)
-    for _, raw in ipairs(lines or {}) do
-        local text = tostring(raw):gsub("§.", "")
-        local value = text:match("ph\\+([%d%.]+)%s*$")
-        if value then return tonumber(value) end
-    end
-    return nil
-end
-
---- 传感器原文 → 本轮需求（补粉/补酸/不投）
--- @param lines table 传感器文本行
+--- pH → 本轮需求（补粉/补酸/不投）
+-- @param ph number
 -- @return table|nil 需求数组（空表 = 已达标；nil = 读不到 pH）
 -- @return string|nil 原因
 -- @return number|nil 当前 pH（日志用）
-function t4.need(lines)
-    local ph = phValue(lines)
+function t4.demand(ph)
+    ph = tonumber(ph)
     if ph == nil then return nil, "读不到 pH", nil end
     if ph <= 0 then return nil, "pH 尚未初始化", ph end
 
@@ -76,12 +75,32 @@ function t4.need(lines)
     end
 
     if errorValue > 0 then
-        local count = math.floor(errorValue / PH_PER_DUST + 0.5)
+        local count = math.min(MAX_DUST, math.floor(errorValue / PH_PER_DUST + 0.5))
         return { { item = ALKALINE, amount = count, label = "氢氧化钠粉" } }, nil, ph
     end
 
     local doses = math.floor((-errorValue) / PH_PER_10_ACID + 0.5)
-    return { { fluid = ACID, amount = doses * 10, label = "氢氯酸" } }, nil, ph
+    local amount = math.min(MAX_ACID, doses * 10)
+    return { { fluid = ACID, amount = amount, label = "氢氯酸" } }, nil, ph
 end
 
+function t4.need() return {}, nil, nil end
+
+function t4.operation(ctx)
+    local ph, err = ctx.sensorInfo("ph")
+    if ph == nil then return false, tostring(err or "读不到 pH") end
+    local demand, why = t4.demand(ph)
+    if not demand then return false, tostring(why) end
+    if #demand == 0 then return true end
+    for _, need in ipairs(demand) do
+        local ok, itemWhy
+        if need.item then
+            ok, itemWhy = ctx.transferItem(need.item, need.amount)
+        else
+            ok, itemWhy = ctx.transferFluid(need.fluid, need.amount)
+        end
+        if not ok then return false, itemWhy end
+    end
+    return true
+end
 return t4

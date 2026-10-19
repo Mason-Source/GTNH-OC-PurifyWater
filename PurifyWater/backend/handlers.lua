@@ -18,8 +18,9 @@
 --   派生类  parallel_write     -> system（内存学习 + 重算规则 + 重排）
 --           switch_mismatch    -> system（停会话 + 等待用户，不动机器）
 --           主机开关             -> 不走事件：watch 每轮观测对一次（电平语义，见 app/system）
---   制作自动化类 produce_changed -> system（开关 / 就绪性 / 缺料变化 -> 重判）
---                produce_cycle   -> produce（周期任务单，只入队不干活）
+--   制作自动化类 produce_changed -> system（开关 / 就绪性 / 缺料变化 -> 重判）+ produce（取消过期 operation）
+--                plant_observed  -> produce（active / 门控变化 -> 取消过期 operation）
+--                produce_cycle   -> produce（周期边界登记 operation）
 --   控制类  schedule_now       -> system（界面刷新触发一次立即调度）
 --------------------------------------------------------------------------------
 
@@ -57,12 +58,14 @@ function handlers.subscribe()
 
     -- 制作自动化类
     scheduler.on("produce_changed", system.onProduceChanged)
+    scheduler.on("produce_changed", produceApp.syncJobs)
+    scheduler.on("plant_observed", produceApp.syncJobs)
     scheduler.on("produce_cycle", produceApp.onCycleStarted)
 
     -- 控制类
     scheduler.on("schedule_now", system.onScheduleRequest)
 
-    return 17
+    return 19
 end
 
 return handlers

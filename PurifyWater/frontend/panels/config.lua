@@ -6,8 +6,8 @@
 -- 【依赖】frontend/{state,theme,widgets,layout}、shared/constants
 -- 【被谁用】frontend/render
 --
--- 8 级 ×（勾选/阈值/权重/增产/制作自动化）一张表；勾选点即切换，制作自动化格点开面板，其余列点开对应键盘。
--- 增产是 T7 专属档位，其余行画 -。文字列左对齐、数值列右对齐。
+-- 8 级 ×（勾选/阈值/权重/收集/制作自动化）一张表；勾选点即切换，制作自动化格点开面板，其余列点开对应键盘。
+-- 收集列复合：T1/T2 回流采集开关、T6 双锂采集开关、T7 增产倍率；其余行画 -。
 -- 生效性由 system.effectiveConfig() 决定：无效列灰显但照改照存；选中高亮压过灰显。
 -- 重画：只清标题+表头与变化的那一行，禁止先整段清空（未变行会永久消失）。
 --------------------------------------------------------------------------------
@@ -28,7 +28,7 @@ local COLS      = {
     { key = "enabled", head = "勾选" },
     { key = "threshold", head = "阈值 kL", align = "right" },
     { key = "weight", head = "权重", align = "right" },
-    { key = "boost", head = "增产", align = "right" },
+    { key = "boost", head = "收集", align = "right" },
     { key = "produce", head = "制作自动化", align = "right" }
 }
 -- 列宽：制作自动化放最后一列（右对齐）
@@ -160,12 +160,23 @@ function config.draw(data)
             end
             widgets.drawTextRight(cols[4].x, cols[4].w, y, wText, wColor, cellBg(4))
 
-            -- ⑤ 增产（数值列：右对齐）：T7 专属的全局档位，其它行画 `-` 占位
-            local isT7    = (level == constants.T7_LEVEL)
-            local bText   = isT7 and numberText(sys.t7Boost) or "-"
-            local bColor  = (not isT7) and theme.COLORS.TEXT_DISABLED
-                or ((sel and fstate.editField == "boost") and theme.COLORS.TEXT_YELLOW
-                    or (eff.boost and theme.COLORS.TEXT or theme.COLORS.TEXT_DISABLED))
+            -- ⑤ 收集（复合列）：T1/T2 回流、T6 双锂、T7 增产倍率；其它行画 `-`
+            local bText, bColor = "-", theme.COLORS.TEXT_DISABLED
+            if level == 1 or level == 2 then
+                local on = type(sys.reflux) == "table" and sys.reflux[level] == true
+                bText = "回流[" .. (on and "√" or " ") .. "]"
+                bColor = eff.boost and (on and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED)
+                    or theme.COLORS.TEXT_DISABLED
+            elseif level == constants.T6_LEVEL then
+                local on = sys.t6DualLithium == true
+                bText = "双锂[" .. (on and "√" or " ") .. "]"
+                bColor = eff.boost and (on and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED)
+                    or theme.COLORS.TEXT_DISABLED
+            elseif level == constants.T7_LEVEL then
+                bText = "×" .. numberText(sys.t7Boost)
+                bColor = eff.boost and theme.COLORS.TEXT or theme.COLORS.TEXT_DISABLED
+            end
+            if sel and fstate.editField == "boost" then bColor = theme.COLORS.TEXT_YELLOW end
             widgets.drawTextRight(cols[5].x, cols[5].w, y, bText, bColor, cellBg(5))
 
             -- ⑥ 制作自动化（数值列：右对齐）：点开该级面板；状态短文本 / 颜色由 decorate 给
@@ -173,12 +184,14 @@ function config.draw(data)
 
         end
 
-        -- 热区每帧都登记（勾选格 = 点一下切换；制作自动化格 = 点开面板；阈值 / 权重格 = 点一下选中；"增产"只有 T7 那一行有）
+        -- 热区每帧都登记；收集列只对 T1/T2/T6/T7 登记
+        local hasBoost = (level == 1 or level == 2
+            or level == constants.T6_LEVEL or level == constants.T7_LEVEL)
         fstate.cells[level] = {
             enabled   = { x = cols[2].x, y = y, w = cols[2].w, h = 1 },
             threshold = { x = cols[3].x, y = y, w = cols[3].w, h = 1 },
             weight    = { x = cols[4].x, y = y, w = cols[4].w, h = 1 },
-            boost     = (level == constants.T7_LEVEL)
+            boost     = hasBoost
                 and { x = cols[5].x, y = y, w = cols[5].w, h = 1 } or nil,
             produce   = row.produceClickable and { x = cols[6].x, y = y, w = cols[6].w, h = 1 } or nil
         }
@@ -196,7 +209,10 @@ function config.fingerprint(data)
     local parts = {
         tostring(area.x or 0), tostring(area.y or 0), tostring(area.w or 0), tostring(area.h or 0),
         tostring(sys.priority), tostring(sys.mode), tostring(sys.enforceThreshold),
-        tostring(sys.t7Boost), tostring(sys.energyFactor), tostring((data.net or {}).strength),
+        tostring(sys.t7Boost), tostring(sys.t6DualLithium),
+        tostring(type(sys.reflux) == "table" and sys.reflux[1] or nil),
+        tostring(type(sys.reflux) == "table" and sys.reflux[2] or nil),
+        tostring(sys.energyFactor), tostring((data.net or {}).strength),
         tostring(eff.enabled), tostring(eff.threshold),
         tostring(eff.weight), tostring(eff.boost),
         tostring(fstate.editLevel or 0), tostring(fstate.editField or ""),

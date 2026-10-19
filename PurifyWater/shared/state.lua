@@ -14,8 +14,9 @@ local constants = require("shared.constants")
 local F = {
     facts   = { plants = {}, fluids = {}, powerMax = 0 },
     learn   = {},
-    config  = { rules = {}, weights = {}, mode = "threshold", priority = "low",
-                enforceThreshold = true, t7Boost = 1, energyFactor = 100, netStrength = 20 },
+    config  = { rules = {}, weights = {}, reflux = {}, mode = "threshold", priority = "low",
+                enforceThreshold = true, t7Boost = 1, t6DualLithium = false,
+                energyFactor = 100, netStrength = 20 },
     session = { running = false, awaiting = false, awaitReason = nil, lastSuggest = nil,
                 autostart = false, autostartStale = false, autostartPath = nil },
     plan    = { suggest = {}, lastPlan = {}, notes = {}, budget = 0 },
@@ -56,6 +57,8 @@ function read.mode()     return F.config.mode end
 function read.priority() return F.config.priority end
 function read.enforceThreshold() return F.config.enforceThreshold end
 function read.t7Boost()  return F.config.t7Boost end
+function read.reflux()   return F.config.reflux end
+function read.t6DualLithium() return F.config.t6DualLithium == true end
 function read.running()  return F.session.running end
 function read.awaiting() return F.session.awaiting end
 function read.awaitReason() return F.session.awaitReason end
@@ -162,10 +165,13 @@ function write.setRules(t)    F.config.rules = t or {} end
 function write.setRuleLevel(level, rule) F.config.rules[level] = rule end
 function write.setWeights(t)  F.config.weights = t or {} end
 function write.setWeightLevel(level, w) F.config.weights[level] = w end
+function write.setReflux(t)   F.config.reflux = t or {} end
+function write.setRefluxLevel(level, on) F.config.reflux[level] = (on == true) end
 function write.setMode(v)     F.config.mode = v end
 function write.setPriority(v) F.config.priority = v end
 function write.setEnforce(v)  F.config.enforceThreshold = v end
 function write.setBoost(v)    F.config.t7Boost = v end
+function write.setT6DualLithium(v) F.config.t6DualLithium = (v == true) end
 function write.setEnergyFactor(v) F.config.energyFactor = v end
 function write.netSetStrength(v) F.config.netStrength = tonumber(v) or 0 end
 

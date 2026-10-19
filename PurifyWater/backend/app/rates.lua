@@ -113,6 +113,42 @@ function app.setT7Boost(value)
     return true, ""
 end
 
+--- 设 T1/T2 是否启用回流数据收集
+-- @param level number
+-- @param enabled boolean
+-- @return boolean ok
+-- @return string 说明
+function app.setReflux(level, enabled)
+    level = tonumber(level)
+    if level ~= 1 and level ~= 2 then return false, "回流数据收集只支持 T1/T2" end
+    if type(enabled) ~= "boolean" then return false, "开关值无效" end
+
+    local ok, err = rates_config.setReflux(level, enabled)
+    if not ok then return false, "写配置失败（settings.txt）：" .. tostring(err) end
+
+    logs.system(string.format("%s 回流数据收集：%s%s", constants.levelLabel(level),
+        enabled and "开" or "关",
+        system.effectiveConfig().boost and "" or IDLE_NOTE))
+    scheduler.emit("rates_changed", { why = "回流数据收集变更" })
+    return true, ""
+end
+
+--- 设 T6 是否使用双锂数据收集（基础成功率 0.8 -> 0.9）
+-- @param enabled boolean
+-- @return boolean ok
+-- @return string 说明
+function app.setT6DualLithium(enabled)
+    if type(enabled) ~= "boolean" then return false, "开关值无效" end
+
+    local ok, err = rates_config.setT6DualLithium(enabled)
+    if not ok then return false, "写配置失败（settings.txt）：" .. tostring(err) end
+
+    logs.system(string.format("T6紫外 双锂数据收集：%s%s", enabled and "开" or "关",
+        system.effectiveConfig().boost and "" or IDLE_NOTE))
+    scheduler.emit("rates_changed", { why = "T6 双锂数据收集变更" })
+    return true, ""
+end
+
 -- 事件入口：配置类事实 -> 发布 / 审计 / 重排（publish 必须最先）
 
 --- 主模式切换：发布实现整套换掉

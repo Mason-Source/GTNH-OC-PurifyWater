@@ -18,6 +18,9 @@
 --   fluidUnit() -> number  流体单笔步长（可选；T4=10L）
 --   patrolByNeed() -> boolean  原料巡检按 need() 的当前需求检查（可选；T4）
 --   minTransferRate() -> number|nil  该级最低转运速率（可选；低于则判未就绪）
+--   operation(ctx) -> boolean, reason  该级一次操作的流程（可选；由 app 登记到 produce_runtime）
+--   priority -> number|nil  该级 operation 的调度优先级（可选；越小越优先）
+--   recoversTargetItems -> boolean  operation 自行回收目标侧残留物品（可选；T6）
 
 -- 【判据】就绪 = 该级机器全部已绑定 + 绑定的转运器都在网；
 --   运行期拦截 = 未就绪 或 原料巡检维护的强制关断（forceOff）。
@@ -25,6 +28,7 @@
 
 local constants = require("shared.constants")
 local state     = require("shared.state")
+local check     = require("backend.domain.produce.check")
 
 local produce   = {}
 
@@ -61,51 +65,8 @@ function produce.method(level)
     return impls[level]
 end
 
---- 短地址（原因文案用）
--- @param address string|nil
--- @return string
-local function short(address)
-    local s = tostring(address or "")
-    if s == "" then return "-" end
-    return s:sub(1, 8)
-end
-
---- 就绪性检查（纯函数；本阶段只有"绑定齐 + 在网"）
--- @param level number
--- @param units table 每台机器一条 { { machine=, transposer=nil|string, online=nil|boolean }, ... }
---                    （含绑定表里已不在注册表的机器：会被判"不在该级注册表"）
--- @param env table { machines = { [地址] = true } 该级注册表里的机器地址 }
--- @return boolean ok
--- @return string|nil reason（不可用的人话原因）
-function produce.check(level, units, env)
-    if type(level) ~= "number" then return false, "等级无效" end
-    if #units == 0 then return false, "该级没有机器" end
-
-    local unbound = 0
-    for _, unit in ipairs(units) do
-        if not (env.machines or {})[unit.machine] then
-            return false, "机器不在该级注册表：" .. short(unit.machine)
-        end
-        if not unit.transposer then
-            unbound = unbound + 1
-        elseif not unit.online then
-            return false, "转运器不在网：" .. short(unit.transposer)
-        elseif env.minRate then
-            local rate = unit.rate
-            if type(rate) ~= "number" then
-                return false, "读不到转运速率：" .. short(unit.machine)
-            end
-            if rate < env.minRate then
-                return false, string.format("转运器速度不足：%d < %d mB/s（机器 %s）",
-                    rate, env.minRate, short(unit.machine))
-            end
-        end
-    end
-    if unbound > 0 then
-        return false, string.format("还有 %d 台机器未绑定", unbound)
-    end
-    return true, nil
-end
+--- 就绪性检查（兼容出口）
+produce.check = check.run
 
 --- 与调度之间的唯一接口：该级当前是否被制作自动化拦住
 -- 启用且未就绪（invalid / 强制关断）-> true；未启用 -> false。
@@ -114,6 +75,8 @@ end
 -- @param level number
 -- @return boolean
 function produce.blocked(level)
+    -- 未注册实现级永远不参与调度拦截（即使 settings.txt 里留有旧开关）。
+    if not produce.has(level) then return false end
     local entry = state.read.produceLevel(level)
     if entry.enabled ~= true then return false end
     if entry.valid ~= true then return true end

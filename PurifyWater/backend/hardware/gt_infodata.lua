@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- backend/hardware/gt_infodata.lua
 --------------------------------------------------------------------------------
--- 【职责】解析 GT getSensorInformation() 文本 -> { parallel, success }（纯解析）
+-- 【职责】解析 GT getSensorInformation() 文本：common(parallel/success) 与按需字段 ph/temperature/controlSignal/lensRequest
 -- 【不做什么】不碰组件；并行读数由调用方用 isMachineActive 闸门（停机时报 1）
 -- 【依赖】无
 -- 【被谁用】backend/hardware/probes
@@ -11,6 +11,12 @@
 --------------------------------------------------------------------------------
 
 local gtInfodata = {}
+
+-- T6：不同版本分别输出“当前透镜请求”的 key / 本地化标签；只比较整行签名。
+local LENS_REQUEST_LABELS = {
+    "lens_requested", "lens requested", "current required lens", "required lens",
+    "current lens", "当前透镜", "所需透镜", "请求透镜", "需要的透镜"
+}
 
 -- ---- 字段识别表 ----
 -- keys 键优先，labels 标签兜底（均子串、大小写不敏感）；exclude 命中则放弃标签。
@@ -185,6 +191,112 @@ local function valueAt(raw, from)
     return gtInfodata.firstNumber(raw:sub(from))
 end
 
+--- 统一成行数组（兼容字符串输入）
+local function toLines(lines)
+    if lines == nil then return {} end
+    if type(lines) == "string" then
+        local out = {}
+        for line in tostring(lines):gmatch("[^\n]+") do out[#out + 1] = line end
+        return out
+    end
+    if type(lines) ~= "table" then return {} end
+    return lines
+end
+
+--- 标签结束位置（在原行 raw 上定位，避免色码改变字节位置）
+local function labelEnd(raw, labels)
+    local lower = tostring(raw):lower()
+    for _, label in ipairs(labels or {}) do
+        local pos = lower:find(label:lower(), 1, true)
+        if pos then return pos + #label end
+    end
+    return nil
+end
+
+local PH_LABELS = {
+    "current ph value", "current ph", "ph value", "ph 值", "当前 ph", "当前ph", "酸碱度"
+}
+local TEMP_LABELS = {
+    "current temperature", "temperature", "当前温度", "温度"
+}
+local SIGNAL_LABELS = {
+    "current control signal", "control signal", "control_signal", "控制信号"
+}
+
+--- pH（新版标签 / 旧版 ph\ 键 / 数值后带 pH）
+function gtInfodata.ph(lines)
+    for _, raw in ipairs(toLines(lines)) do
+        local plain = gtInfodata.stripColors(raw)
+        local from = labelEnd(raw, PH_LABELS)
+        if from then
+            local value = valueAt(raw, from)
+            if value ~= nil then return value end
+        end
+        local key = gtInfodata.splitLine(plain)
+        if key and key:lower():find("ph", 1, true) then
+            local kpos = raw:find(key, 1, true) or 1
+            local value = valueAt(raw, kpos + #key)
+            if value ~= nil then return value end
+        end
+        local value = gtInfodata.firstNumber(plain:match("([%-%d%.]+)%s*[pP][hH]"))
+        if value ~= nil then return value end
+    end
+    return nil
+end
+
+--- temperature（新版标签 / 旧版 key / 数值后带 K）
+function gtInfodata.temperature(lines)
+    for _, raw in ipairs(toLines(lines)) do
+        local plain = gtInfodata.stripColors(raw)
+        local from = labelEnd(raw, TEMP_LABELS)
+        if from then
+            local value = valueAt(raw, from)
+            if value ~= nil then return value end
+        end
+        local key = gtInfodata.splitLine(plain)
+        if key and key:lower():find("temperature", 1, true) then
+            local kpos = raw:find(key, 1, true) or 1
+            local value = valueAt(raw, kpos + #key)
+            if value ~= nil then return value end
+        end
+        local value = gtInfodata.firstNumber(plain:match("([%-%d%.]+)%s*[kK]"))
+        if value ~= nil then return value end
+    end
+    return nil
+end
+
+--- T6 当前请求透镜：返回去色码、去行号、压缩空白后的整行签名
+-- 2.8.4: `Current lens requested: Dilithium Lens`
+-- 2.9.0: `GT5U.infodata.purification_unit_uv_treatment.lens_requested\\琥珀透镜`
+-- @param lines table|string
+-- @return string|nil
+function gtInfodata.lensRequest(lines)
+    for _, raw in ipairs(toLines(lines)) do
+        local plain = gtInfodata.stripIndex(gtInfodata.stripColors(raw))
+        local lower = plain:lower()
+        for _, label in ipairs(LENS_REQUEST_LABELS) do
+            if lower:find(label, 1, true) then
+                plain = plain:gsub("%s+", " ")
+                return (plain:gsub("^%s+", ""):gsub("%s+$", ""))
+            end
+        end
+    end
+    return nil
+end
+
+--- control signal（0b 二进制 / 旧 control_signal 键 / 标签尾二进制）
+function gtInfodata.controlSignal(lines)
+    for _, raw in ipairs(toLines(lines)) do
+        local plain = gtInfodata.stripColors(raw)
+        local bits = plain:match("0[bB]([01]+)")
+        if not bits and labelEnd(raw, SIGNAL_LABELS) then
+            bits = plain:match("([01]+)%s*$")
+        end
+        if bits then return tonumber(bits, 2) end
+    end
+    return nil
+end
+
 --- 写入字段值（包一层规避 LuaLS 对动态键的窄表检查）。
 -- @param info table
 -- @param name string
@@ -210,14 +322,7 @@ function gtInfodata.parse(lines)
     }
     if lines == nil then return info end
 
-    -- 接受行数组或带 \n 的整串
-    local list = lines
-    if type(lines) == "string" then
-        list = {}
-        for line in tostring(lines):gmatch("[^\n]+") do list[#list + 1] = line end
-    elseif type(lines) ~= "table" then
-        return info
-    end
+    local list = toLines(lines)
 
     for _, raw in ipairs(list) do
         local plain = gtInfodata.stripColors(raw)
@@ -233,6 +338,33 @@ function gtInfodata.parse(lines)
         end
     end
     return info
+end
+
+gtInfodata.common = gtInfodata.parse
+
+function gtInfodata.parallel(lines)
+    return gtInfodata.common(lines).parallel
+end
+
+function gtInfodata.success(lines)
+    return gtInfodata.common(lines).success
+end
+
+local FIELD_PARSERS = {
+    parallel      = gtInfodata.parallel,
+    success       = gtInfodata.success,
+    ph            = gtInfodata.ph,
+    temperature   = gtInfodata.temperature,
+    controlSignal = gtInfodata.controlSignal,
+    lensRequest   = gtInfodata.lensRequest
+}
+
+--- 指定字段解析；nil/"common" = parallel+success
+function gtInfodata.extract(lines, field)
+    if field == nil or field == "common" then return gtInfodata.common(lines) end
+    local parser = FIELD_PARSERS[field]
+    if not parser then return nil, "unknown sensor field: " .. tostring(field) end
+    return parser(lines)
 end
 
 return gtInfodata

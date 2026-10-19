@@ -50,11 +50,15 @@ function M.apply(data)
                 rule = { threshold = 0, effectiveThreshold = 0, enabled = false } }
             data.levels[level] = row
         end
-        -- 制作自动化（配置表那一列）：四态文案 / 颜色 / 可点（点格子 = 打开该级面板）
-        -- 镜像端无此域 -> 画 -
+        -- 制作自动化（配置表那一列）：未实现等级画 - 且禁止点入；已实现等级四态可点。
+        -- 镜像端无此域 -> 同样画 -。
         local pr = (data.produce and data.produce.levels and data.produce.levels[level]) or {}
         row.produceEnabled = pr.enabled == true
-        if pr.state == "off" then
+        if pr.implemented ~= true then
+            row.produceText      = "-"
+            row.produceColor     = theme.COLORS.TEXT_DISABLED
+            row.produceClickable = false
+        elseif pr.state == "off" then
             row.produceText      = "[ ]"
             row.produceColor     = theme.COLORS.TEXT_DISABLED
             row.produceClickable = true

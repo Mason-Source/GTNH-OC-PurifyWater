@@ -90,7 +90,10 @@ local rateMode      = require("backend.domain.modes.rate")
 local produce       = require("backend.domain.produce")
 local produceT3     = require("backend.domain.produce.t3")
 local produceT4     = require("backend.domain.produce.t4")
+local produceT5     = require("backend.domain.produce.t5")
+local produceT6     = require("backend.domain.produce.t6")
 local produceT7     = require("backend.domain.produce.t7")
+local produceT8     = require("backend.domain.produce.t8")
 local render        = require("frontend.render")
 
 files.setRoot(appDir) -- 数据文件（配置里的相对名）都相对应用目录解析
@@ -113,7 +116,10 @@ state.write.setEnforce(models.bool(bootSettings.enforce_threshold, true))
 -- 【制作自动化方法】等级强挂钩：加新级 = 新文件 + 这里一行
 produce.register(constants.T3_LEVEL, produceT3)
 produce.register(constants.T4_LEVEL, produceT4)
+produce.register(constants.T5_LEVEL, produceT5)
+produce.register(constants.T6_LEVEL, produceT6)
 produce.register(constants.T7_LEVEL, produceT7)
+produce.register(constants.T8_LEVEL, produceT8)
 
 -- 能源仓利用因子（%）：可用功率 = 折算最大功率 × 因子；缺键/非法回落默认，并在首次启动补写一行
 local factor = tonumber(bootSettings.energy_factor)
@@ -126,7 +132,7 @@ if bootSettings[CONFIG.ENERGY.FACTOR_KEY] == nil then
     settings.set(CONFIG.ENERGY.FACTOR_KEY, factor)
 end
 
--- 速率配置（权重 + T7 增产倍率）：缺键会补默认值并落盘；同样必须早于任何 suggest()/evaluate()/audit()
+-- 速率配置（权重 + 回流 + T6 双锂 + T7 增产）：缺键补默认并落盘；必须早于任何 suggest()/evaluate()/audit()
 rates_config.load()
 
 trace.start(appDir, bootstrap.version())

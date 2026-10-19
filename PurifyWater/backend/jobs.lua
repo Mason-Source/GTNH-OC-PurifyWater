@@ -8,7 +8,7 @@
 -- 【被谁用】main.lua（启动时调 jobs.register()）
 --
 -- 任务清单见 ARCHITECTURE.md §3：T1 硬件(10s) / T2 水位(5s) / T3 观测(5s) /
--- T4 调度(5s) / T5 落盘(30s) / T6 内存(1s, --debug) / T7 广播(1s) / T8 制作自动化(1s)；
+-- T4 调度(5s) / T5 落盘(30s) / T6 内存(1s, --debug) / T7 广播(1s) / T8 制作自动化(1s) / operation runtime(0.5s)；
 -- T2s 设置对账只在启动时跑一次（不再周期扫描 settings.txt）。
 --------------------------------------------------------------------------------
 
@@ -34,6 +34,7 @@ local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
 local system           = require("backend.app.system")
 local produceApp       = require("backend.app.produce")
+local produceRuntime   = require("backend.app.produce_runtime")
 
 local jobs             = {}
 
@@ -379,7 +380,7 @@ function jobs.register()
     add("schedule", CONFIG.INTERVAL.SCHEDULE, jobs.schedule)          -- T4
     add("persist", CONFIG.INTERVAL.PERSIST, jobs.persist)             -- T5
     add("produce", CONFIG.INTERVAL.PRODUCE, produceApp.tick)          -- T8
-    add("produce_feed", CONFIG.INTERVAL.PRODUCE_FEED, produceApp.pump, { enabled = false }) -- 投料泵（有任务才启用）
+    add("produce_runtime", CONFIG.INTERVAL.PRODUCE_RUNTIME, produceRuntime.tick) -- 制作自动化 operation 调度
     -- T6 内存观测：仅 --debug 装模块、注册任务。
     if logs.isDebug() then
         memwatch = require("backend.debug.memwatch")

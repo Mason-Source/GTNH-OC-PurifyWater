@@ -2,7 +2,7 @@
 -- frontend/panels/keypad.lua
 --------------------------------------------------------------------------------
 -- 【职责】调度配置卡内的固定键盘槽：按选中列换键盘
---   threshold = 三段键盘；weight = 数字；boost = 选项键盘；
+--   threshold = 三段键盘；weight = 数字；boost = 复合收集选项键盘；
 --   produce = 制作自动化面板（机器绑定 / 解绑 / 翻页 / 开关）；勾选不走这里。
 -- 【不做什么】不画表格（panels/config）、不碰后端
 -- 【依赖】unicode、frontend/{state,theme,widgets}
@@ -142,8 +142,17 @@ local function hintText(data)
         return string.format("正在编辑 %s 权重：%s_   ✔ 保存 · ✘ 取消", label, fstate.editBuf or ""),
             theme.COLORS.TEXT_YELLOW
     elseif field == "boost" then
+        local sys = (data and data.system) or {}
+        if fstate.editLevel == 1 or fstate.editLevel == 2 then
+            local on = type(sys.reflux) == "table" and sys.reflux[fstate.editLevel] == true
+            return string.format("正在编辑 %s 回流数据收集（当前 %s）：点击切换",
+                label, on and "开" or "关"), theme.COLORS.TEXT_YELLOW
+        elseif fstate.editLevel == constants.T6_LEVEL then
+            return string.format("正在编辑 T6 双锂数据收集（当前 %s）：点击切换",
+                sys.t6DualLithium == true and "双锂" or "标准"), theme.COLORS.TEXT_YELLOW
+        end
         return string.format("正在编辑 T7 增产倍率（当前 ×%s）：点击切换档位",
-            numberText((data and data.system or {}).t7Boost)), theme.COLORS.TEXT_YELLOW
+            numberText(sys.t7Boost)), theme.COLORS.TEXT_YELLOW
     elseif field == "factor" then
         return string.format("正在编辑 能源仓利用因子（%d-%d%%）：%s_   ✔ 保存 · ✘ 取消",
             CONFIG.ENERGY.FACTOR_MIN, CONFIG.ENERGY.FACTOR_MAX, fstate.editBuf or ""),
@@ -353,13 +362,29 @@ function keypad.draw(data)
         -- 末行 4 键：右移半格居中
         drawPad(kx, slotY(#WEIGHTS), WEIGHTS, { [3] = math.floor((KEY_W + KEY_GAP) / 2) })
     elseif fstate.editField == "boost" then
-        local current = tonumber((data and data.system or {}).t7Boost) or 1
+        local sys     = (data and data.system) or {}
+        local level   = fstate.editLevel
         local options = {}
-        for _, value in ipairs(constants.T7_BOOST_OPTIONS) do
-            options[#options + 1] = {
-                label = "×" .. numberText(value), kind = "set_boost",
-                value = tostring(value), current = (value == current)
+        if level == 1 or level == 2 then
+            local on = type(sys.reflux) == "table" and sys.reflux[level] == true
+            options = {
+                { label = "开", kind = "set_reflux", value = true, current = on },
+                { label = "关", kind = "set_reflux", value = false, current = not on }
             }
+        elseif level == constants.T6_LEVEL then
+            local on = sys.t6DualLithium == true
+            options = {
+                { label = "标准", kind = "set_t6_dual", value = false, current = not on },
+                { label = "双锂", kind = "set_t6_dual", value = true, current = on }
+            }
+        else
+            local current = tonumber(sys.t7Boost) or 1
+            for _, value in ipairs(constants.T7_BOOST_OPTIONS) do
+                options[#options + 1] = {
+                    label = "×" .. numberText(value), kind = "set_boost",
+                    value = tostring(value), current = (value == current)
+                }
+            end
         end
         drawOptions(area.x, slotY(1), area.w, options)
     end
@@ -374,7 +399,9 @@ function keypad.fingerprint(data)
     local parts = {
         tostring(area.x or 0), tostring(area.y or 0), tostring(area.w or 0), tostring(area.h or 0),
         tostring(fstate.editField or ""), tostring(fstate.editLevel or 0),
-        tostring(fstate.editBuf or ""), tostring(sys.t7Boost)
+        tostring(fstate.editBuf or ""), tostring(sys.t7Boost),
+        tostring(sys.t6DualLithium), tostring(type(sys.reflux) == "table" and sys.reflux[1] or nil),
+        tostring(type(sys.reflux) == "table" and sys.reflux[2] or nil)
     }
     local row = (data and fstate.editLevel) and data.levels[fstate.editLevel]
     if row then

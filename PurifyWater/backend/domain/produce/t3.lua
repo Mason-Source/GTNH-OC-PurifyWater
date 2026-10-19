@@ -17,14 +17,16 @@ local FLUID  = "polyaluminiumchloride"
 local AMOUNT = 900000
 
 local ENTRY = { fluid = FLUID, amount = AMOUNT, label = "聚氯化铝" }
+local FLUIDS = { FLUID }
+local STOCK  = { ENTRY }
 
 --- 侧位自动配置用：只有一种流体（只看有没有）
 -- @return table
-function t3.requiredFluids() return { FLUID } end
+function t3.requiredFluids() return FLUIDS end
 
 --- 原料巡检用：一份 = 900,000 mB
 -- @return table
-function t3.stockRequirements() return { ENTRY } end
+function t3.stockRequirements() return STOCK end
 
 --- 该级自动化的最低转运速率（mB/s；T3 专属）
 -- @return number
@@ -35,4 +37,9 @@ function t3.minTransferRate() return 2621440 end
 -- @return table 需求数组
 function t3.need(lines) return { ENTRY } end
 
+function t3.operation(ctx)
+    local ok, why = ctx.transferFluid(FLUID, AMOUNT)
+    if not ok then return false, why end
+    return true
+end
 return t3

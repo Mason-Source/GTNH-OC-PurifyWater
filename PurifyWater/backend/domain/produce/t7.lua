@@ -60,26 +60,13 @@ function t7.stockRequirements() return STOCK end
 function t7.minTransferRate() return 200000 end
 function t7.requiredFluids() return FLUIDS end
 
---- 控制信号行尾的数值（二进制读数；读不到返回 nil）
--- 行形如：GT5U...degasser.control_signal\\§e111（去掉颜色码后取行尾 0/1 串）
--- @param lines table 传感器文本行
--- @return number|nil
-local function controlValue(lines)
-    for _, raw in ipairs(lines or {}) do
-        local text = tostring(raw):gsub("§.", "")
-        local tail = text:match("control_signal\\+(%d+)%s*$")
-        if tail then return tonumber(tail, 2) end
-    end
-    return nil
-end
-
---- 传感器原文 → 本轮需求清单（位运算 + if；不打表）
--- @param lines table 传感器文本行（getSensorInformation 原样）
+--- 控制信号数值 → 本轮需求清单
+-- @param signal number 二进制控制值
 -- @return table|nil 需求数组（空表 = 无需求；nil = 读不到控制信号）
 -- @return string|nil 原因
 -- @return number|nil 原始控制数（日志用）
-function t7.need(lines)
-    local n = controlValue(lines)
+function t7.demand(signal)
+    local n = tonumber(signal)
     if n == nil then return nil, "读不到控制信号", nil end
     if n >= 8 then return {}, nil, n end               -- 位4：忽略全部位
 
@@ -104,5 +91,23 @@ function t7.need(lines)
     return out, nil, n
 end
 
+function t7.need() return {}, nil, nil end
 
+function t7.operation(ctx)
+    local signal, err = ctx.sensorInfo("controlSignal")
+    if signal == nil then return false, tostring(err or "读不到控制信号") end
+    local demand, why = t7.demand(signal)
+    if not demand then return false, tostring(why) end
+    if #demand == 0 then return true end
+    for _, need in ipairs(demand) do
+        local ok, itemWhy
+        if need.fluid then
+            ok, itemWhy = ctx.transferFluid(need.fluid, need.amount)
+        else
+            ok, itemWhy = ctx.transferAny(need.any, need.amount)
+        end
+        if not ok then return false, itemWhy end
+    end
+    return true
+end
 return t7

@@ -62,11 +62,15 @@ local function switchTab(tab)
 end
 
 --- 点表格里的某一格 = 选中它（键盘槽随即换成那一列的键盘）
--- 数字列（阈值 / 权重）的缓冲直接填当前值 —— "选中就能改"；选项列（增产）用不着缓冲。
+-- 数字列（阈值 / 权重）的缓冲直接填当前值 —— "选中就能改"；收集列（回流/双锂/增产）用不着缓冲。
 -- 勾选不在这一路：它是**点一下直接切换**（见 applyCell），不选中、不开键盘。
 -- @param level number
 -- @param field string "threshold" / "weight" / "boost"
 local function selectCell(level, field)
+    if fstate.editLevel == level and fstate.editField == field then
+        fstate.editLevel, fstate.editField, fstate.editBuf = nil, nil, nil
+        return
+    end
     local row = fstate.lastData and fstate.lastData.levels[level]
     fstate.editLevel, fstate.editField = level, field
 
@@ -107,6 +111,8 @@ end
 local function applyCell(level, field)
     -- 制作自动化：点格子 = 打开该级面板（绑定 / 解绑 / 开关都在面板里）
     if field == "produce" then
+        local row = fstate.lastData and fstate.lastData.levels[level]
+        if not row or row.produceClickable ~= true then return end
         selectCell(level, "produce")
         fstate.producePage = 1
         return
@@ -124,7 +130,7 @@ end
 -- 【阈值 / 权重】数字列，要点 ✔ 才提交：
 --   digit -> 追加（从 "0" 开始不粘 0）；mul / div -> 乘 / 整除；set -> 覆盖成档位值；
 --   back -> 删末位；clear -> 空；copy -> 抄上一级阈值；commit -> 提交；cancel -> 弃掉选中。
--- 【增产】选项列，点哪个键就发哪个命令（没有"确定"这一步）；勾选不走键盘（点格子直接切换）。
+-- 【收集】复合选项列，点哪个键就发哪个命令（没有"确定"这一步）；勾选不走键盘（点格子直接切换）。
 -- 上界按"运算后的**数值**"判：阈值 ≥ 1e14 kL、权重 > MAX 一律不响应（空串是合法中间态，放行）——
 --   按位数判会漏：倍数键是"先算后判"，一步就能跨过位数边界。
 -- @param key table { kind = , value = }
@@ -140,10 +146,16 @@ local function applyKey(key)
         return
     end
 
-    -- ① 选项列（增产）：点哪个键就发哪个命令
+    -- ① 复合选项列（T1/T2 回流、T6 双锂、T7 增产）：点哪个键就发哪个命令
     if field == "boost" then
         if kind == "set_boost" then
             fire("t7_boost_set", tonumber(key.value))
+            clearEdit()
+        elseif kind == "set_reflux" then
+            fire("reflux_set", level, key.value == true)
+            clearEdit()
+        elseif kind == "set_t6_dual" then
+            fire("t6_dual_lithium_set", key.value == true)
             clearEdit()
         end
         return
