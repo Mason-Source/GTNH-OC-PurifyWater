@@ -38,6 +38,8 @@ local NEUTRONIUM     = { fluid = "molten.neutronium", amount = 4608, label = "�
 --- 原料巡检用：全部流体各"一份"（与当前控制信号无关）
 local STOCK = { SUPERCOOLANT, GAS_HE, SUPERCONDUCTOR, GAS_NE, NEUTRONIUM, GAS_KR, GAS_XE }
 
+t7.priority = 40 -- 最后调度
+
 --- 侧位自动配置用：7 项全集（只看有没有，不看量）
 local FLUIDS = {
     SUPERCOOLANT.fluid,

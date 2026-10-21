@@ -54,7 +54,7 @@ local SETTLE_SECONDS = 1.25
 
 t8.CATALYSTS = CATALYSTS
 t8.WALK      = WALK
-t8.priority  = 10 -- 时间敏感：优先于默认 operation，但让 T5 的长温控流程先行
+t8.priority  = 10 -- 排在 T6 后、T3 前
 
 --- 侧位自动配置用：输入总线需要六种催化剂，目标侧是空的输入总线
 function t8.requiredItems() return CATALYSTS end

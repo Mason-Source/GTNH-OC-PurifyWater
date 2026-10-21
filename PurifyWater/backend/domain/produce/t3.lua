@@ -20,6 +20,8 @@ local ENTRY = { fluid = FLUID, amount = AMOUNT, label = "聚氯化铝" }
 local FLUIDS = { FLUID }
 local STOCK  = { ENTRY }
 
+t3.priority = 20 -- 排在 T8 后、T4 前
+
 --- 侧位自动配置用：只有一种流体（只看有没有）
 -- @return table
 function t3.requiredFluids() return FLUIDS end

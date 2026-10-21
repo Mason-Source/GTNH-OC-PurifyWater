@@ -20,6 +20,7 @@
 --   minTransferRate() -> number|nil  该级最低转运速率（可选；低于则判未就绪）
 --   operation(ctx) -> boolean, reason  该级一次操作的流程（可选；由 app 登记到 produce_runtime）
 --   priority -> number|nil  该级 operation 的调度优先级（可选；越小越优先）
+--   当前顺序：T5(5) > T6(6) > T8(10) > T3(20) > T4(30) > T7(40)
 --   recoversTargetItems -> boolean  operation 自行回收目标侧残留物品（可选；T6）
 
 -- 【判据】就绪 = 该级机器全部已绑定 + 绑定的转运器都在网；

@@ -12,7 +12,7 @@
 -- 2.9.0 key ：GT5U.infodata.purification_unit_uv_treatment.lens_requested\...
 --
 -- 【机器机制】透镜放入瞬间成功率就 +10%；请求间隔 3～15 秒。
--- 因此每 5 秒采样一次需求签名，确认变化后才取出当前透镜。
+-- 因此每 3 秒采样一次需求签名，确认变化后才取出当前透镜。
 -- 透镜顺序固定：合成玉、琥珀、风之魔晶、绿宝石、魔力钻石、蓝黄玉、
 -- 紫水晶、氟铁电气石、双锂。
 --
@@ -26,8 +26,8 @@ local t6 = {}
 
 local GT_META   = "gregtech:gt.metaitem.01"
 local BW_LENS   = "bartworks:gt.bwMetaGeneratedlens"
-local WAIT      = 5
-local MAX_PROBES = 4
+local WAIT      = 3
+local MAX_PROBES = 6 -- 覆盖 3～15 秒的请求间隔
 
 local function lens(name, damage, label)
     return { name = name, damage = damage, label = label }
@@ -50,7 +50,7 @@ local REQUIRED = {}
 for index = 1, #LENSES - 1 do REQUIRED[index] = LENSES[index] end
 
 t6.LENSES = LENSES
-t6.priority = 6 -- 排在 T5 后、T8 前
+t6.priority = 6  -- 排在 T5 后、T8 前
 t6.recoversTargetItems = true
 
 --- 侧位自动配置用：来源侧需要透镜 1～8
@@ -71,7 +71,7 @@ local function readLensRequest(ctx)
     return signature, nil
 end
 
---- 周期起点读取需求签名；最多尝试 4 次，每次间隔 5 秒。
+--- 周期起点读取需求签名；最多尝试 6 次，每次间隔 3 秒。
 local function waitLensRequest(ctx)
     local lastErr
     for attempt = 1, MAX_PROBES do

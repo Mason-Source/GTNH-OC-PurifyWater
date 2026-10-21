@@ -2869,13 +2869,14 @@ end
 return interface
 
 backend/domain/produce/t3.lua
-539
+556
 local t3 = {}
 local FLUID  = "polyaluminiumchloride"
 local AMOUNT = 900000
 local ENTRY = { fluid = FLUID, amount = AMOUNT, label = "聚氯化铝" }
 local FLUIDS = { FLUID }
 local STOCK  = { ENTRY }
+t3.priority = 20
 function t3.requiredFluids() return FLUIDS end
 function t3.stockRequirements() return STOCK end
 function t3.minTransferRate() return 2621440 end
@@ -2888,7 +2889,7 @@ end
 return t3
 
 backend/domain/produce/t4.lua
-2162
+2179
 local t4 = {}
 local ACID = "hydrochloricacid_gt5u" 
 local ALKALINE = {
@@ -2905,6 +2906,7 @@ local MAX_ACID     = 2500
 local STOCK_DUST   = 64
 local FLUIDS = { ACID }
 local ITEMS  = { ALKALINE }
+t4.priority = 30
 function t4.requiredFluids() return FLUIDS end
 function t4.requiredItems() return ITEMS end
 function t4.usesItems() return true end
@@ -3036,8 +3038,8 @@ backend/domain/produce/t6.lua
 local t6 = {}
 local GT_META   = "gregtech:gt.metaitem.01"
 local BW_LENS   = "bartworks:gt.bwMetaGeneratedlens"
-local WAIT      = 5
-local MAX_PROBES = 4
+local WAIT      = 3
+local MAX_PROBES = 6
 local function lens(name, damage, label)
     return { name = name, damage = damage, label = label }
 end
@@ -3137,7 +3139,7 @@ end
 return t6
 
 backend/domain/produce/t7.lua
-2680
+2697
 local t7 = {}
 local SUPERCONDUCTORS = {
     "molten.longasssuperconductornameforuvwire",
@@ -3154,6 +3156,7 @@ local GAS_XE         = { fluid = "xenon",   amount = 2500,  label = "氙" }
 local SUPERCONDUCTOR = { any = SUPERCONDUCTORS, amount = 1440, label = "熔融超导粗胚" }
 local NEUTRONIUM     = { fluid = "molten.neutronium", amount = 4608, label = "熔融中子" }
 local STOCK = { SUPERCOOLANT, GAS_HE, SUPERCONDUCTOR, GAS_NE, NEUTRONIUM, GAS_KR, GAS_XE }
+t7.priority = 40
 local FLUIDS = {
     SUPERCOOLANT.fluid,
     GAS_HE.fluid,

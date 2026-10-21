@@ -34,6 +34,8 @@ local STOCK_DUST   = 64  -- 物品开闸阈值：按大多数物品容器可读�
 local FLUIDS = { ACID }
 local ITEMS  = { ALKALINE }
 
+t4.priority = 30 -- 排在 T3 后、T7 前
+
 
 --- 侧位自动配置用：输入侧需要氢氯酸（流体）
 function t4.requiredFluids() return FLUIDS end

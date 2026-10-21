@@ -32,7 +32,7 @@ t5.MAX_TEMP     = MAX_TEMP
 t5.MAX_CYCLES   = MAX_CYCLES
 t5.PLASMA_NEED  = PLASMA_NEED
 t5.COOLANT_NEED = COOLANT_NEED
-t5.priority     = 5
+t5.priority     = 5  -- 全链路最高优先级
 
 local FLUIDS = { PLASMA, COOLANT }
 local STOCK  = {
