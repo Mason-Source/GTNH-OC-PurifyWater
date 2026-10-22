@@ -1,17 +1,19 @@
 --------------------------------------------------------------------------------
 -- shared/constants.lua
 --------------------------------------------------------------------------------
--- 【职责】工程常量：等级映射、流体名、机器名、功耗、电压档
--- 【不做什么】不含可调参数（在 shared/config）、不含逻辑
--- 【依赖】无
+-- 【职责】工程常量：等级、机器/水位映射、功耗、电压档
+-- 【不做什么】不含可调参数（在 shared/config）、不含资源定义与逻辑
+-- 【依赖】shared/resources
 -- 【被谁用】shared/*、backend/*、frontend/*
 --------------------------------------------------------------------------------
+
+local resources                   = require("shared.resources")
 
 local constants                   = {}
 
 -- ---- 版本戳 ----
 -- 启动日志与痕迹写版本戳；改动需重启生效时抬号。debug 后缀在 core/bootstrap 拼。
-constants.CODE_VERSION            = "v5.0"
+constants.CODE_VERSION            = "v5.3"
 
 -- 等级：1~8 净水单元；0 = 净水主机
 constants.LEVEL_COUNT             = 8
@@ -62,17 +64,17 @@ function constants.parallelCap(level)
     return (level == 1) and constants.PARALLEL_CAP_T1 or constants.PARALLEL_CAP_OTHER
 end
 
--- ---- 流体 / 机器 ----
--- 等级 -> GT 流体注册名
+-- ---- 水位 / 机器 ----
+-- 等级 -> GT 流体注册名（从资源目录投影）
 constants.FLUID_NAMES             = {
-    [1] = "grade1purifiedwater",
-    [2] = "grade2purifiedwater",
-    [3] = "grade3purifiedwater",
-    [4] = "grade4purifiedwater",
-    [5] = "grade5purifiedwater",
-    [6] = "grade6purifiedwater",
-    [7] = "grade7purifiedwater",
-    [8] = "grade8purifiedwater"
+    [1] = resources.FLUIDS.PURIFIED_WATER_1.id,
+    [2] = resources.FLUIDS.PURIFIED_WATER_2.id,
+    [3] = resources.FLUIDS.PURIFIED_WATER_3.id,
+    [4] = resources.FLUIDS.PURIFIED_WATER_4.id,
+    [5] = resources.FLUIDS.PURIFIED_WATER_5.id,
+    [6] = resources.FLUIDS.PURIFIED_WATER_6.id,
+    [7] = resources.FLUIDS.PURIFIED_WATER_7.id,
+    [8] = resources.FLUIDS.PURIFIED_WATER_8.id
 }
 
 -- GT 机器名 -> 等级；0 = 净水主机

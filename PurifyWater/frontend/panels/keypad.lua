@@ -171,6 +171,7 @@ end
 local function sideFailText(reason)
     if type(reason) ~= "string" or reason == "" then return nil end
     local miss = reason:match("^输入侧缺流体：(.+)$")
+        or reason:match("^输入侧缺物品：(.+)$")
     if miss then
         miss = miss:gsub("熔融超导粗胚（UV%-UMV 任意）", "粗胚")
         return "缺 " .. miss
@@ -185,8 +186,7 @@ end
 -- @param width number
 -- @return string
 local function fitText(text, width)
-    if unicode.wlen(text) <= width then return text end
-    return unicode.sub(text, 1, math.max(1, width - 1)) .. "…"
+    return utils.truncate(text, width)
 end
 
 --- 制作自动化面板（选中「制作自动化」列时占满键盘槽，不画提示行）
@@ -248,9 +248,17 @@ local function drawProduce(area, data)
     local toggle  = enabled and "[关]" or "[开]"
     put(toggle, enabled and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT, "toggle")
 
-    if info.state == "blocked" and info.reason then
-        cx = cx + 2
-        put("强制关断：" .. tostring(info.reason), theme.COLORS.TEXT_YELLOW)
+    if (info.state == "blocked" or info.state == "invalid") and info.reason then
+        local binding = pd.binding
+        local reserve = (binding and binding.level == level) and 32 or 2
+        local room    = math.max(0, area.w - (cx - area.x) - 2 - reserve)
+        if room >= 8 then
+            cx = cx + 2
+            local prefix = (info.state == "blocked") and "关断：" or "未就绪："
+            local color  = (info.state == "blocked")
+                and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_RED
+            put(fitText(prefix .. tostring(info.reason), room), color)
+        end
     end
 
     local binding = pd.binding

@@ -385,10 +385,4 @@ function input.handle(name, payload)
     return false
 end
 
---- 记住本帧数据（编辑阈值要读"当前值"）
--- @param data table vm.build() 的返回
-function input.attach(data)
-    fstate.lastData = data
-end
-
 return input

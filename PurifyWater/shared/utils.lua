@@ -1,13 +1,14 @@
 --------------------------------------------------------------------------------
 -- shared/utils.lua
 --------------------------------------------------------------------------------
--- 【职责】纯函数：数字格式化、流体名归一化、按键判据
+-- 【职责】纯函数：数字格式化、文本宽度截断、流体名归一化、按键判据
 -- 【不做什么】不读组件/文件/state
--- 【依赖】shared/constants
+-- 【依赖】shared/constants、unicode
 -- 【被谁用】各层格式化、frontend/input、hardware
 --------------------------------------------------------------------------------
 
 local constants = require("shared.constants")
+local unicode   = require("unicode")
 
 local utils = {}
 
@@ -55,6 +56,39 @@ end
 function utils.sideLabel(side)
     local names = { [0] = "下", [1] = "上", [2] = "北", [3] = "南", [4] = "西", [5] = "东" }
     return names[side] or tostring(side)
+end
+
+--- 按显示宽度截断，超出时加省略号
+-- @param value any
+-- @param maxWidth number|nil
+-- @return string
+function utils.truncate(value, maxWidth)
+    local source = tostring(value or "")
+    maxWidth = math.max(1, math.floor(tonumber(maxWidth) or unicode.wlen(source)))
+    if unicode.wlen(source) <= maxWidth then return source end
+
+    local suffix = "…"
+    local limit  = math.max(0, maxWidth - unicode.wlen(suffix))
+    local out, width = {}, 0
+    for index = 1, unicode.len(source) do
+        local char = unicode.sub(source, index, index)
+        local charWidth = unicode.wlen(char)
+        if width + charWidth > limit then break end
+        out[#out + 1] = char
+        width = width + charWidth
+    end
+    return table.concat(out) .. suffix
+end
+
+--- 拼接文本并按显示宽度截断
+-- @param values table|nil
+-- @param maxWidth number|nil
+-- @param separator string|nil
+-- @return string
+function utils.joinLimited(values, maxWidth, separator)
+    local out = {}
+    for index, value in ipairs(values or {}) do out[index] = tostring(value) end
+    return utils.truncate(table.concat(out, separator or "、"), maxWidth)
 end
 
 --- 归一化流体名：返回（去前缀小写名, 补全的完整名）

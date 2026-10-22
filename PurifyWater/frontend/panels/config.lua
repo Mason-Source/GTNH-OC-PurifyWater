@@ -29,7 +29,7 @@ local COLS      = {
     { key = "threshold", head = "阈值 kL", align = "right" },
     { key = "weight", head = "权重", align = "right" },
     { key = "boost", head = "收集", align = "right" },
-    { key = "produce", head = "制作自动化", align = "right" }
+    { key = "produce", head = "制作", align = "right" }
 }
 -- 列宽：制作自动化放最后一列（右对齐）
 local COL_W     = { 0.10, 0.12, 0.26, 0.16, 0.18, 0.18 }
@@ -180,7 +180,7 @@ function config.draw(data)
             widgets.drawTextRight(cols[5].x, cols[5].w, y, bText, bColor, cellBg(5))
 
             -- ⑥ 制作自动化（数值列：右对齐）：点开该级面板；状态短文本 / 颜色由 decorate 给
-            widgets.drawTextRight(cols[6].x, cols[6].w, y, row.produceText or "未就绪", row.produceColor, cellBg(6))
+            widgets.drawTextRight(cols[6].x, cols[6].w, y, row.produceText or "[×]", row.produceColor, cellBg(6))
 
         end
 

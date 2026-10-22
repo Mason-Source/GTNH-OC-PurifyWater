@@ -24,8 +24,6 @@ local scheduler     = require("core.scheduler")
 local jobs          = require("backend.jobs")
 local app           = require("backend.app.system")
 local autostart     = require("backend.app.autostart")
-local ratesApp      = require("backend.app.rates")
-local energyApp    = require("backend.app.energy")
 local netApp       = require("backend.app.net")
 local produceApp   = require("backend.app.produce")
 local power         = require("backend.domain.power")
@@ -36,6 +34,19 @@ local history       = require("backend.store.history")
 local net           = require("backend.hardware.net")
 
 local api           = { read = {} }
+local ratesApp      = nil
+local energyApp     = nil
+
+-- 配置命令不在首帧路径上：首次执行对应命令时再加载。
+local function getRatesApp()
+    ratesApp = ratesApp or require("backend.app.rates")
+    return ratesApp
+end
+
+local function getEnergyApp()
+    energyApp = energyApp or require("backend.app.energy")
+    return energyApp
+end
 
 --------------------------------------------------------------------------------
 -- 只读
@@ -233,19 +244,19 @@ end
 
 COMMANDS.mode_toggle = function()
     -- 日志由 app/rates 写
-    ratesApp.toggleMode()
+    getRatesApp().toggleMode()
     return true, ""
 end
 
 COMMANDS.threshold_enforce_toggle = function()
     -- 日志由 app/rates 写
-    ratesApp.toggleEnforceThreshold()
+    getRatesApp().toggleEnforceThreshold()
     return true, ""
 end
 
 --- 改单级权重（0..MAX 整数）
 COMMANDS.weight_set = function(level, weight)
-    local ok, text = ratesApp.setWeight(level, weight)
+    local ok, text = getRatesApp().setWeight(level, weight)
     if not ok then return false, text end
     return true, ""
 end
@@ -253,28 +264,28 @@ end
 --- 设定 T7 增产倍率
 -- @param value number|string 只能是 constants.T7_BOOST_OPTIONS 里的档位
 COMMANDS.t7_boost_set = function(value)
-    local ok, text = ratesApp.setT7Boost(value)
+    local ok, text = getRatesApp().setT7Boost(value)
     if not ok then return false, text end
     return true, ""
 end
 
 --- 设置 T1/T2 是否启用回流数据收集
 COMMANDS.reflux_set = function(level, enabled)
-    local ok, text = ratesApp.setReflux(level, enabled)
+    local ok, text = getRatesApp().setReflux(level, enabled)
     if not ok then return false, text end
     return true, ""
 end
 
 --- 设置 T6 是否使用双锂数据收集
 COMMANDS.t6_dual_lithium_set = function(enabled)
-    local ok, text = ratesApp.setT6DualLithium(enabled)
+    local ok, text = getRatesApp().setT6DualLithium(enabled)
     if not ok then return false, text end
     return true, ""
 end
 
 --- 设能源仓利用因子（1-100 整数，%）
 COMMANDS.energy_factor_set = function(value)
-    local ok, text = energyApp.setFactor(value)
+    local ok, text = getEnergyApp().setFactor(value)
     if not ok then return false, text end
     return true, ""
 end

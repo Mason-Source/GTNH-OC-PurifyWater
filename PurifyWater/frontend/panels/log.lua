@@ -34,10 +34,9 @@ function log.draw(data)
     local frameDirty = fstate.subDirty("log", "frame", table.concat({ area.x, area.y, area.w, area.h,
         tostring(data.system.priority), logs.getLevel() }, ":"))
     if frameDirty then
-        widgets.clearArea(area.x, area.y, area.w, area.h)
-        widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(data.system.priority == "high"))
-        widgets.drawText(area.x + 2, area.y + 1, title,
-            logs.isDebug() and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_CYAN)
+        widgets.drawPanelFrame(area, title,
+            logs.isDebug() and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_CYAN,
+            theme.borderColor(data.system.priority == "high"))
     end
 
     -- ② 行区：日志内容 + 布局参数，不脏不折行

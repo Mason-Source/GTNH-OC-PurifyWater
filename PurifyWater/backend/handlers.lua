@@ -26,12 +26,23 @@
 
 local scheduler = require("core.scheduler")
 
-local watch     = require("backend.app.watch")
 local system    = require("backend.app.system")
-local rates     = require("backend.app.rates")
 local produceApp = require("backend.app.produce")
 
 local handlers  = {}
+local watch     = nil
+local rates     = nil
+
+-- 事件映射模块只在对应事件首次出现时加载，避免挡在首帧之前。
+local function watchApp()
+    watch = watch or require("backend.app.watch")
+    return watch
+end
+
+local function ratesApp()
+    rates = rates or require("backend.app.rates")
+    return rates
+end
 
 --- 订阅全部事件
 -- @return number 订阅条数
@@ -41,17 +52,17 @@ function handlers.subscribe()
     scheduler.on("hardware_changed", system.onHardwareChanged)
     scheduler.on("power_changed", system.onPowerChanged)
     scheduler.on("deployed_changed", system.onDeployedChanged)
-    scheduler.on("plant_observed", watch.onPlantObserved)
-    scheduler.on("parallel_sample", watch.onParallelSample)
+    scheduler.on("plant_observed", function(...) return watchApp().onPlantObserved(...) end)
+    scheduler.on("parallel_sample", function(...) return watchApp().onParallelSample(...) end)
 
     -- 配置类
-    scheduler.on("level_rules_changed", watch.onLevelRulesChanged)
-    scheduler.on("rates_changed", rates.onRatesChanged)
-    scheduler.on("mode_changed", rates.onModeChanged)
-    scheduler.on("enforce_changed", rates.onEnforceChanged)
+    scheduler.on("level_rules_changed", function(...) return watchApp().onLevelRulesChanged(...) end)
+    scheduler.on("rates_changed", function(...) return ratesApp().onRatesChanged(...) end)
+    scheduler.on("mode_changed", function(...) return ratesApp().onModeChanged(...) end)
+    scheduler.on("enforce_changed", function(...) return ratesApp().onEnforceChanged(...) end)
 
     -- 派生类
-    scheduler.on("parallel_discarded", watch.onParallelDiscarded)
+    scheduler.on("parallel_discarded", function(...) return watchApp().onParallelDiscarded(...) end)
     scheduler.on("parallel_write", system.onParallelWrite)
     scheduler.on("switch_mismatch", system.onSwitchMismatch)
     scheduler.on("rules_audit", system.auditThresholds)

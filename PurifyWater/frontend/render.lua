@@ -4,7 +4,8 @@
 -- 【职责】前端入口：boot = setup（gpu/分辨率/布局）+ bindInput（订阅输入）+ frame（每帧：取数据 -> 按指纹重绘）
 --   镜像端只用 setup + renderAll（不加载 input）
 -- 【不做什么】不取业务数据的**判断**（数据经 viewmodel，命令经 input -> api.exec）
--- 【依赖】frontend/{state,theme,layout,panels/*}、core/scheduler、shared/config（viewmodel / input 懒加载）
+-- 【依赖】frontend/{state,theme,layout}、core/scheduler、shared/config；总览面板随入口加载，
+--   配置页面板与 viewmodel/input 按需加载
 -- 【被谁用】main.lua（T8 = runtime 的帧钩子，每帧调 `render.frame()`）；monitor.lua 用 restore/boot 的一部分
 --
 -- 【重绘模型：谁变谁重绘】
@@ -16,6 +17,7 @@
 
 local fstate        = require("frontend.state")
 local theme         = require("frontend.theme")
+local computer      = require("computer")
 local layout        = require("frontend.layout")
 local CONFIG        = require("shared.config")
 local logs          = require("shared.logs")
@@ -26,11 +28,11 @@ local controlPanel  = require("frontend.panels.control")
 local statusPanel   = require("frontend.panels.status")
 local chartPanel    = require("frontend.panels.chart")
 local logPanel      = require("frontend.panels.log")
-local configPanel   = require("frontend.panels.config")
-local keypadPanel   = require("frontend.panels.keypad")
-local settingsPanel = require("frontend.panels.settings")
 
 local render        = {}
+local inputModule   = nil
+local viewmodel     = nil
+local firstFrame    = true
 
 -- 面板注册表：一个面板 = 一个"画" + 一个"指纹"
 -- 【详情不在这一层】单级详情是"净水状态面板换了个内容"（同一格位、同一矩形）：
@@ -40,11 +42,28 @@ local PANELS        = {
     control  = { draw = controlPanel.draw, fingerprint = controlPanel.fingerprint },
     status   = { draw = statusPanel.draw, fingerprint = statusPanel.fingerprint },
     chart    = { draw = chartPanel.draw, fingerprint = chartPanel.fingerprint },
-    log      = { draw = logPanel.draw, fingerprint = logPanel.fingerprint },
-    config   = { draw = configPanel.draw, fingerprint = configPanel.fingerprint },
-    keypad   = { draw = keypadPanel.draw, fingerprint = keypadPanel.fingerprint },
-    settings = { draw = settingsPanel.draw, fingerprint = settingsPanel.fingerprint }
+    log      = { draw = logPanel.draw, fingerprint = logPanel.fingerprint }
 }
+
+-- 配置页只有主端会进入；保留字面量 require，构建脚本才能把它归入主控依赖闭包。
+local LAZY_PANELS   = {
+    config   = function() return require("frontend.panels.config") end,
+    keypad   = function() return require("frontend.panels.keypad") end,
+    settings = function() return require("frontend.panels.settings") end
+}
+local lazyPanels    = {}
+
+local function panelOf(name)
+    local panel = PANELS[name]
+    if panel then return panel end
+    panel = lazyPanels[name]
+    if panel then return panel end
+    local loader = LAZY_PANELS[name]
+    if not loader then return nil end
+    panel = loader()
+    lazyPanels[name] = panel
+    return panel
+end
 
 -- 每个页由哪些面板组成（绘制顺序 = 版面顺序）
 -- 配置页：两张卡 —— 「调度配置」（表格段 config + 卡内键盘槽 keypad，各管各的指纹）+「运行设置」settings。
@@ -92,18 +111,28 @@ end
 
 --- 取 gpu、按配置调分辨率、算布局（主端与镜像端共用；不接输入）
 function render.setup()
+    local started = computer.uptime()
     fstate.gpu = require("component").gpu
     render.applyResolution()
     layout.calculate()
     fstate.invalidateAll()
+    if logs.isDebug() then
+        logs.debug(string.format("前端 setup：%.3f 秒", computer.uptime() - started))
+    end
 end
 
 --- 订阅输入事件（**只有主端调**；镜像端不加载 input）
 -- 只订阅 key_down / touch：别的外部事件（component_* 等）与界面无关
 function render.bindInput()
-    local input = require("frontend.input") -- 懒加载：镜像端不 require 它，结构上就没有命令出口
-    scheduler.on("key_down", function(payload) input.handle("key_down", payload) end)
-    scheduler.on("touch", function(payload) input.handle("touch", payload) end)
+    -- 输入模块首次真正收到事件时才加载：启动阶段不解析键盘/鼠标映射。
+    local function dispatch(name, payload)
+        -- 首帧之前没有热区/视图数据，忽略早到输入；首帧后再加载输入映射。
+        if not fstate.lastData then return false end
+        inputModule = inputModule or require("frontend.input")
+        return inputModule.handle(name, payload)
+    end
+    scheduler.on("key_down", function(payload) dispatch("key_down", payload) end)
+    scheduler.on("touch", function(payload) dispatch("touch", payload) end)
     -- 分辨率变化：重算布局（否则面板会画到屏幕外）
     scheduler.on("screen_resized", function() layout.calculate() end)
 end
@@ -137,7 +166,7 @@ function render.renderAll(forceAll)
     local data = fstate.lastData
     local list = TAB_PANELS[fstate.currentTab] or TAB_PANELS.overview
     for _, name in ipairs(list) do
-        local panel = PANELS[name]
+        local panel = panelOf(name)
         if panel then
             local fp = panel.fingerprint(data)
             if forceAll or fps[name] ~= fp then
@@ -153,9 +182,17 @@ end
 -- 取数据在前：指纹比较要用这一帧的数据，必须同帧一致
 function render.frame()
     -- 主端专用：镜像端用自己的收帧循环，不走这里（懒加载 = 镜像端不拉 backend/api）
-    local data = require("frontend.viewmodel").build()
-    require("frontend.input").attach(data)
+    local started = firstFrame and computer.uptime() or nil
+    viewmodel = viewmodel or require("frontend.viewmodel")
+    local data = viewmodel.build()
+    fstate.lastData = data
     render.renderAll()
+    if started then
+        if logs.isDebug() then
+            logs.debug(string.format("前端首帧：%.3f 秒", computer.uptime() - started))
+        end
+        firstFrame = false
+    end
 end
 
 return render

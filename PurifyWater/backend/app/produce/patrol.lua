@@ -19,6 +19,9 @@ local transposer = require("backend.hardware.transposer")
 
 local patrol = {}
 
+local MISSING_DETAIL_WIDTH = 64
+local FORCE_REASON_WIDTH   = 48
+
 --- “任意一种”需求按库存选最大者
 local function resolveAnyFound(found, anyList)
     local picked, best = nil, 0
@@ -77,7 +80,7 @@ local function checkStock(sub, stock)
             local have = foundItems[key] or 0
             if have < need.amount then
                 miss[#miss + 1] = string.format("%s %d/%d个",
-                    tostring(need.label or need.item.label), have, need.amount)
+                    tostring(need.label or need.item.label or need.item.name), have, need.amount)
             end
         else
             local fluid = need.fluid or resolveAnyFound(found, need.any)
@@ -162,10 +165,11 @@ local function checkMachine(machine, sub, method, changed)
                     constants.levelLabel(sub.level), binding.machineTextOf(sub.level, machine)))
             end
             logs.debug(string.format("%s 制作自动化：原料不足明细——%s",
-                constants.levelLabel(sub.level), table.concat(miss, "、")))
+                constants.levelLabel(sub.level), utils.joinLimited(miss, MISSING_DETAIL_WIDTH)))
             local requiredItems = interface.requiredItems(method)
             if reconfigureIfMoved(machine, sub, requiredItems) then changed = true end
-            state.write.produceSetSub(machine, { forceOff = true, forceReason = "原料不足" })
+            local forceReason = "原料不足：" .. utils.joinLimited(miss, FORCE_REASON_WIDTH)
+            state.write.produceSetSub(machine, { forceOff = true, forceReason = forceReason })
             changed = true
         end
     elseif wasOff then

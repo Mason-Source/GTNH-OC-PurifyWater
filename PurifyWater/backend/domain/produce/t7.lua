@@ -3,7 +3,7 @@
 --------------------------------------------------------------------------------
 -- 【职责】T7（脱气）制作自动化方法：控制信号 → 本轮需求（位规则）
 -- 【不做什么】不碰组件、不写状态、不做转运
--- 【依赖】无
+-- 【依赖】shared/resources
 -- 【被谁用】main.lua（注册到 backend/domain/produce）
 --
 -- 【控制信号位规则】（行尾二进制串；低位权重 1）
@@ -15,25 +15,51 @@
 
 --------------------------------------------------------------------------------
 
+local resources = require("shared.resources")
+
 local t7 = {}
 
--- 熔融超导粗胚：UV-UMV 任意一种都算满足（名字与旧脚本的 5 个变量一致）
+-- 熔融超导粗胚：UV-UMV 任意一种都算满足
 local SUPERCONDUCTORS = {
-    "molten.longasssuperconductornameforuvwire",
-    "molten.longasssuperconductornameforuhvwire",
-    "molten.superconductoruevbase",
-    "molten.superconductoruivbase",
-    "molten.superconductorumvbase"
+    resources.FLUIDS.MOLTEN_SUPERCONDUCTOR_UV.id,
+    resources.FLUIDS.MOLTEN_SUPERCONDUCTOR_UHV.id,
+    resources.FLUIDS.MOLTEN_SUPERCONDUCTOR_UEV.id,
+    resources.FLUIDS.MOLTEN_SUPERCONDUCTOR_UIV.id,
+    resources.FLUIDS.MOLTEN_SUPERCONDUCTOR_UMV.id
 }
 
---- 单份需求条目（need 与 stockRequirements 共用，字面量只写一次）
-local SUPERCOOLANT   = { fluid = "supercoolant", amount = 10000, label = "超级冷却液" }
-local GAS_HE         = { fluid = "helium",  amount = 10000, label = "氦" }
-local GAS_NE         = { fluid = "neon",    amount = 7500,  label = "氖" }
-local GAS_KR         = { fluid = "krypton", amount = 5000,  label = "氪" }
-local GAS_XE         = { fluid = "xenon",   amount = 2500,  label = "氙" }
+--- 单份需求条目（need 与 stockRequirements 共用）
+local SUPERCOOLANT = {
+    fluid = resources.FLUIDS.SUPERCOOLANT.id,
+    amount = 10000,
+    label = resources.FLUIDS.SUPERCOOLANT.label
+}
+local GAS_HE = {
+    fluid = resources.FLUIDS.HELIUM.id,
+    amount = 10000,
+    label = resources.FLUIDS.HELIUM.label
+}
+local GAS_NE = {
+    fluid = resources.FLUIDS.NEON.id,
+    amount = 7500,
+    label = resources.FLUIDS.NEON.label
+}
+local GAS_KR = {
+    fluid = resources.FLUIDS.KRYPTON.id,
+    amount = 5000,
+    label = resources.FLUIDS.KRYPTON.label
+}
+local GAS_XE = {
+    fluid = resources.FLUIDS.XENON.id,
+    amount = 2500,
+    label = resources.FLUIDS.XENON.label
+}
 local SUPERCONDUCTOR = { any = SUPERCONDUCTORS, amount = 1440, label = "熔融超导粗胚" }
-local NEUTRONIUM     = { fluid = "molten.neutronium", amount = 4608, label = "熔融中子" }
+local NEUTRONIUM = {
+    fluid = resources.FLUIDS.MOLTEN_NEUTRONIUM.id,
+    amount = 4608,
+    label = resources.FLUIDS.MOLTEN_NEUTRONIUM.label
+}
 
 --- 原料巡检用：全部流体各"一份"（与当前控制信号无关）
 local STOCK = { SUPERCOOLANT, GAS_HE, SUPERCONDUCTOR, GAS_NE, NEUTRONIUM, GAS_KR, GAS_XE }
@@ -42,13 +68,13 @@ t7.priority = 40 -- 最后调度
 
 --- 侧位自动配置用：7 项全集（只看有没有，不看量）
 local FLUIDS = {
-    SUPERCOOLANT.fluid,
-    GAS_HE.fluid,
+    resources.FLUIDS.SUPERCOOLANT,
+    resources.FLUIDS.HELIUM,
     { label = "熔融超导粗胚（UV-UMV 任意）", any = SUPERCONDUCTORS },
-    GAS_NE.fluid,
-    NEUTRONIUM.fluid,
-    GAS_KR.fluid,
-    GAS_XE.fluid
+    resources.FLUIDS.NEON,
+    resources.FLUIDS.MOLTEN_NEUTRONIUM,
+    resources.FLUIDS.KRYPTON,
+    resources.FLUIDS.XENON
 }
 
 
@@ -104,9 +130,9 @@ function t7.operation(ctx)
     for _, need in ipairs(demand) do
         local ok, itemWhy
         if need.fluid then
-            ok, itemWhy = ctx.transferFluid(need.fluid, need.amount)
+            ok, itemWhy = ctx.transferFluid(need.fluid, need.amount, need.label)
         else
-            ok, itemWhy = ctx.transferAny(need.any, need.amount)
+            ok, itemWhy = ctx.transferAny(need.any, need.amount, need.label)
         end
         if not ok then return false, itemWhy end
     end

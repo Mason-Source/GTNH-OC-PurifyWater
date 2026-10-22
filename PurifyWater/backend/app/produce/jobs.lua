@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- backend/app/produce/jobs.lua
 --------------------------------------------------------------------------------
--- 【职责】T0 周期边沿、operation 登记、周期门控、过期 job 取消
+-- 【职责】T0 周期边沿、制作任务登记、周期门控、过期 job 取消
 -- 【不做什么】不执行转运、不维护绑定/侧位/库存
 --------------------------------------------------------------------------------
 
@@ -36,7 +36,7 @@ local function sameCycleAllowed(job, seq)
         and readiness.machineAllowed(job.machine, job.level, job.sub)
 end
 
---- 创建一个 operation job
+--- 创建一个制作任务 job
 local function addOperation(machine, sub, method, seq)
     local id = string.format("job:%d:%s", sub.level, machine)
     if produceRuntime.has(id) or (sub.cycleSeq or 0) == seq then return false end
@@ -92,7 +92,7 @@ function jobs.onCycleStarted(payload)
         return job.cycleSeq ~= seq
     end)
     if dropped > 0 then
-        logs.debug(string.format("制作自动化：周期 #%s 丢弃未完成 operation %d 个",
+        logs.debug(string.format("制作自动化：周期 #%s 丢弃未完成制作任务 %d 个",
             tostring(seq), dropped))
     end
 
@@ -113,7 +113,7 @@ function jobs.onCycleStarted(payload)
         end
     end
     if planned > 0 then
-        logs.debug(string.format("制作自动化：周期 #%s 登记 operation %d 台",
+        logs.debug(string.format("制作自动化：周期 #%s 登记制作任务 %d 台",
             tostring(seq), planned))
     end
 end

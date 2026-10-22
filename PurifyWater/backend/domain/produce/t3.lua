@@ -3,20 +3,22 @@
 --------------------------------------------------------------------------------
 -- 【职责】T3（絮凝）制作自动化方法：固定需求 —— 聚氯化铝 900,000 mB / 周期
 -- 【不做什么】不碰组件、不写状态、不做转运
--- 【依赖】无
+-- 【依赖】shared/resources
 -- 【被谁用】main.lua（注册到 backend/domain/produce）
 --
--- 【需求】每周期输入 900,000 mB polyaluminiumchloride（聚氯化铝）。
+-- 【需求】每周期输入 900,000 mB 聚氯化铝（POLYALUMINIUM_CHLORIDE）。
 -- 【最低速率】2,621,440 mB/s（T3 专属；单笔上限 floor(rate*0.05)=131072，
 --   900,000 需要 7 笔，每笔一个 game tick，全程不触发 context.pause）。
 --------------------------------------------------------------------------------
 
+local resources = require("shared.resources")
+
 local t3 = {}
 
-local FLUID  = "polyaluminiumchloride"
+local FLUID  = resources.FLUIDS.POLYALUMINIUM_CHLORIDE
 local AMOUNT = 900000
 
-local ENTRY = { fluid = FLUID, amount = AMOUNT, label = "聚氯化铝" }
+local ENTRY = { fluid = FLUID.id, amount = AMOUNT, label = FLUID.label }
 local FLUIDS = { FLUID }
 local STOCK  = { ENTRY }
 
@@ -40,7 +42,7 @@ function t3.minTransferRate() return 2621440 end
 function t3.need(lines) return { ENTRY } end
 
 function t3.operation(ctx)
-    local ok, why = ctx.transferFluid(FLUID, AMOUNT)
+    local ok, why = ctx.transferFluid(FLUID.id, AMOUNT, FLUID.label)
     if not ok then return false, why end
     return true
 end

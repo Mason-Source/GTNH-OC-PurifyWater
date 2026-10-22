@@ -5,9 +5,9 @@
 -- 【不做什么】不认识 Tn 业务，不维护 coroutine
 --------------------------------------------------------------------------------
 
-local probes     = require("backend.hardware.probes")
-local gtInfodata = require("backend.hardware.gt_infodata")
-local transposer = require("backend.hardware.transposer")
+local probes       = require("backend.hardware.probes")
+local gtInfodata   = require("backend.hardware.gt_infodata")
+local transposer   = require("backend.hardware.transposer")
 
 local executor = {}
 
@@ -96,7 +96,7 @@ HANDLERS.target = function(action, job)
     if sub.sides.target then
         for _, item in ipairs(transposer.containers(sub.transposer, sub.sides.target) or {}) do
             if item.fluid and (tonumber(item.amount) or 0) > 0 then
-                return { ok = false, reason = "输出侧残留：" .. tostring(item.fluid) }
+                return { ok = false, reason = "输出侧有流体残留，请先清空目标容器" }
             end
         end
     end
@@ -112,20 +112,24 @@ end
 HANDLERS.findFluid = function(action, job)
     local source = scanFluids(job.sub)[action.fluid]
     if not source then
-        return { ok = false, reason = "找不到源流体：" .. tostring(action.fluid) }
+        return { ok = false, reason = "找不到源流体：" .. tostring(action.label or action.fluid) }
     end
     return { ok = true, source = source }
 end
 
 HANDLERS.findAny = function(action, job)
     local source = findAnySource(job.sub, action.any, action.amount)
-    if not source then return { ok = false, reason = "找不到候选流体" } end
+    if not source then
+        return { ok = false, reason = "找不到候选流体：" .. tostring(action.label or "未知候选组") }
+    end
     return { ok = true, source = source }
 end
 
 HANDLERS.findItem = function(action, job)
     local source = findItemSource(job.sub, action.item)
-    if not source then return { ok = false, reason = "找不到物品源" } end
+    if not source then
+        return { ok = false, reason = "找不到物品源：" .. tostring(action.item.label or action.item.name) }
+    end
     return { ok = true, source = source }
 end
 
@@ -136,7 +140,10 @@ HANDLERS.transferFluid = function(action, job)
     end
     local ok, moved = transposer.transfer(sub.transposer, action.source.side,
         sub.sides.target, action.amount, action.source.tank)
-    if not ok then return { ok = false, reason = tostring(moved or "流体转运失败") } end
+    if not ok then
+        return { ok = false, reason = tostring(action.label or action.source.fluid)
+            .. " 转运失败：" .. tostring(moved or "未知原因") }
+    end
     return { ok = true, moved = tonumber(moved) or 0 }
 end
 
@@ -147,7 +154,11 @@ HANDLERS.transferItem = function(action, job)
     end
     local ok, moved = transposer.transferItems(sub.transposer, action.source.side,
         sub.sides.itemTarget, action.amount, action.source.slot)
-    if not ok then return { ok = false, reason = tostring(moved or "物品转运失败") } end
+    if not ok then
+        return { ok = false, reason = tostring(action.label
+            or action.source.item.label or action.source.item.name)
+            .. " 转运失败：" .. tostring(moved or "未知原因") }
+    end
     return { ok = true, moved = tonumber(moved) or 0 }
 end
 
@@ -163,7 +174,8 @@ HANDLERS.returnItem = function(action, job)
     local slot, count, err = transposer.findItem(sub.transposer, sub.sides.itemTarget,
         action.item.name, action.item.damage)
     if not slot then
-        return { ok = false, reason = err or ("目标侧找不到物品：" .. tostring(action.item.label)) }
+        return { ok = false, reason = err
+            or ("目标侧找不到物品：" .. tostring(action.item.label or action.item.name)) }
     end
     local amount = math.min(tonumber(action.amount) or 1, count)
     local ok, moved = transposer.transferItems(sub.transposer, sub.sides.itemTarget,

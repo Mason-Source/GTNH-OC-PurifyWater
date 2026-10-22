@@ -19,12 +19,29 @@ local utils           = require("shared.utils")
 local computer        = require("computer")
 local scheduler       = require("core.scheduler")
 
-local actuator        = require("backend.domain.actuator")
-local tracker         = require("backend.domain.tracker")
 local learning        = require("backend.domain.learning")
 local mode            = require("backend.domain.mode")
 local power           = require("backend.domain.power")
-local plan            = require("backend.app.plan")
+
+local actuator        = nil
+local tracker         = nil
+local plan            = nil
+
+-- 只在启停、方案下发和并行重置时用，不挡首帧。
+local function actuatorApp()
+    actuator = actuator or require("backend.domain.actuator")
+    return actuator
+end
+
+local function trackerApp()
+    tracker = tracker or require("backend.domain.tracker")
+    return tracker
+end
+
+local function planApp()
+    plan = plan or require("backend.app.plan")
+    return plan
+end
 
 -- 主机开关关闭的停机原因（只写一处）
 local HOST_OFF_REASON = "主机已关机"
@@ -65,7 +82,7 @@ end
 function system.requestPlan(reason)
     if not state.read.running() then return false end
     if system.checkSuggestionChange() then return false end -- 建议变：已停会话 + 等待用户
-    return plan.run(reason)
+    return planApp().run(reason)
 end
 
 --- 设建议基线为当前建议（启动会话调用，不触发等待）
@@ -130,7 +147,7 @@ end
 
 --- 清空本轮并行学习与采样确认器
 function system.resetLearning(why)
-    tracker.resetAll()
+    trackerApp().resetAll()
     learning.forgetAll()
     scheduler.emit("rules_audit", { reason = why })
 end
@@ -139,7 +156,7 @@ end
 local function beginSession(reason)
     system.resetLearning(reason)
     state.write.setRunning(true)
-    plan.forget()
+    planApp().forget()
     system.resetSuggestBaseline() -- 启动会话：以"当前建议"为基线（用户刚按建议调好机器才点的启动）
     logs.system("并行学习已重置（从建议值重新学习）")
 end
@@ -148,7 +165,7 @@ end
 local function endSession(reason)
     state.write.setRunning(false)
     system.resetLearning(reason)
-    plan.forget()
+    planApp().forget()
 end
 
 --- 启动（开始自动调度；等待用户的唯一手动恢复入口）
@@ -175,7 +192,7 @@ end
 --- 停机（下发全关；正常停机不置等待）
 -- @param reason string
 function system.stop(reason)
-    local count = actuator.shutdownAll()
+    local count = actuatorApp().shutdownAll()
     endSession(reason)
     logs.system(string.format("停机（%s）：已下发全关 %d 台", tostring(reason or "-"), count))
 end
@@ -226,7 +243,7 @@ function system.onSwitchMismatch(payload)
     if not payload or not payload.level then return end
     if not state.read.running() then return end
     local levelName    = constants.levelLabel(payload.level)
-    local receipt      = actuator.lastReceipt()
+    local receipt      = actuatorApp().lastReceipt()
     local sent, failed = 0, 0
     for _, item in ipairs(receipt.items or {}) do
         sent = sent + 1
@@ -281,7 +298,7 @@ end
 -- 命令入口
 
 function system.onPriorityToggle()
-    plan.togglePriority()
+    planApp().togglePriority()
     system.requestPlan("优先级切换")
 end
 

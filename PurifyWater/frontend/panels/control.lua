@@ -37,9 +37,8 @@ end
 
 function control.draw(data)
     local area = fstate.areas.control
-    widgets.clearArea(area.x, area.y, area.w, area.h)
-    widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(data.system.priority == "high"))
-    widgets.drawText(area.x + 2, area.y + 1, "控制面板", theme.COLORS.TEXT_CYAN)
+    widgets.drawPanelFrame(area, "控制面板", theme.COLORS.TEXT_CYAN,
+        theme.borderColor(data.system.priority == "high"))
 
     -- 正文可用行：标题下一行 → 底边框上一行
     -- 【按钮占几行】单列 step=2 时 5 个按钮 = (5-1)×2+1 = 9 行；两列 step=1 时 = 3 行

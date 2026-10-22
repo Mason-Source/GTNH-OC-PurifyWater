@@ -23,7 +23,6 @@ function settings.draw(data)
     fstate.autostartRow = nil
     if not area or area.h < 1 then return end
 
-    widgets.clearArea(area.x, area.y, area.w, area.h)
     if area.h < 3 then return end -- 屏幕太矮：这张卡画不下就不画（别糊到邻块）
 
     local sys   = (data and data.system) or {}
@@ -31,8 +30,8 @@ function settings.draw(data)
     local stale = sys.autostartStale == true
     local shrc  = tostring(sys.autostartPath or ".shrc")
 
-    widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(stale or (data.system.priority == "high")))
-    widgets.drawText(area.x + 2, area.y + 1, "运行设置", theme.COLORS.TEXT_CYAN)
+    widgets.drawPanelFrame(area, "运行设置", theme.COLORS.TEXT_CYAN,
+        theme.borderColor(stale or (data.system.priority == "high")))
     if area.h < 4 then return end -- 再矮就连子项都画不下，只留标题
 
     -- 子项行：勾选框 + 名称；整行热区

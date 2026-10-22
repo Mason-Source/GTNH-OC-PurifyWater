@@ -3,7 +3,7 @@
 --------------------------------------------------------------------------------
 -- 【职责】T6（紫外处理）制作自动化方法：按固定顺序更换 9 种透镜
 -- 【不做什么】不碰组件、不写状态；等待与转运都由 operation ctx 异步执行
--- 【依赖】无
+-- 【依赖】shared/resources
 -- 【被谁用】main.lua（注册到 backend/domain/produce）、produce_job（执行）
 --
 -- 【控制依据】不判断成功率，也不识别具体透镜名。机器请求下一枚透镜时，
@@ -22,27 +22,23 @@
 -- 透镜 9 可能缺货：第 9 次投放失败视为正常收尾，成功率停在 80%。
 --------------------------------------------------------------------------------
 
+local resources = require("shared.resources")
+
 local t6 = {}
 
-local GT_META   = "gregtech:gt.metaitem.01"
-local BW_LENS   = "bartworks:gt.bwMetaGeneratedlens"
 local WAIT      = 3
 local MAX_PROBES = 6 -- 覆盖 3～15 秒的请求间隔
 
-local function lens(name, damage, label)
-    return { name = name, damage = damage, label = label }
-end
-
 local LENSES = {
-    lens(BW_LENS, 10023, "合成玉透镜"),
-    lens(GT_META, 24514, "琥珀透镜"),
-    lens(GT_META, 24540, "风之魔晶透镜"),
-    lens(GT_META, 24501, "绿宝石透镜"),
-    lens(GT_META, 24208, "魔力钻石透镜"),
-    lens(GT_META, 24513, "蓝黄玉透镜"),
-    lens(GT_META, 24509, "紫水晶透镜"),
-    lens(BW_LENS, 5,     "氟铁电气石透镜"),
-    lens(GT_META, 24515, "双锂透镜")
+    resources.ITEMS.LENS_SYNTHETIC_JADE,
+    resources.ITEMS.LENS_AMBER,
+    resources.ITEMS.LENS_WIND_MAGIC_CRYSTAL,
+    resources.ITEMS.LENS_EMERALD,
+    resources.ITEMS.LENS_MAGIC_DIAMOND,
+    resources.ITEMS.LENS_BLUE_TOPAZ,
+    resources.ITEMS.LENS_AMETHYST,
+    resources.ITEMS.LENS_FLUORINE_IRON_TOURMALINE,
+    resources.ITEMS.LENS_DILITHIUM
 }
 
 -- 透镜 9 是可选资源：侧位配置与就绪检查只要求前 8 种。

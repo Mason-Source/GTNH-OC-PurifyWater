@@ -63,9 +63,8 @@ function status.draw(data)
         area.w, area.h, tostring(data.system.priority) }, ":"))
     lastWasDetail    = false
     if frameDirty then
-        widgets.clearArea(area.x, area.y, area.w, area.h)
-        widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(data.system.priority == "high"))
-        widgets.drawText(area.x + 2, titleY, "各级净水状态", theme.COLORS.TEXT_CYAN)
+        widgets.drawPanelFrame(area, "各级净水状态", theme.COLORS.TEXT_CYAN,
+            theme.borderColor(data.system.priority == "high"))
         if barW >= 8 then
             widgets.drawText(labelX, titleY, label, theme.COLORS.TEXT_DISABLED)
         end

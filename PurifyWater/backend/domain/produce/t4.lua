@@ -3,7 +3,7 @@
 --------------------------------------------------------------------------------
 -- 【职责】T4（pH 调节）制作自动化方法：读 pH → 精确补碱/补酸
 -- 【不做什么】不碰组件、不写状态、不做转运
--- 【依赖】无
+-- 【依赖】shared/resources
 -- 【被谁用】main.lua（注册到 backend/domain/produce）
 --
 -- 【机器机制】GT5U 的 pH 调节单元每 1 秒把输入总线里的氢氧化钠粉、输入仓里的
@@ -15,14 +15,12 @@
 -- 【最低速率】50000 mB/s（20 × 2500）；单笔上限 2500 L，最大一次补酸正好一笔。
 --------------------------------------------------------------------------------
 
+local resources = require("shared.resources")
+
 local t4 = {}
 
-local ACID = "hydrochloricacid_gt5u" -- 氢氯酸（实机注册名）
-local ALKALINE = {
-    name   = "gregtech:gt.metaitem.01",
-    damage = 2685,
-    label  = "氢氧化钠粉"
-}
+local ACID = resources.FLUIDS.HYDROCHLORIC_ACID
+local ALKALINE = resources.ITEMS.SODIUM_HYDROXIDE_DUST
 
 local PH_TARGET    = 7
 local PH_TOLERANCE = 0.05
@@ -50,8 +48,8 @@ function t4.usesItems() return true end
 --- T4 初始 pH 范围为 4.5-9.5，实际单轮最大需求为 250 个粉 / 2500 L 酸；
 --- 但物品开闸按一格 64 检查，实际投料由安全泵分批补足。
 local STOCK = {
-    { item = ALKALINE, amount = STOCK_DUST, label = "氢氧化钠粉" },
-    { fluid = ACID, amount = MAX_ACID, label = "氢氯酸" }
+    { item = ALKALINE, amount = STOCK_DUST, label = ALKALINE.label },
+    { fluid = ACID.id, amount = MAX_ACID, label = ACID.label }
 }
 function t4.stockRequirements() return STOCK end
 
@@ -78,12 +76,12 @@ function t4.demand(ph)
 
     if errorValue > 0 then
         local count = math.min(MAX_DUST, math.floor(errorValue / PH_PER_DUST + 0.5))
-        return { { item = ALKALINE, amount = count, label = "氢氧化钠粉" } }, nil, ph
+        return { { item = ALKALINE, amount = count, label = ALKALINE.label } }, nil, ph
     end
 
     local doses = math.floor((-errorValue) / PH_PER_10_ACID + 0.5)
     local amount = math.min(MAX_ACID, doses * 10)
-    return { { fluid = ACID, amount = amount, label = "氢氯酸" } }, nil, ph
+    return { { fluid = ACID.id, amount = amount, label = ACID.label } }, nil, ph
 end
 
 function t4.need() return {}, nil, nil end
@@ -99,7 +97,7 @@ function t4.operation(ctx)
         if need.item then
             ok, itemWhy = ctx.transferItem(need.item, need.amount)
         else
-            ok, itemWhy = ctx.transferFluid(need.fluid, need.amount)
+            ok, itemWhy = ctx.transferFluid(need.fluid, need.amount, need.label)
         end
         if not ok then return false, itemWhy end
     end

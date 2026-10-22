@@ -71,10 +71,11 @@ function M.apply(data)
             row.produceColor     = theme.COLORS.TEXT_YELLOW
             row.produceClickable = true
         else
-            row.produceText      = "未就绪"
-            row.produceColor     = theme.COLORS.TEXT_DISABLED
+            row.produceText      = "[×]"
+            row.produceColor     = theme.COLORS.TEXT_RED
             row.produceClickable = true
         end
+        row.produceReason = pr.reason
 
         row.label = row.label or constants.levelLabel(level)
         row.rule  = row.rule or { threshold = 0, effectiveThreshold = 0, enabled = false }

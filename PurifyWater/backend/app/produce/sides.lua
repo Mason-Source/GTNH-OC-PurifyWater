@@ -6,11 +6,14 @@
 --------------------------------------------------------------------------------
 
 local state      = require("shared.state")
+local utils      = require("shared.utils")
 
 local transposer = require("backend.hardware.transposer")
 local binding    = require("backend.app.produce.binding")
 
 local sides = {}
+
+local MAX_MISSING_WIDTH = 52
 
 --- 物品条目是否相同（name + damage）
 local function sameItem(a, b)
@@ -67,11 +70,18 @@ local function missingFluids(required, found)
     local miss = {}
     for _, item in ipairs(required or {}) do
         if type(item) == "table" then
-            local hit = false
-            for _, name in ipairs(item.any or {}) do
-                if found[name] then hit = true; break end
+            if item.any then
+                local hit = false
+                for _, name in ipairs(item.any) do
+                    if found[name] then hit = true; break end
+                end
+                if not hit then miss[#miss + 1] = tostring(item.label or "候选流体") end
+            else
+                local id = item.id or item.fluid
+                if id and not found[id] then
+                    miss[#miss + 1] = tostring(item.label or id)
+                end
             end
-            if not hit then miss[#miss + 1] = tostring(item.label or "?") end
         elseif not found[item] then
             miss[#miss + 1] = tostring(item)
         end
@@ -129,7 +139,9 @@ function sides.classify(info, requiredFluids, requiredItems, preferredFluid, pre
             target = emptySide
         end
         local miss = missingFluids(requiredFluids, found)
-        if #miss > 0 then return nil, "输入侧缺流体：" .. table.concat(miss, "、") end
+        if #miss > 0 then
+            return nil, "输入侧缺流体：" .. utils.joinLimited(miss, MAX_MISSING_WIDTH)
+        end
     end
 
     if requiredItems and #requiredItems > 0 then
@@ -149,7 +161,9 @@ function sides.classify(info, requiredFluids, requiredItems, preferredFluid, pre
             end
             if not hit then missItems[#missItems + 1] = tostring(req.label or req.name) end
         end
-        if #missItems > 0 then return nil, "输入侧缺物品：" .. table.concat(missItems, "、") end
+        if #missItems > 0 then
+            return nil, "输入侧缺物品：" .. utils.joinLimited(missItems, MAX_MISSING_WIDTH)
+        end
     end
 
     return {

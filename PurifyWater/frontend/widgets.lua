@@ -57,6 +57,23 @@ function widgets.drawBorder(x, y, w, h, color, bgColor)
     fstate.gpu.set(x, y + h - 1, "└" .. string.rep("─", w - 2) .. "┘")
 end
 
+--- 画面板骨架：清区 + 边框 + 可选标题
+-- 仅用于整块重绘的常规面板；config 这类按子区域增量重绘的面板不要用。
+-- @param area table { x = , y = , w = , h = }
+-- @param title string|nil
+-- @param titleColor number|nil
+-- @param borderColor number|nil
+-- @return boolean 是否完成绘制
+function widgets.drawPanelFrame(area, title, titleColor, borderColor)
+    if not area or area.w < 2 or area.h < 2 then return false end
+    widgets.clearArea(area.x, area.y, area.w, area.h)
+    widgets.drawBorder(area.x, area.y, area.w, area.h, borderColor)
+    if title and title ~= "" and area.h >= 3 then
+        widgets.drawText(area.x + 2, area.y + 1, title, titleColor or theme.COLORS.TEXT_CYAN)
+    end
+    return true
+end
+
 --- 画一个按钮（文本居中；宽度按显示宽度算）
 -- @param x, y, w number
 -- @param text string

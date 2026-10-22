@@ -58,38 +58,40 @@ local function newContext(machine, sub)
 
     ctx.active = function() return activeFact(machine, sub.level) end
 
-    local function sourceFor(fluid)
+    local function sourceFor(fluid, label)
         local source = ctx.sources[fluid]
         if source then return source end
-        local result = ctx.action({ kind = "findFluid", fluid = fluid })
+        local result = ctx.action({ kind = "findFluid", fluid = fluid, label = label })
         if not result or not result.ok then
-            return nil, result and result.reason or ("找不到源流体：" .. tostring(fluid))
+            return nil, result and result.reason
+                or ("找不到源流体：" .. tostring(label or fluid))
         end
         ctx.sources[fluid] = result.source
         return result.source, nil
     end
 
-    local function transferFluid(fluid, amount)
+    local function transferFluid(fluid, amount, label)
         amount = tonumber(amount) or 0
+        label  = tostring(label or fluid)
         local remaining = amount
         while remaining > 0 do
-            local source, why = sourceFor(fluid)
+            local source, why = sourceFor(fluid, label)
             if not source then return false, why end
             if source.available < remaining then
                 return false, string.format("%s 可用量不足：%d/%d mB",
-                    tostring(fluid), source.available, remaining)
+                    label, source.available, remaining)
             end
             local request = math.min(remaining, ctx.limit, source.amount)
             local result = ctx.action({
-                kind = "transferFluid", source = source, amount = request
+                kind = "transferFluid", source = source, amount = request, label = label
             })
             local moved = (result and result.ok) and tonumber(result.moved) or 0
             if moved ~= request then
                 ctx.sources[fluid] = nil
-                return false, string.format("流体转运不完整：%d/%d mB（%s）",
-                    moved, request, result and result.reason or "失败")
+                return false, string.format("%s 转运不完整：%d/%d mB（%s）",
+                    label, moved, request, result and result.reason or "失败")
             end
-            recordTransfer("fluid", fluid, fluid, moved)
+            recordTransfer("fluid", fluid, label, moved)
             remaining = remaining - moved
             source.amount = source.amount - moved
             source.available = source.available - moved
@@ -98,17 +100,20 @@ local function newContext(machine, sub)
         return true, nil
     end
 
-    ctx.transferFluid = function(fluid, amount)
-        return transferFluid(fluid, amount)
+    ctx.transferFluid = function(fluid, amount, label)
+        return transferFluid(fluid, amount, label)
     end
 
-    ctx.transferAny = function(anyList, amount)
-        local result = ctx.action({ kind = "findAny", any = anyList, amount = amount })
+    ctx.transferAny = function(anyList, amount, label)
+        label = tostring(label or "候选流体")
+        local result = ctx.action({
+            kind = "findAny", any = anyList, amount = amount, label = label
+        })
         if not result or not result.ok then
-            return false, result and result.reason or "找不到候选流体"
+            return false, result and result.reason or ("找不到候选流体：" .. label)
         end
         ctx.sources[result.source.fluid] = result.source
-        return transferFluid(result.source.fluid, amount)
+        return transferFluid(result.source.fluid, amount, label)
     end
 
     ctx.transferItem = function(required, amount)
@@ -120,22 +125,25 @@ local function newContext(machine, sub)
             if not source then
                 local result = ctx.action({ kind = "findItem", item = required })
                 if not result or not result.ok then
-                    return false, result and result.reason or "找不到物品源"
+                    return false, result and result.reason
+                        or ("找不到物品源：" .. tostring(required.label or required.name))
                 end
                 source, ctx.itemSource = result.source, result.source
             end
             ctx.itemReturnSide = source.side
             local request = math.min(remaining, source.count)
             local result = ctx.action({
-                kind = "transferItem", source = source, amount = request
+                kind = "transferItem", source = source, amount = request,
+                label = required.label or required.name
             })
             local moved = (result and result.ok) and tonumber(result.moved) or 0
             if moved <= 0 then
                 ctx.itemSource = nil
-                return false, result and result.reason or "物品转运失败"
+                return false, result and result.reason
+                    or ((required.label or required.name) .. " 转运失败")
             end
             recordTransfer("item", required.name .. ":" .. (tonumber(required.damage) or 0),
-                required.label, moved)
+                required.label or required.name, moved)
             remaining = remaining - moved
             source.count = source.count - moved
             if source.count <= 0 then source, ctx.itemSource = nil, nil end
@@ -156,7 +164,7 @@ local function newContext(machine, sub)
         local moved = tonumber(result.moved) or 0
         if moved <= 0 then return false, "物品未移动" end
         recordTransfer("item", required.name .. ":" .. (tonumber(required.damage) or 0),
-            required.label, moved)
+            required.label or required.name, moved)
         return true, nil
     end
 

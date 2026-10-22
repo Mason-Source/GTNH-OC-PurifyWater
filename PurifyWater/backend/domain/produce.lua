@@ -11,7 +11,7 @@
 --
 -- 方法模块接口（等级强挂钩；加新级 = 新文件 + main.lua 注册一行）：
 --   need(sensorLines) -> { {fluid|any, amount, label}, ... }  本轮需求（控制信号位规则）
---   requiredFluids() -> { 流体注册名 | {label=, any={…}}, ... }  侧位自动配置用（可选）
+--   requiredFluids() -> { {id,label} | {label=, any={…}}, ... }  侧位自动配置用（可选）
 --   stockRequirements() -> { {fluid|any, amount, label}, ... }  原料巡检用（可选；全部流体各一份）
 --   requiredItems() -> { {name, damage, label}, ... }  侧位自动配置用（可选；T4 物品源）
 --   usesItems() -> boolean  该级需要物品输出侧（可选；T4）

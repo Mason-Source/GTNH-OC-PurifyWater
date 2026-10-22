@@ -143,8 +143,7 @@ function detail.draw(data, area)
     local level = fstate.detailLevel
     local row   = level and data.levels[level] or nil
 
-    widgets.clearArea(area.x, area.y, area.w, area.h)
-    widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(data.system.priority == "high"))
+    widgets.drawPanelFrame(area, nil, nil, theme.borderColor(data.system.priority == "high"))
 
     if not row then
         widgets.drawText(area.x + 2, area.y + 1, "净水单元详情：没有选中等级（点某一行进来）",

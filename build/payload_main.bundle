@@ -1,6 +1,6 @@
-PW1	role=main	version=v5.0	count=90
+PW1	role=main	version=v5.3	count=91
 backend/api.lua
-8979
+9187
 local CONFIG        = require("shared.config")
 local constants     = require("shared.constants")
 local logs          = require("shared.logs")
@@ -10,8 +10,6 @@ local scheduler     = require("core.scheduler")
 local jobs          = require("backend.jobs")
 local app           = require("backend.app.system")
 local autostart     = require("backend.app.autostart")
-local ratesApp      = require("backend.app.rates")
-local energyApp    = require("backend.app.energy")
 local netApp       = require("backend.app.net")
 local produceApp   = require("backend.app.produce")
 local power         = require("backend.domain.power")
@@ -20,6 +18,16 @@ local levels_config = require("backend.store.levels_config")
 local history       = require("backend.store.history")
 local net           = require("backend.hardware.net")
 local api           = { read = {} }
+local ratesApp      = nil
+local energyApp     = nil
+local function getRatesApp()
+    ratesApp = ratesApp or require("backend.app.rates")
+    return ratesApp
+end
+local function getEnergyApp()
+    energyApp = energyApp or require("backend.app.energy")
+    return energyApp
+end
 function api.read.system()
     return {
         running  = state.read.running() == true,
@@ -157,35 +165,35 @@ COMMANDS.autostart_toggle = function()
     return true, ""
 end
 COMMANDS.mode_toggle = function()
-    ratesApp.toggleMode()
+    getRatesApp().toggleMode()
     return true, ""
 end
 COMMANDS.threshold_enforce_toggle = function()
-    ratesApp.toggleEnforceThreshold()
+    getRatesApp().toggleEnforceThreshold()
     return true, ""
 end
 COMMANDS.weight_set = function(level, weight)
-    local ok, text = ratesApp.setWeight(level, weight)
+    local ok, text = getRatesApp().setWeight(level, weight)
     if not ok then return false, text end
     return true, ""
 end
 COMMANDS.t7_boost_set = function(value)
-    local ok, text = ratesApp.setT7Boost(value)
+    local ok, text = getRatesApp().setT7Boost(value)
     if not ok then return false, text end
     return true, ""
 end
 COMMANDS.reflux_set = function(level, enabled)
-    local ok, text = ratesApp.setReflux(level, enabled)
+    local ok, text = getRatesApp().setReflux(level, enabled)
     if not ok then return false, text end
     return true, ""
 end
 COMMANDS.t6_dual_lithium_set = function(enabled)
-    local ok, text = ratesApp.setT6DualLithium(enabled)
+    local ok, text = getRatesApp().setT6DualLithium(enabled)
     if not ok then return false, text end
     return true, ""
 end
 COMMANDS.energy_factor_set = function(value)
-    local ok, text = energyApp.setFactor(value)
+    local ok, text = getEnergyApp().setFactor(value)
     if not ok then return false, text end
     return true, ""
 end
@@ -468,7 +476,7 @@ end
 return plan
 
 backend/app/produce.lua
-8361
+8551
 local constants      = require("shared.constants")
 local logs           = require("shared.logs")
 local state          = require("shared.state")
@@ -480,10 +488,18 @@ local produce_table  = require("backend.store.produce")
 local produce_config = require("backend.store.produce_config")
 local binding        = require("backend.app.produce.binding")
 local readiness      = require("backend.app.produce.readiness")
-local patrol         = require("backend.app.produce.patrol")
-local jobs           = require("backend.app.produce.jobs")
 local view           = require("backend.app.produce.view")
+local patrol         = nil
+local produceJobs    = nil
 local produceApp     = {}
+local function patrolApp()
+    patrol = patrol or require("backend.app.produce.patrol")
+    return patrol
+end
+local function jobsApp()
+    produceJobs = produceJobs or require("backend.app.produce.jobs")
+    return produceJobs
+end
 local bindFailText = nil
 local function notify(reason)
     scheduler.emit("produce_changed", { reason = reason })
@@ -538,7 +554,7 @@ function produceApp.refresh()
     return readiness.refreshAll()
 end
 function produceApp.patrol()
-    return patrol.run()
+    return patrolApp().run()
 end
 function produceApp.beginBind(level, machine)
     level = tonumber(level)
@@ -601,7 +617,7 @@ function produceApp.setEnabled(level, enabled)
     local label = constants.levelLabel(level)
     if enabled == true then
         binding.refreshOnline()
-        patrol.run(level)
+        patrolApp().run(level)
         local ok, reason, units = readiness.validateForEnable(level)
         if not ok then return false, reason end
         local saved, err = produce_config.set(level, true)
@@ -617,11 +633,11 @@ function produceApp.setEnabled(level, enabled)
     return true, ""
 end
 function produceApp.read() return view.read() end
-function produceApp.syncJobs() return jobs.sync() end
+function produceApp.syncJobs() return jobsApp().sync() end
 function produceApp.onCycleProgress(progress, maxProgress)
-    return jobs.onCycleProgress(progress, maxProgress)
+    return jobsApp().onCycleProgress(progress, maxProgress)
 end
-function produceApp.onCycleStarted(payload) return jobs.onCycleStarted(payload) end
+function produceApp.onCycleStarted(payload) return jobsApp().onCycleStarted(payload) end
 function produceApp.tick()
     local item = state.read.produce().binding
     if not item then return end
@@ -869,10 +885,10 @@ end
 return binding
 
 backend/app/produce/executor.lua
-7900
-local probes     = require("backend.hardware.probes")
-local gtInfodata = require("backend.hardware.gt_infodata")
-local transposer = require("backend.hardware.transposer")
+8313
+local probes       = require("backend.hardware.probes")
+local gtInfodata   = require("backend.hardware.gt_infodata")
+local transposer   = require("backend.hardware.transposer")
 local executor = {}
 local function scanFluids(sub)
     local out = {}
@@ -948,7 +964,7 @@ HANDLERS.target = function(action, job)
     if sub.sides.target then
         for _, item in ipairs(transposer.containers(sub.transposer, sub.sides.target) or {}) do
             if item.fluid and (tonumber(item.amount) or 0) > 0 then
-                return { ok = false, reason = "输出侧残留：" .. tostring(item.fluid) }
+                return { ok = false, reason = "输出侧有流体残留，请先清空目标容器" }
             end
         end
     end
@@ -963,18 +979,22 @@ end
 HANDLERS.findFluid = function(action, job)
     local source = scanFluids(job.sub)[action.fluid]
     if not source then
-        return { ok = false, reason = "找不到源流体：" .. tostring(action.fluid) }
+        return { ok = false, reason = "找不到源流体：" .. tostring(action.label or action.fluid) }
     end
     return { ok = true, source = source }
 end
 HANDLERS.findAny = function(action, job)
     local source = findAnySource(job.sub, action.any, action.amount)
-    if not source then return { ok = false, reason = "找不到候选流体" } end
+    if not source then
+        return { ok = false, reason = "找不到候选流体：" .. tostring(action.label or "未知候选组") }
+    end
     return { ok = true, source = source }
 end
 HANDLERS.findItem = function(action, job)
     local source = findItemSource(job.sub, action.item)
-    if not source then return { ok = false, reason = "找不到物品源" } end
+    if not source then
+        return { ok = false, reason = "找不到物品源：" .. tostring(action.item.label or action.item.name) }
+    end
     return { ok = true, source = source }
 end
 HANDLERS.transferFluid = function(action, job)
@@ -984,7 +1004,10 @@ HANDLERS.transferFluid = function(action, job)
     end
     local ok, moved = transposer.transfer(sub.transposer, action.source.side,
         sub.sides.target, action.amount, action.source.tank)
-    if not ok then return { ok = false, reason = tostring(moved or "流体转运失败") } end
+    if not ok then
+        return { ok = false, reason = tostring(action.label or action.source.fluid)
+            .. " 转运失败：" .. tostring(moved or "未知原因") }
+    end
     return { ok = true, moved = tonumber(moved) or 0 }
 end
 HANDLERS.transferItem = function(action, job)
@@ -994,7 +1017,11 @@ HANDLERS.transferItem = function(action, job)
     end
     local ok, moved = transposer.transferItems(sub.transposer, action.source.side,
         sub.sides.itemTarget, action.amount, action.source.slot)
-    if not ok then return { ok = false, reason = tostring(moved or "物品转运失败") } end
+    if not ok then
+        return { ok = false, reason = tostring(action.label
+            or action.source.item.label or action.source.item.name)
+            .. " 转运失败：" .. tostring(moved or "未知原因") }
+    end
     return { ok = true, moved = tonumber(moved) or 0 }
 end
 HANDLERS.returnItem = function(action, job)
@@ -1008,7 +1035,8 @@ HANDLERS.returnItem = function(action, job)
     local slot, count, err = transposer.findItem(sub.transposer, sub.sides.itemTarget,
         action.item.name, action.item.damage)
     if not slot then
-        return { ok = false, reason = err or ("目标侧找不到物品：" .. tostring(action.item.label)) }
+        return { ok = false, reason = err
+            or ("目标侧找不到物品：" .. tostring(action.item.label or action.item.name)) }
     end
     local amount = math.min(tonumber(action.amount) or 1, count)
     local ok, moved = transposer.transferItems(sub.transposer, sub.sides.itemTarget,
@@ -1056,7 +1084,7 @@ end
 return executor
 
 backend/app/produce/jobs.lua
-4045
+4049
 local computer       = require("computer")
 local CONFIG         = require("shared.config")
 local constants      = require("shared.constants")
@@ -1127,7 +1155,7 @@ function jobs.onCycleStarted(payload)
         return job.cycleSeq ~= seq
     end)
     if dropped > 0 then
-        logs.debug(string.format("制作自动化：周期 #%s 丢弃未完成 operation %d 个",
+        logs.debug(string.format("制作自动化：周期 #%s 丢弃未完成制作任务 %d 个",
             tostring(seq), dropped))
     end
     local ratio = cycleRatio()
@@ -1146,14 +1174,14 @@ function jobs.onCycleStarted(payload)
         end
     end
     if planned > 0 then
-        logs.debug(string.format("制作自动化：周期 #%s 登记 operation %d 台",
+        logs.debug(string.format("制作自动化：周期 #%s 登记制作任务 %d 台",
             tostring(seq), planned))
     end
 end
 return jobs
 
 backend/app/produce/patrol.lua
-7744
+7940
 local constants  = require("shared.constants")
 local logs       = require("shared.logs")
 local state      = require("shared.state")
@@ -1165,6 +1193,8 @@ local sides      = require("backend.app.produce.sides")
 local probes     = require("backend.hardware.probes")
 local transposer = require("backend.hardware.transposer")
 local patrol = {}
+local MISSING_DETAIL_WIDTH = 64
+local FORCE_REASON_WIDTH   = 48
 local function resolveAnyFound(found, anyList)
     local picked, best = nil, 0
     for _, fluid in ipairs(anyList or {}) do
@@ -1215,7 +1245,7 @@ local function checkStock(sub, stock)
             local have = foundItems[key] or 0
             if have < need.amount then
                 miss[#miss + 1] = string.format("%s %d/%d个",
-                    tostring(need.label or need.item.label), have, need.amount)
+                    tostring(need.label or need.item.label or need.item.name), have, need.amount)
             end
         else
             local fluid = need.fluid or resolveAnyFound(found, need.any)
@@ -1293,10 +1323,11 @@ local function checkMachine(machine, sub, method, changed)
                     constants.levelLabel(sub.level), binding.machineTextOf(sub.level, machine)))
             end
             logs.debug(string.format("%s 制作自动化：原料不足明细——%s",
-                constants.levelLabel(sub.level), table.concat(miss, "、")))
+                constants.levelLabel(sub.level), utils.joinLimited(miss, MISSING_DETAIL_WIDTH)))
             local requiredItems = interface.requiredItems(method)
             if reconfigureIfMoved(machine, sub, requiredItems) then changed = true end
-            state.write.produceSetSub(machine, { forceOff = true, forceReason = "原料不足" })
+            local forceReason = "原料不足：" .. utils.joinLimited(miss, FORCE_REASON_WIDTH)
+            state.write.produceSetSub(machine, { forceOff = true, forceReason = forceReason })
             changed = true
         end
     elseif wasOff then
@@ -1429,11 +1460,13 @@ end
 return readiness
 
 backend/app/produce/sides.lua
-6788
+7200
 local state      = require("shared.state")
+local utils      = require("shared.utils")
 local transposer = require("backend.hardware.transposer")
 local binding    = require("backend.app.produce.binding")
 local sides = {}
+local MAX_MISSING_WIDTH = 52
 local function sameItem(a, b)
     return a ~= nil and b ~= nil
         and a.name == b.name
@@ -1482,11 +1515,18 @@ local function missingFluids(required, found)
     local miss = {}
     for _, item in ipairs(required or {}) do
         if type(item) == "table" then
-            local hit = false
-            for _, name in ipairs(item.any or {}) do
-                if found[name] then hit = true; break end
+            if item.any then
+                local hit = false
+                for _, name in ipairs(item.any) do
+                    if found[name] then hit = true; break end
+                end
+                if not hit then miss[#miss + 1] = tostring(item.label or "候选流体") end
+            else
+                local id = item.id or item.fluid
+                if id and not found[id] then
+                    miss[#miss + 1] = tostring(item.label or id)
+                end
             end
-            if not hit then miss[#miss + 1] = tostring(item.label or "?") end
         elseif not found[item] then
             miss[#miss + 1] = tostring(item)
         end
@@ -1537,7 +1577,9 @@ function sides.classify(info, requiredFluids, requiredItems, preferredFluid, pre
             target = emptySide
         end
         local miss = missingFluids(requiredFluids, found)
-        if #miss > 0 then return nil, "输入侧缺流体：" .. table.concat(miss, "、") end
+        if #miss > 0 then
+            return nil, "输入侧缺流体：" .. utils.joinLimited(miss, MAX_MISSING_WIDTH)
+        end
     end
     if requiredItems and #requiredItems > 0 then
         if itemTarget == nil then
@@ -1556,7 +1598,9 @@ function sides.classify(info, requiredFluids, requiredItems, preferredFluid, pre
             end
             if not hit then missItems[#missItems + 1] = tostring(req.label or req.name) end
         end
-        if #missItems > 0 then return nil, "输入侧缺物品：" .. table.concat(missItems, "、") end
+        if #missItems > 0 then
+            return nil, "输入侧缺物品：" .. utils.joinLimited(missItems, MAX_MISSING_WIDTH)
+        end
     end
     return {
         target      = target,
@@ -1662,7 +1706,7 @@ end
 return view
 
 backend/app/produce_job.lua
-7211
+7669
 local CONFIG   = require("shared.config")
 local state    = require("shared.state")
 local executor = require("backend.app.produce.executor")
@@ -1707,37 +1751,39 @@ local function newContext(machine, sub)
         return result.value, nil
     end
     ctx.active = function() return activeFact(machine, sub.level) end
-    local function sourceFor(fluid)
+    local function sourceFor(fluid, label)
         local source = ctx.sources[fluid]
         if source then return source end
-        local result = ctx.action({ kind = "findFluid", fluid = fluid })
+        local result = ctx.action({ kind = "findFluid", fluid = fluid, label = label })
         if not result or not result.ok then
-            return nil, result and result.reason or ("找不到源流体：" .. tostring(fluid))
+            return nil, result and result.reason
+                or ("找不到源流体：" .. tostring(label or fluid))
         end
         ctx.sources[fluid] = result.source
         return result.source, nil
     end
-    local function transferFluid(fluid, amount)
+    local function transferFluid(fluid, amount, label)
         amount = tonumber(amount) or 0
+        label  = tostring(label or fluid)
         local remaining = amount
         while remaining > 0 do
-            local source, why = sourceFor(fluid)
+            local source, why = sourceFor(fluid, label)
             if not source then return false, why end
             if source.available < remaining then
                 return false, string.format("%s 可用量不足：%d/%d mB",
-                    tostring(fluid), source.available, remaining)
+                    label, source.available, remaining)
             end
             local request = math.min(remaining, ctx.limit, source.amount)
             local result = ctx.action({
-                kind = "transferFluid", source = source, amount = request
+                kind = "transferFluid", source = source, amount = request, label = label
             })
             local moved = (result and result.ok) and tonumber(result.moved) or 0
             if moved ~= request then
                 ctx.sources[fluid] = nil
-                return false, string.format("流体转运不完整：%d/%d mB（%s）",
-                    moved, request, result and result.reason or "失败")
+                return false, string.format("%s 转运不完整：%d/%d mB（%s）",
+                    label, moved, request, result and result.reason or "失败")
             end
-            recordTransfer("fluid", fluid, fluid, moved)
+            recordTransfer("fluid", fluid, label, moved)
             remaining = remaining - moved
             source.amount = source.amount - moved
             source.available = source.available - moved
@@ -1745,16 +1791,19 @@ local function newContext(machine, sub)
         end
         return true, nil
     end
-    ctx.transferFluid = function(fluid, amount)
-        return transferFluid(fluid, amount)
+    ctx.transferFluid = function(fluid, amount, label)
+        return transferFluid(fluid, amount, label)
     end
-    ctx.transferAny = function(anyList, amount)
-        local result = ctx.action({ kind = "findAny", any = anyList, amount = amount })
+    ctx.transferAny = function(anyList, amount, label)
+        label = tostring(label or "候选流体")
+        local result = ctx.action({
+            kind = "findAny", any = anyList, amount = amount, label = label
+        })
         if not result or not result.ok then
-            return false, result and result.reason or "找不到候选流体"
+            return false, result and result.reason or ("找不到候选流体：" .. label)
         end
         ctx.sources[result.source.fluid] = result.source
-        return transferFluid(result.source.fluid, amount)
+        return transferFluid(result.source.fluid, amount, label)
     end
     ctx.transferItem = function(required, amount)
         amount = tonumber(amount) or 0
@@ -1765,22 +1814,25 @@ local function newContext(machine, sub)
             if not source then
                 local result = ctx.action({ kind = "findItem", item = required })
                 if not result or not result.ok then
-                    return false, result and result.reason or "找不到物品源"
+                    return false, result and result.reason
+                        or ("找不到物品源：" .. tostring(required.label or required.name))
                 end
                 source, ctx.itemSource = result.source, result.source
             end
             ctx.itemReturnSide = source.side
             local request = math.min(remaining, source.count)
             local result = ctx.action({
-                kind = "transferItem", source = source, amount = request
+                kind = "transferItem", source = source, amount = request,
+                label = required.label or required.name
             })
             local moved = (result and result.ok) and tonumber(result.moved) or 0
             if moved <= 0 then
                 ctx.itemSource = nil
-                return false, result and result.reason or "物品转运失败"
+                return false, result and result.reason
+                    or ((required.label or required.name) .. " 转运失败")
             end
             recordTransfer("item", required.name .. ":" .. (tonumber(required.damage) or 0),
-                required.label, moved)
+                required.label or required.name, moved)
             remaining = remaining - moved
             source.count = source.count - moved
             if source.count <= 0 then source, ctx.itemSource = nil, nil end
@@ -1799,7 +1851,7 @@ local function newContext(machine, sub)
         local moved = tonumber(result.moved) or 0
         if moved <= 0 then return false, "物品未移动" end
         recordTransfer("item", required.name .. ":" .. (tonumber(required.damage) or 0),
-            required.label, moved)
+            required.label or required.name, moved)
         return true, nil
     end
     ctx.recoverTarget = function()
@@ -1838,7 +1890,7 @@ end
 return job
 
 backend/app/produce_runtime.lua
-4275
+4419
 local computer = require("computer")
 local logs     = require("shared.logs")
 local utils    = require("shared.utils")
@@ -1846,8 +1898,9 @@ local runtime = {}
 local jobs    = {}
 local function now() return computer.uptime() end
 local function fail(job, reason)
-    logs.warn(string.format("制作自动化 operation 失败（%s）：%s",
-        tostring(job.id), tostring(reason)))
+    local where = tostring(job.machineText or job.machine or job.id or "?")
+    if job.levelLabel then where = tostring(job.levelLabel) .. " " .. where end
+    logs.warn(string.format("制作自动化任务失败（%s）：%s", where, tostring(reason)))
     jobs[job.id] = nil
 end
 local function transferSummary(job)
@@ -1873,7 +1926,7 @@ local function complete(job)
     jobs[job.id] = nil
 end
 function runtime.add(job)
-    assert(type(job) == "table" and type(job.operation) == "function", "invalid operation")
+    assert(type(job) == "table" and type(job.operation) == "function", "无效的制作任务")
     assert(type(job.executor) == "function", "invalid executor")
     job.runAt    = tonumber(job.runAt) or now()
     job.priority = tonumber(job.priority) or 100
@@ -1941,10 +1994,10 @@ local function resume(job)
     end
     if not ok then fail(job, a) return end
     if coroutine.status(job.co) == "dead" then
-        if a == false then fail(job, b or "operation 失败") else complete(job) end
+        if a == false then fail(job, b or "制作任务失败") else complete(job) end
         return
     end
-    if type(a) ~= "table" then fail(job, "operation 返回无效请求") return end
+    if type(a) ~= "table" then fail(job, "制作任务返回无效请求") return end
     if a.kind == "wait" then
         job.runAt = now() + math.max(0.05, tonumber(a.seconds) or 0.05)
         return
@@ -1957,7 +2010,7 @@ local function resume(job)
         job.runAt = now() + 0.05
         return
     end
-    fail(job, "未知 operation 请求：" .. tostring(a.kind))
+    fail(job, "未知的制作任务请求：" .. tostring(a.kind))
 end
 function runtime.tick()
     local job = pickDue(now())
@@ -2072,19 +2125,31 @@ end
 return app
 
 backend/app/system.lua
-7730
+7997
 local constants       = require("shared.constants")
 local logs            = require("shared.logs")
 local state           = require("shared.state")
 local utils           = require("shared.utils")
 local computer        = require("computer")
 local scheduler       = require("core.scheduler")
-local actuator        = require("backend.domain.actuator")
-local tracker         = require("backend.domain.tracker")
 local learning        = require("backend.domain.learning")
 local mode            = require("backend.domain.mode")
 local power           = require("backend.domain.power")
-local plan            = require("backend.app.plan")
+local actuator        = nil
+local tracker         = nil
+local plan            = nil
+local function actuatorApp()
+    actuator = actuator or require("backend.domain.actuator")
+    return actuator
+end
+local function trackerApp()
+    tracker = tracker or require("backend.domain.tracker")
+    return tracker
+end
+local function planApp()
+    plan = plan or require("backend.app.plan")
+    return plan
+end
 local HOST_OFF_REASON = "主机已关机"
 local system          = {}
 local lastWarnSig      = nil
@@ -2110,7 +2175,7 @@ end
 function system.requestPlan(reason)
     if not state.read.running() then return false end
     if system.checkSuggestionChange() then return false end
-    return plan.run(reason)
+    return planApp().run(reason)
 end
 function system.resetSuggestBaseline()
     state.write.setBaseline(power.suggestVector())
@@ -2157,21 +2222,21 @@ function system.auditThresholds()
     for _, text in ipairs(debugTexts) do logs.debug(text) end
 end
 function system.resetLearning(why)
-    tracker.resetAll()
+    trackerApp().resetAll()
     learning.forgetAll()
     scheduler.emit("rules_audit", { reason = why })
 end
 local function beginSession(reason)
     system.resetLearning(reason)
     state.write.setRunning(true)
-    plan.forget()
+    planApp().forget()
     system.resetSuggestBaseline()
     logs.system("并行学习已重置（从建议值重新学习）")
 end
 local function endSession(reason)
     state.write.setRunning(false)
     system.resetLearning(reason)
-    plan.forget()
+    planApp().forget()
 end
 function system.start(reason)
     if state.read.running() then return true end
@@ -2190,7 +2255,7 @@ function system.start(reason)
     return true
 end
 function system.stop(reason)
-    local count = actuator.shutdownAll()
+    local count = actuatorApp().shutdownAll()
     endSession(reason)
     logs.system(string.format("停机（%s）：已下发全关 %d 台", tostring(reason or "-"), count))
 end
@@ -2223,7 +2288,7 @@ function system.onSwitchMismatch(payload)
     if not payload or not payload.level then return end
     if not state.read.running() then return end
     local levelName    = constants.levelLabel(payload.level)
-    local receipt      = actuator.lastReceipt()
+    local receipt      = actuatorApp().lastReceipt()
     local sent, failed = 0, 0
     for _, item in ipairs(receipt.items or {}) do
         sent = sent + 1
@@ -2266,7 +2331,7 @@ function system.onParallelWrite(payload)
     return true
 end
 function system.onPriorityToggle()
-    plan.togglePriority()
+    planApp().togglePriority()
     system.requestPlan("优先级切换")
 end
 function system.onScheduleRequest(payload)
@@ -2869,11 +2934,12 @@ end
 return interface
 
 backend/domain/produce/t3.lua
-556
+634
+local resources = require("shared.resources")
 local t3 = {}
-local FLUID  = "polyaluminiumchloride"
+local FLUID  = resources.FLUIDS.POLYALUMINIUM_CHLORIDE
 local AMOUNT = 900000
-local ENTRY = { fluid = FLUID, amount = AMOUNT, label = "聚氯化铝" }
+local ENTRY = { fluid = FLUID.id, amount = AMOUNT, label = FLUID.label }
 local FLUIDS = { FLUID }
 local STOCK  = { ENTRY }
 t3.priority = 20
@@ -2882,21 +2948,18 @@ function t3.stockRequirements() return STOCK end
 function t3.minTransferRate() return 2621440 end
 function t3.need(lines) return { ENTRY } end
 function t3.operation(ctx)
-    local ok, why = ctx.transferFluid(FLUID, AMOUNT)
+    local ok, why = ctx.transferFluid(FLUID.id, AMOUNT, FLUID.label)
     if not ok then return false, why end
     return true
 end
 return t3
 
 backend/domain/produce/t4.lua
-2179
+2189
+local resources = require("shared.resources")
 local t4 = {}
-local ACID = "hydrochloricacid_gt5u" 
-local ALKALINE = {
-    name   = "gregtech:gt.metaitem.01",
-    damage = 2685,
-    label  = "氢氧化钠粉"
-}
+local ACID = resources.FLUIDS.HYDROCHLORIC_ACID
+local ALKALINE = resources.ITEMS.SODIUM_HYDROXIDE_DUST
 local PH_TARGET    = 7
 local PH_TOLERANCE = 0.05
 local PH_PER_DUST  = 0.01
@@ -2911,8 +2974,8 @@ function t4.requiredFluids() return FLUIDS end
 function t4.requiredItems() return ITEMS end
 function t4.usesItems() return true end
 local STOCK = {
-    { item = ALKALINE, amount = STOCK_DUST, label = "氢氧化钠粉" },
-    { fluid = ACID, amount = MAX_ACID, label = "氢氯酸" }
+    { item = ALKALINE, amount = STOCK_DUST, label = ALKALINE.label },
+    { fluid = ACID.id, amount = MAX_ACID, label = ACID.label }
 }
 function t4.stockRequirements() return STOCK end
 function t4.minTransferRate() return 50000 end
@@ -2927,11 +2990,11 @@ function t4.demand(ph)
     end
     if errorValue > 0 then
         local count = math.min(MAX_DUST, math.floor(errorValue / PH_PER_DUST + 0.5))
-        return { { item = ALKALINE, amount = count, label = "氢氧化钠粉" } }, nil, ph
+        return { { item = ALKALINE, amount = count, label = ALKALINE.label } }, nil, ph
     end
     local doses = math.floor((-errorValue) / PH_PER_10_ACID + 0.5)
     local amount = math.min(MAX_ACID, doses * 10)
-    return { { fluid = ACID, amount = amount, label = "氢氯酸" } }, nil, ph
+    return { { fluid = ACID.id, amount = amount, label = ACID.label } }, nil, ph
 end
 function t4.need() return {}, nil, nil end
 function t4.operation(ctx)
@@ -2945,7 +3008,7 @@ function t4.operation(ctx)
         if need.item then
             ok, itemWhy = ctx.transferItem(need.item, need.amount)
         else
-            ok, itemWhy = ctx.transferFluid(need.fluid, need.amount)
+            ok, itemWhy = ctx.transferFluid(need.fluid, need.amount, need.label)
         end
         if not ok then return false, itemWhy end
     end
@@ -2954,18 +3017,19 @@ end
 return t4
 
 backend/domain/produce/t5.lua
-2988
+3105
+local resources = require("shared.resources")
 local t5 = {}
-local PLASMA       = "plasma.helium"
-local COOLANT      = "supercoolant"
+local PLASMA       = resources.FLUIDS.HELIUM_PLASMA
+local COOLANT      = resources.FLUIDS.SUPERCOOLANT
 local HEAT_TARGET  = 10000
 local MAX_TEMP     = 12500
 local MAX_CYCLES   = 3
 local PLASMA_NEED  = 100
 local COOLANT_NEED = 2000
 local CYCLE_SETTLE = 1
-t5.PLASMA       = PLASMA
-t5.COOLANT      = COOLANT
+t5.PLASMA       = PLASMA.id
+t5.COOLANT      = COOLANT.id
 t5.HEAT_TARGET  = HEAT_TARGET
 t5.MAX_TEMP     = MAX_TEMP
 t5.MAX_CYCLES   = MAX_CYCLES
@@ -2974,8 +3038,8 @@ t5.COOLANT_NEED = COOLANT_NEED
 t5.priority     = 5
 local FLUIDS = { PLASMA, COOLANT }
 local STOCK  = {
-    { fluid = PLASMA, amount = PLASMA_NEED, label = "氦等离子" },
-    { fluid = COOLANT, amount = COOLANT_NEED, label = "超级冷却液" }
+    { fluid = PLASMA.id, amount = PLASMA_NEED, label = PLASMA.label },
+    { fluid = COOLANT.id, amount = COOLANT_NEED, label = COOLANT.label }
 }
 function t5.requiredFluids() return FLUIDS end
 function t5.stockRequirements() return STOCK end
@@ -3018,12 +3082,12 @@ function t5.operation(ctx)
     end
     for _ = 1, MAX_CYCLES do
         if not ctx.active() then return false, "机器 active=false" end
-        local ok, why = ctx.transferFluid(PLASMA, PLASMA_NEED)
+        local ok, why = ctx.transferFluid(PLASMA.id, PLASMA_NEED, PLASMA.label)
         if not ok then return false, why end
         temperature, err = waitHeat(ctx, temperature)
         if temperature == nil then return false, err end
         if not ctx.active() then return false, "机器 active=false" end
-        ok, why = ctx.transferFluid(COOLANT, COOLANT_NEED)
+        ok, why = ctx.transferFluid(COOLANT.id, COOLANT_NEED, COOLANT.label)
         if not ok then return false, why end
         temperature, err = waitCool(ctx, temperature)
         if temperature == nil then return false, err end
@@ -3034,25 +3098,21 @@ end
 return t5
 
 backend/domain/produce/t6.lua
-3923
+3708
+local resources = require("shared.resources")
 local t6 = {}
-local GT_META   = "gregtech:gt.metaitem.01"
-local BW_LENS   = "bartworks:gt.bwMetaGeneratedlens"
 local WAIT      = 3
 local MAX_PROBES = 6
-local function lens(name, damage, label)
-    return { name = name, damage = damage, label = label }
-end
 local LENSES = {
-    lens(BW_LENS, 10023, "合成玉透镜"),
-    lens(GT_META, 24514, "琥珀透镜"),
-    lens(GT_META, 24540, "风之魔晶透镜"),
-    lens(GT_META, 24501, "绿宝石透镜"),
-    lens(GT_META, 24208, "魔力钻石透镜"),
-    lens(GT_META, 24513, "蓝黄玉透镜"),
-    lens(GT_META, 24509, "紫水晶透镜"),
-    lens(BW_LENS, 5,     "氟铁电气石透镜"),
-    lens(GT_META, 24515, "双锂透镜")
+    resources.ITEMS.LENS_SYNTHETIC_JADE,
+    resources.ITEMS.LENS_AMBER,
+    resources.ITEMS.LENS_WIND_MAGIC_CRYSTAL,
+    resources.ITEMS.LENS_EMERALD,
+    resources.ITEMS.LENS_MAGIC_DIAMOND,
+    resources.ITEMS.LENS_BLUE_TOPAZ,
+    resources.ITEMS.LENS_AMETHYST,
+    resources.ITEMS.LENS_FLUORINE_IRON_TOURMALINE,
+    resources.ITEMS.LENS_DILITHIUM
 }
 local REQUIRED = {}
 for index = 1, #LENSES - 1 do REQUIRED[index] = LENSES[index] end
@@ -3139,32 +3199,57 @@ end
 return t6
 
 backend/domain/produce/t7.lua
-2697
+3156
+local resources = require("shared.resources")
 local t7 = {}
 local SUPERCONDUCTORS = {
-    "molten.longasssuperconductornameforuvwire",
-    "molten.longasssuperconductornameforuhvwire",
-    "molten.superconductoruevbase",
-    "molten.superconductoruivbase",
-    "molten.superconductorumvbase"
+    resources.FLUIDS.MOLTEN_SUPERCONDUCTOR_UV.id,
+    resources.FLUIDS.MOLTEN_SUPERCONDUCTOR_UHV.id,
+    resources.FLUIDS.MOLTEN_SUPERCONDUCTOR_UEV.id,
+    resources.FLUIDS.MOLTEN_SUPERCONDUCTOR_UIV.id,
+    resources.FLUIDS.MOLTEN_SUPERCONDUCTOR_UMV.id
 }
-local SUPERCOOLANT   = { fluid = "supercoolant", amount = 10000, label = "超级冷却液" }
-local GAS_HE         = { fluid = "helium",  amount = 10000, label = "氦" }
-local GAS_NE         = { fluid = "neon",    amount = 7500,  label = "氖" }
-local GAS_KR         = { fluid = "krypton", amount = 5000,  label = "氪" }
-local GAS_XE         = { fluid = "xenon",   amount = 2500,  label = "氙" }
+local SUPERCOOLANT = {
+    fluid = resources.FLUIDS.SUPERCOOLANT.id,
+    amount = 10000,
+    label = resources.FLUIDS.SUPERCOOLANT.label
+}
+local GAS_HE = {
+    fluid = resources.FLUIDS.HELIUM.id,
+    amount = 10000,
+    label = resources.FLUIDS.HELIUM.label
+}
+local GAS_NE = {
+    fluid = resources.FLUIDS.NEON.id,
+    amount = 7500,
+    label = resources.FLUIDS.NEON.label
+}
+local GAS_KR = {
+    fluid = resources.FLUIDS.KRYPTON.id,
+    amount = 5000,
+    label = resources.FLUIDS.KRYPTON.label
+}
+local GAS_XE = {
+    fluid = resources.FLUIDS.XENON.id,
+    amount = 2500,
+    label = resources.FLUIDS.XENON.label
+}
 local SUPERCONDUCTOR = { any = SUPERCONDUCTORS, amount = 1440, label = "熔融超导粗胚" }
-local NEUTRONIUM     = { fluid = "molten.neutronium", amount = 4608, label = "熔融中子" }
+local NEUTRONIUM = {
+    fluid = resources.FLUIDS.MOLTEN_NEUTRONIUM.id,
+    amount = 4608,
+    label = resources.FLUIDS.MOLTEN_NEUTRONIUM.label
+}
 local STOCK = { SUPERCOOLANT, GAS_HE, SUPERCONDUCTOR, GAS_NE, NEUTRONIUM, GAS_KR, GAS_XE }
 t7.priority = 40
 local FLUIDS = {
-    SUPERCOOLANT.fluid,
-    GAS_HE.fluid,
+    resources.FLUIDS.SUPERCOOLANT,
+    resources.FLUIDS.HELIUM,
     { label = "熔融超导粗胚（UV-UMV 任意）", any = SUPERCONDUCTORS },
-    GAS_NE.fluid,
-    NEUTRONIUM.fluid,
-    GAS_KR.fluid,
-    GAS_XE.fluid
+    resources.FLUIDS.NEON,
+    resources.FLUIDS.MOLTEN_NEUTRONIUM,
+    resources.FLUIDS.KRYPTON,
+    resources.FLUIDS.XENON
 }
 function t7.stockRequirements() return STOCK end
 function t7.minTransferRate() return 200000 end
@@ -3202,9 +3287,9 @@ function t7.operation(ctx)
     for _, need in ipairs(demand) do
         local ok, itemWhy
         if need.fluid then
-            ok, itemWhy = ctx.transferFluid(need.fluid, need.amount)
+            ok, itemWhy = ctx.transferFluid(need.fluid, need.amount, need.label)
         else
-            ok, itemWhy = ctx.transferAny(need.any, need.amount)
+            ok, itemWhy = ctx.transferAny(need.any, need.amount, need.label)
         end
         if not ok then return false, itemWhy end
     end
@@ -3213,20 +3298,17 @@ end
 return t7
 
 backend/domain/produce/t8.lua
-2099
+1930
+local resources = require("shared.resources")
 local utils = require("shared.utils")
 local t8 = {}
-local ITEM_NAME = "gregtech:gt.metaitem.03"
-local function catalyst(damage, label)
-    return { name = ITEM_NAME, damage = damage, label = label }
-end
 local CATALYSTS = {
-    catalyst(32235, "上夸克释放催化剂"),   
-    catalyst(32236, "下夸克释放催化剂"),   
-    catalyst(32237, "奇夸克释放催化剂"),   
-    catalyst(32238, "粲夸克释放催化剂"),   
-    catalyst(32239, "底夸克释放催化剂"),   
-    catalyst(32240, "顶夸克释放催化剂")    
+    resources.ITEMS.QUARK_UP_CATALYST,
+    resources.ITEMS.QUARK_DOWN_CATALYST,
+    resources.ITEMS.QUARK_STRANGE_CATALYST,
+    resources.ITEMS.QUARK_CHARM_CATALYST,
+    resources.ITEMS.QUARK_BOTTOM_CATALYST,
+    resources.ITEMS.QUARK_TOP_CATALYST
 }
 local WALK = { 1, 2, 3, 4, 5, 6, 2, 4, 6, 1, 3, 5, 1, 4, 6, 3, 2, 5 }
 local STOCK = {}
@@ -3512,25 +3594,33 @@ end
 return tracker
 
 backend/handlers.lua
-1458
+1847
 local scheduler = require("core.scheduler")
-local watch     = require("backend.app.watch")
 local system    = require("backend.app.system")
-local rates     = require("backend.app.rates")
 local produceApp = require("backend.app.produce")
 local handlers  = {}
+local watch     = nil
+local rates     = nil
+local function watchApp()
+    watch = watch or require("backend.app.watch")
+    return watch
+end
+local function ratesApp()
+    rates = rates or require("backend.app.rates")
+    return rates
+end
 function handlers.subscribe()
     scheduler.on("hardware_missing", system.onHardwareMissing)
     scheduler.on("hardware_changed", system.onHardwareChanged)
     scheduler.on("power_changed", system.onPowerChanged)
     scheduler.on("deployed_changed", system.onDeployedChanged)
-    scheduler.on("plant_observed", watch.onPlantObserved)
-    scheduler.on("parallel_sample", watch.onParallelSample)
-    scheduler.on("level_rules_changed", watch.onLevelRulesChanged)
-    scheduler.on("rates_changed", rates.onRatesChanged)
-    scheduler.on("mode_changed", rates.onModeChanged)
-    scheduler.on("enforce_changed", rates.onEnforceChanged)
-    scheduler.on("parallel_discarded", watch.onParallelDiscarded)
+    scheduler.on("plant_observed", function(...) return watchApp().onPlantObserved(...) end)
+    scheduler.on("parallel_sample", function(...) return watchApp().onParallelSample(...) end)
+    scheduler.on("level_rules_changed", function(...) return watchApp().onLevelRulesChanged(...) end)
+    scheduler.on("rates_changed", function(...) return ratesApp().onRatesChanged(...) end)
+    scheduler.on("mode_changed", function(...) return ratesApp().onModeChanged(...) end)
+    scheduler.on("enforce_changed", function(...) return ratesApp().onEnforceChanged(...) end)
+    scheduler.on("parallel_discarded", function(...) return watchApp().onParallelDiscarded(...) end)
     scheduler.on("parallel_write", system.onParallelWrite)
     scheduler.on("switch_mismatch", system.onSwitchMismatch)
     scheduler.on("rules_audit", system.auditThresholds)
@@ -3544,11 +3634,13 @@ end
 return handlers
 
 backend/hardware/device.lua
-3128
+3192
 local component      = require("component")
 local device         = {}
 local ME_CANDIDATES  = { "fluid_interface", "me_interface" }
 local NET_CANDIDATES = { "modem", "tunnel" }
+local TRANSPOSER     = "transposer"
+local GT_MACHINE     = "gt_machine"
 local cache          = { me = false, net = false }
 local sweepList      = {}
 local machineAddrs   = {}
@@ -3563,7 +3655,7 @@ function device.sweep()
     local out, transposers = {}, {}
     for address, ctype in component.list() do
         out[#out + 1] = { address = address, ctype = ctype }
-        if ctype == "transposer" then transposers[address] = true end
+        if ctype == TRANSPOSER then transposers[address] = true end
     end
     sweepList = out
     transposerSet = transposers
@@ -3589,7 +3681,7 @@ end
 function device.scanMachines()
     local out = {}
     for _, item in ipairs(sweepList) do
-        if item.ctype == "gt_machine" then out[#out + 1] = item.address end
+        if item.ctype == GT_MACHINE then out[#out + 1] = item.address end
     end
     machineAddrs = out
     return out
@@ -3609,7 +3701,7 @@ function device.machines()
 end
 function device.scanTransposers()
     local out, transposers = {}, {}
-    for address in component.list("transposer") do
+    for address in component.list(TRANSPOSER) do
         out[#out + 1] = address
         transposers[address] = true
     end
@@ -3620,7 +3712,7 @@ function device.isTransposerOnline(address)
     if not address or address == "" then return false end
     if transposerSet then return transposerSet[address] == true end
     local ok, ctype = pcall(component.type, address)
-    return ok and ctype == "transposer"
+    return ok and ctype == TRANSPOSER
 end
 function device.name(address)
     if not address then return nil end
@@ -4383,7 +4475,7 @@ end
 return transposer
 
 backend/jobs.lua
-10143
+10135
 local computer         = require("computer")
 local scheduler        = require("core.scheduler")
 local CONFIG           = require("shared.config")
@@ -4404,7 +4496,6 @@ local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
 local system           = require("backend.app.system")
 local produceApp       = require("backend.app.produce")
-local produceRuntime   = require("backend.app.produce_runtime")
 local jobs             = {}
 local last             = {
     scanCount = 0,
@@ -4615,7 +4706,8 @@ function jobs.register()
     add("schedule", CONFIG.INTERVAL.SCHEDULE, jobs.schedule)          
     add("persist", CONFIG.INTERVAL.PERSIST, jobs.persist)             
     add("produce", CONFIG.INTERVAL.PRODUCE, produceApp.tick)          
-    add("produce_runtime", CONFIG.INTERVAL.PRODUCE_RUNTIME, produceRuntime.tick) 
+    add("produce_runtime", CONFIG.INTERVAL.PRODUCE_RUNTIME,
+        function() return require("backend.app.produce_runtime").tick() end) 
     if logs.isDebug() then
         memwatch = require("backend.debug.memwatch")
         add("sampleMemory", CONFIG.INTERVAL.SAMPLE, memwatch.sample) 
@@ -5950,7 +6042,7 @@ end
 return charts
 
 frontend/decorate.lua
-5364
+5392
 local utils     = require("shared.utils")
 local constants = require("shared.constants")
 local theme     = require("frontend.theme")
@@ -5995,10 +6087,11 @@ function M.apply(data)
             row.produceColor     = theme.COLORS.TEXT_YELLOW
             row.produceClickable = true
         else
-            row.produceText      = "未就绪"
-            row.produceColor     = theme.COLORS.TEXT_DISABLED
+            row.produceText      = "[×]"
+            row.produceColor     = theme.COLORS.TEXT_RED
             row.produceClickable = true
         end
+        row.produceReason = pr.reason
         row.label = row.label or constants.levelLabel(level)
         row.rule  = row.rule or { threshold = 0, effectiveThreshold = 0, enabled = false }
         row.running        = (row.deployed > 0) and ((row.active or 0) > 0) or false
@@ -6049,7 +6142,7 @@ end
 return M
 
 frontend/input.lua
-9856
+9797
 local utils     = require("shared.utils")
 local constants = require("shared.constants")
 local CONFIG    = require("shared.config")
@@ -6323,9 +6416,6 @@ function input.handle(name, payload)
     end
     return false
 end
-function input.attach(data)
-    fstate.lastData = data
-end
 return input
 
 frontend/layout.lua
@@ -6433,7 +6523,7 @@ end
 return layout
 
 frontend/panels/chart.lua
-3027
+2961
 local unicode   = require("unicode")
 local constants = require("shared.constants")
 local fstate    = require("frontend.state")
@@ -6443,8 +6533,7 @@ local charts    = require("frontend.charts")
 local chart     = {}
 function chart.draw(data)
     local area = fstate.areas.chart
-    widgets.clearArea(area.x, area.y, area.w, area.h)
-    widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(data.system.priority == "high"))
+    widgets.drawPanelFrame(area, nil, nil, theme.borderColor(data.system.priority == "high"))
     fstate.chartChips = {}
     local x = area.x + 2
     local function chip(level, text)
@@ -6508,7 +6597,7 @@ end
 return chart
 
 frontend/panels/config.lua
-8903
+8889
 local unicode   = require("unicode")
 local constants = require("shared.constants")
 local fstate    = require("frontend.state")
@@ -6522,7 +6611,7 @@ local COLS      = {
     { key = "threshold", head = "阈值 kL", align = "right" },
     { key = "weight", head = "权重", align = "right" },
     { key = "boost", head = "收集", align = "right" },
-    { key = "produce", head = "制作自动化", align = "right" }
+    { key = "produce", head = "制作", align = "right" }
 }
 local COL_W     = { 0.10, 0.12, 0.26, 0.16, 0.18, 0.18 }
 local function numberText(value)
@@ -6635,7 +6724,7 @@ function config.draw(data)
             end
             if sel and fstate.editField == "boost" then bColor = theme.COLORS.TEXT_YELLOW end
             widgets.drawTextRight(cols[5].x, cols[5].w, y, bText, bColor, cellBg(5))
-            widgets.drawTextRight(cols[6].x, cols[6].w, y, row.produceText or "未就绪", row.produceColor, cellBg(6))
+            widgets.drawTextRight(cols[6].x, cols[6].w, y, row.produceText or "[×]", row.produceColor, cellBg(6))
         end
         local hasBoost = (level == 1 or level == 2
             or level == constants.T6_LEVEL or level == constants.T7_LEVEL)
@@ -6678,7 +6767,7 @@ end
 return config
 
 frontend/panels/control.lua
-6826
+6713
 local unicode   = require("unicode")
 local fstate    = require("frontend.state")
 local theme     = require("frontend.theme")
@@ -6699,9 +6788,8 @@ local function infoRows(data)
 end
 function control.draw(data)
     local area = fstate.areas.control
-    widgets.clearArea(area.x, area.y, area.w, area.h)
-    widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(data.system.priority == "high"))
-    widgets.drawText(area.x + 2, area.y + 1, "控制面板", theme.COLORS.TEXT_CYAN)
+    widgets.drawPanelFrame(area, "控制面板", theme.COLORS.TEXT_CYAN,
+        theme.borderColor(data.system.priority == "high"))
     local avail    = math.max(1, area.h - 3)
     local twoCol   = false
     local rowsUsed = 5
@@ -6845,7 +6933,7 @@ end
 return control
 
 frontend/panels/detail.lua
-6465
+6399
 local unicode   = require("unicode")
 local constants = require("shared.constants")
 local utils     = require("shared.utils")
@@ -6930,8 +7018,7 @@ end
 function detail.draw(data, area)
     local level = fstate.detailLevel
     local row   = level and data.levels[level] or nil
-    widgets.clearArea(area.x, area.y, area.w, area.h)
-    widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(data.system.priority == "high"))
+    widgets.drawPanelFrame(area, nil, nil, theme.borderColor(data.system.priority == "high"))
     if not row then
         widgets.drawText(area.x + 2, area.y + 1, "净水单元详情：没有选中等级（点某一行进来）",
             theme.COLORS.TEXT_YELLOW)
@@ -6987,7 +7074,7 @@ end
 return detail
 
 frontend/panels/keypad.lua
-15798
+16223
 local unicode = require("unicode")
 local fstate  = require("frontend.state")
 local theme   = require("frontend.theme")
@@ -7107,6 +7194,7 @@ end
 local function sideFailText(reason)
     if type(reason) ~= "string" or reason == "" then return nil end
     local miss = reason:match("^输入侧缺流体：(.+)$")
+        or reason:match("^输入侧缺物品：(.+)$")
     if miss then
         miss = miss:gsub("熔融超导粗胚（UV%-UMV 任意）", "粗胚")
         return "缺 " .. miss
@@ -7116,8 +7204,7 @@ local function sideFailText(reason)
     return reason
 end
 local function fitText(text, width)
-    if unicode.wlen(text) <= width then return text end
-    return unicode.sub(text, 1, math.max(1, width - 1)) .. "…"
+    return utils.truncate(text, width)
 end
 local function drawProduce(area, data)
     local level = fstate.editLevel or 1
@@ -7160,9 +7247,17 @@ local function drawProduce(area, data)
     local enabled = row and row.produceEnabled == true
     local toggle  = enabled and "[关]" or "[开]"
     put(toggle, enabled and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT, "toggle")
-    if info.state == "blocked" and info.reason then
-        cx = cx + 2
-        put("强制关断：" .. tostring(info.reason), theme.COLORS.TEXT_YELLOW)
+    if (info.state == "blocked" or info.state == "invalid") and info.reason then
+        local binding = pd.binding
+        local reserve = (binding and binding.level == level) and 32 or 2
+        local room    = math.max(0, area.w - (cx - area.x) - 2 - reserve)
+        if room >= 8 then
+            cx = cx + 2
+            local prefix = (info.state == "blocked") and "关断：" or "未就绪："
+            local color  = (info.state == "blocked")
+                and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_RED
+            put(fitText(prefix .. tostring(info.reason), room), color)
+        end
     end
     local binding = pd.binding
     if binding and binding.level == level then
@@ -7316,7 +7411,7 @@ end
 return keypad
 
 frontend/panels/log.lua
-2471
+2354
 local unicode = require("unicode")
 local fstate  = require("frontend.state")
 local theme   = require("frontend.theme")
@@ -7336,10 +7431,9 @@ function log.draw(data)
     local frameDirty = fstate.subDirty("log", "frame", table.concat({ area.x, area.y, area.w, area.h,
         tostring(data.system.priority), logs.getLevel() }, ":"))
     if frameDirty then
-        widgets.clearArea(area.x, area.y, area.w, area.h)
-        widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(data.system.priority == "high"))
-        widgets.drawText(area.x + 2, area.y + 1, title,
-            logs.isDebug() and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_CYAN)
+        widgets.drawPanelFrame(area, title,
+            logs.isDebug() and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_CYAN,
+            theme.borderColor(data.system.priority == "high"))
     end
     local all       = data.logs or {}
     local bodyDirty = fstate.subDirty("log", "body", table.concat({ logs.fingerprint(),
@@ -7374,7 +7468,7 @@ end
 return log
 
 frontend/panels/settings.lua
-2077
+1964
 local fstate  = require("frontend.state")
 local theme   = require("frontend.theme")
 local widgets = require("frontend.widgets")
@@ -7383,14 +7477,13 @@ function settings.draw(data)
     local area = fstate.areas.settings
     fstate.autostartRow = nil
     if not area or area.h < 1 then return end
-    widgets.clearArea(area.x, area.y, area.w, area.h)
     if area.h < 3 then return end
     local sys   = (data and data.system) or {}
     local on    = sys.autostart == true
     local stale = sys.autostartStale == true
     local shrc  = tostring(sys.autostartPath or ".shrc")
-    widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(stale or (data.system.priority == "high")))
-    widgets.drawText(area.x + 2, area.y + 1, "运行设置", theme.COLORS.TEXT_CYAN)
+    widgets.drawPanelFrame(area, "运行设置", theme.COLORS.TEXT_CYAN,
+        theme.borderColor(stale or (data.system.priority == "high")))
     if area.h < 4 then return end
     local rowY = area.y + 2
     fstate.autostartRow = { x = area.x + 2, y = rowY, w = area.w - 4, h = 1 }
@@ -7422,7 +7515,7 @@ end
 return settings
 
 frontend/panels/status.lua
-6858
+6745
 local unicode       = require("unicode")
 local constants     = require("shared.constants")
 local fstate        = require("frontend.state")
@@ -7459,9 +7552,8 @@ function status.draw(data)
         area.w, area.h, tostring(data.system.priority) }, ":"))
     lastWasDetail    = false
     if frameDirty then
-        widgets.clearArea(area.x, area.y, area.w, area.h)
-        widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(data.system.priority == "high"))
-        widgets.drawText(area.x + 2, titleY, "各级净水状态", theme.COLORS.TEXT_CYAN)
+        widgets.drawPanelFrame(area, "各级净水状态", theme.COLORS.TEXT_CYAN,
+            theme.borderColor(data.system.priority == "high"))
         if barW >= 8 then
             widgets.drawText(labelX, titleY, label, theme.COLORS.TEXT_DISABLED)
         end
@@ -7603,9 +7695,10 @@ end
 return tabbar
 
 frontend/render.lua
-4135
+5008
 local fstate        = require("frontend.state")
 local theme         = require("frontend.theme")
+local computer      = require("computer")
 local layout        = require("frontend.layout")
 local CONFIG        = require("shared.config")
 local logs          = require("shared.logs")
@@ -7615,20 +7708,34 @@ local controlPanel  = require("frontend.panels.control")
 local statusPanel   = require("frontend.panels.status")
 local chartPanel    = require("frontend.panels.chart")
 local logPanel      = require("frontend.panels.log")
-local configPanel   = require("frontend.panels.config")
-local keypadPanel   = require("frontend.panels.keypad")
-local settingsPanel = require("frontend.panels.settings")
 local render        = {}
+local inputModule   = nil
+local viewmodel     = nil
+local firstFrame    = true
 local PANELS        = {
     tabBar   = { draw = tabBarPanel.draw, fingerprint = tabBarPanel.fingerprint },
     control  = { draw = controlPanel.draw, fingerprint = controlPanel.fingerprint },
     status   = { draw = statusPanel.draw, fingerprint = statusPanel.fingerprint },
     chart    = { draw = chartPanel.draw, fingerprint = chartPanel.fingerprint },
-    log      = { draw = logPanel.draw, fingerprint = logPanel.fingerprint },
-    config   = { draw = configPanel.draw, fingerprint = configPanel.fingerprint },
-    keypad   = { draw = keypadPanel.draw, fingerprint = keypadPanel.fingerprint },
-    settings = { draw = settingsPanel.draw, fingerprint = settingsPanel.fingerprint }
+    log      = { draw = logPanel.draw, fingerprint = logPanel.fingerprint }
 }
+local LAZY_PANELS   = {
+    config   = function() return require("frontend.panels.config") end,
+    keypad   = function() return require("frontend.panels.keypad") end,
+    settings = function() return require("frontend.panels.settings") end
+}
+local lazyPanels    = {}
+local function panelOf(name)
+    local panel = PANELS[name]
+    if panel then return panel end
+    panel = lazyPanels[name]
+    if panel then return panel end
+    local loader = LAZY_PANELS[name]
+    if not loader then return nil end
+    panel = loader()
+    lazyPanels[name] = panel
+    return panel
+end
 local TAB_PANELS    = {
     overview = { "tabBar", "control", "status", "chart", "log" },
     config   = { "tabBar", "config", "keypad", "settings" }
@@ -7660,15 +7767,23 @@ function render.restoreResolution()
     end
 end
 function render.setup()
+    local started = computer.uptime()
     fstate.gpu = require("component").gpu
     render.applyResolution()
     layout.calculate()
     fstate.invalidateAll()
+    if logs.isDebug() then
+        logs.debug(string.format("前端 setup：%.3f 秒", computer.uptime() - started))
+    end
 end
 function render.bindInput()
-    local input = require("frontend.input") 
-    scheduler.on("key_down", function(payload) input.handle("key_down", payload) end)
-    scheduler.on("touch", function(payload) input.handle("touch", payload) end)
+    local function dispatch(name, payload)
+        if not fstate.lastData then return false end
+        inputModule = inputModule or require("frontend.input")
+        return inputModule.handle(name, payload)
+    end
+    scheduler.on("key_down", function(payload) dispatch("key_down", payload) end)
+    scheduler.on("touch", function(payload) dispatch("touch", payload) end)
     scheduler.on("screen_resized", function() layout.calculate() end)
 end
 function render.boot()
@@ -7688,7 +7803,7 @@ function render.renderAll(forceAll)
     local data = fstate.lastData
     local list = TAB_PANELS[fstate.currentTab] or TAB_PANELS.overview
     for _, name in ipairs(list) do
-        local panel = PANELS[name]
+        local panel = panelOf(name)
         if panel then
             local fp = panel.fingerprint(data)
             if forceAll or fps[name] ~= fp then
@@ -7700,9 +7815,17 @@ function render.renderAll(forceAll)
     fstate.render.forceAll = false
 end
 function render.frame()
-    local data = require("frontend.viewmodel").build()
-    require("frontend.input").attach(data)
+    local started = firstFrame and computer.uptime() or nil
+    viewmodel = viewmodel or require("frontend.viewmodel")
+    local data = viewmodel.build()
+    fstate.lastData = data
     render.renderAll()
+    if started then
+        if logs.isDebug() then
+            logs.debug(string.format("前端首帧：%.3f 秒", computer.uptime() - started))
+        end
+        firstFrame = false
+    end
 end
 return render
 
@@ -7925,7 +8048,7 @@ vm.startBlockedReason = decorate.startBlockedReason
 return vm
 
 frontend/widgets.lua
-3374
+3804
 local unicode = require("unicode")
 local fstate  = require("frontend.state")
 local theme   = require("frontend.theme")
@@ -7950,6 +8073,15 @@ function widgets.drawBorder(x, y, w, h, color, bgColor)
         fstate.gpu.set(x + w - 1, i, "│")
     end
     fstate.gpu.set(x, y + h - 1, "└" .. string.rep("─", w - 2) .. "┘")
+end
+function widgets.drawPanelFrame(area, title, titleColor, borderColor)
+    if not area or area.w < 2 or area.h < 2 then return false end
+    widgets.clearArea(area.x, area.y, area.w, area.h)
+    widgets.drawBorder(area.x, area.y, area.w, area.h, borderColor)
+    if title and title ~= "" and area.h >= 3 then
+        widgets.drawText(area.x + 2, area.y + 1, title, titleColor or theme.COLORS.TEXT_CYAN)
+    end
+    return true
 end
 function widgets.drawButton(x, y, w, text, color, bgColor, disabled)
     if disabled then
@@ -8016,7 +8148,9 @@ end
 return widgets
 
 main.lua
-7348
+10642
+local computer   = require("computer")
+local startupAt  = computer.uptime()
 local selfPath   = (debug.getinfo(1, "S").source or ""):gsub("^@", "")
 local selfDir    = selfPath:match("^(.*)[/\\][^/\\]*$")
 local candidates = { "core/locate.lua", "./core/locate.lua", "PurifyWater/core/locate.lua" }
@@ -8044,14 +8178,50 @@ if appDir == "" then
     return
 end
 locate.injectPath(appDir)
+local locateAt = computer.uptime()
 local bootstrap = require("core.bootstrap") 
 local removed   = bootstrap.clearModuleCache()
 bootstrap       = require("core.bootstrap") 
 bootstrap.applyArgs({ ... })
+local bootstrapAt = computer.uptime()
+local bootGpu = nil
+local bootUnicode = nil
+do
+    local ok, component = pcall(require, "component")
+    if ok and type(component) == "table" then bootGpu = component.gpu end
+    local okUnicode, unicode = pcall(require, "unicode")
+    if okUnicode then bootUnicode = unicode end
+end
+local function bootWidth(text)
+    if bootUnicode and type(bootUnicode.wlen) == "function" then
+        local ok, width = pcall(bootUnicode.wlen, text)
+        if ok and type(width) == "number" then return width end
+    end
+    return #text
+end
+local function bootStatus(text)
+    if not bootGpu then return end
+    local ok, w, h = pcall(bootGpu.getResolution)
+    if not ok or type(w) ~= "number" or type(h) ~= "number" then return end
+    local mid    = math.max(1, math.floor(h / 2))
+    local titleY = math.max(1, mid - 1)
+    local textY  = math.min(h, mid + 1)
+    local title  = "PurifyWater " .. bootstrap.version()
+    local titleX = math.max(1, math.floor((w - bootWidth(title)) / 2) + 1)
+    local textX  = math.max(1, math.floor((w - bootWidth(text)) / 2) + 1)
+    pcall(bootGpu.setBackground, 0x000000)
+    pcall(bootGpu.setForeground, 0xFFFFFF)
+    pcall(bootGpu.fill, 1, 1, w, h, " ")
+    pcall(bootGpu.setForeground, 0x66CCFF)
+    pcall(bootGpu.set, titleX, titleY, title)
+    pcall(bootGpu.setForeground, 0xAAAAAA)
+    pcall(bootGpu.set, textX, textY, text)
+end
+bootStatus("正在加载共享模块…")
 local memwatch, bootFree, bootTotal = nil, nil, nil
 if require("shared.logs").isDebug() then
-    bootFree  = require("computer").freeMemory()
-    bootTotal = require("computer").totalMemory()
+    bootFree  = computer.freeMemory()
+    bootTotal = computer.totalMemory()
     memwatch  = require("backend.debug.memwatch") 
 end
 local CONFIG        = require("shared.config")
@@ -8061,6 +8231,8 @@ local state         = require("shared.state")
 local utils         = require("shared.utils")
 local models        = require("shared.models")
 local runtime       = require("core.runtime")
+local sharedAt      = computer.uptime()
+bootStatus("正在加载后端模块…")
 local files         = require("backend.store.files")
 local settings      = require("backend.store.settings")
 local trace         = require("backend.store.trace")
@@ -8069,17 +8241,23 @@ local history       = require("backend.store.history")
 local levels_config = require("backend.store.levels_config")
 local rates_config  = require("backend.store.rates_config")
 local learning      = require("backend.domain.learning")
+local backendBaseAt = computer.uptime()
 local jobs          = require("backend.jobs")
+local jobsReqAt     = computer.uptime()
 local handlers      = require("backend.handlers")
+local handlersReqAt = computer.uptime()
 local api           = require("backend.api")
+local apiReqAt      = computer.uptime()
 local power         = require("backend.domain.power")
 local net           = require("backend.hardware.net")
 local netApp        = require("backend.app.net")
 local system        = require("backend.app.system")
 local autostart     = require("backend.app.autostart")
+local appsReqAt     = computer.uptime()
 local mode          = require("backend.domain.mode")
 local thresholdMode = require("backend.domain.modes.threshold")
 local rateMode      = require("backend.domain.modes.rate")
+local backendApiAt  = computer.uptime()
 local produce       = require("backend.domain.produce")
 local produceT3     = require("backend.domain.produce.t3")
 local produceT4     = require("backend.domain.produce.t4")
@@ -8087,7 +8265,11 @@ local produceT5     = require("backend.domain.produce.t5")
 local produceT6     = require("backend.domain.produce.t6")
 local produceT7     = require("backend.domain.produce.t7")
 local produceT8     = require("backend.domain.produce.t8")
+local backendAt     = computer.uptime()
+bootStatus("正在加载前端模块…")
 local render        = require("frontend.render")
+local frontendAt    = computer.uptime()
+bootStatus("正在初始化硬件与配置…")
 files.setRoot(appDir)
 local bootSettings = settings.load() or {}
 mode.register("threshold", thresholdMode)
@@ -8123,16 +8305,21 @@ logs.system(bootstrap.versionLine())
 logs.system("调度模式：" .. mode.labelOf(state.read.mode()))
 logs.debug("应用目录 " .. appDir
     .. (removed > 0 and ("（已清掉 " .. removed .. " 个旧模块缓存）") or ""))
+logs.debug(string.format("前端模块加载：%.3f 秒", frontendAt - backendAt))
+local tasksAt = computer.uptime()
 local taskCount = jobs.register()
+local jobsAt = computer.uptime()
 logs.debug(string.format("已注册 %d 个定时任务；日志级别 = %s", taskCount, logs.getLevel()))
 local _, ruleText             = levels_config.load()
 local gotHistory, historyText = history.load()
 power.refresh()
+local dataAt = computer.uptime()
 logs.debug(tostring(ruleText))
 logs.debug(tostring(historyText))
 local subCount = handlers.subscribe()
 logs.debug(string.format("已订阅 %d 类事件", subCount))
 system.auditThresholds()
+local eventsAt = computer.uptime()
 runtime.discardStaleInterrupts()
 runtime.bindQuitKeys()
 local savedSettings = settings.load()
@@ -8150,8 +8337,24 @@ if net.register() then
     logs.debug(string.format("广播任务已注册（当前 %s）",
         state.read.net().enabled and "开" or "关"))
 end
+local configAt = computer.uptime()
+bootStatus("正在准备界面…")
 render.boot()
+local bootAt = computer.uptime()
 logs.system("界面已就绪")
+logs.debug(string.format(
+    "启动分段：定位 %.3f；引导 %.3f；共享模块 %.3f；后端模块 %.3f；前端模块 %.3f；任务注册 %.3f；数据加载 %.3f；事件/审计 %.3f；配置恢复 %.3f；渲染 boot %.3f；入口→界面 %.3f 秒",
+    locateAt - startupAt, bootstrapAt - locateAt, sharedAt - bootstrapAt,
+    backendAt - sharedAt, frontendAt - backendAt, jobsAt - tasksAt,
+    dataAt - jobsAt, eventsAt - dataAt, configAt - eventsAt,
+    bootAt - configAt, bootAt - startupAt))
+logs.debug(string.format(
+    "后端分段：基础 %.3f；服务 %.3f；制作方法 %.3f 秒",
+    backendBaseAt - sharedAt, backendApiAt - backendBaseAt, backendAt - backendApiAt))
+logs.debug(string.format(
+    "服务分段：jobs %.3f；handlers %.3f；api %.3f；应用 %.3f；模式 %.3f 秒",
+    jobsReqAt - backendBaseAt, handlersReqAt - jobsReqAt, apiReqAt - handlersReqAt,
+    appsReqAt - apiReqAt, backendApiAt - appsReqAt))
 if CONFIG.SYSTEM.START_ON_BOOT then
     system.start("开机自启")
 end
@@ -8263,9 +8466,10 @@ CONFIG.LOG                       = {
 return CONFIG
 
 shared/constants.lua
-3078
+3262
+local resources                   = require("shared.resources")
 local constants                   = {}
-constants.CODE_VERSION            = "v5.0"
+constants.CODE_VERSION            = "v5.3"
 constants.LEVEL_COUNT             = 8
 constants.HOST_LEVEL              = 0
 constants.T3_LEVEL                = 3
@@ -8300,14 +8504,14 @@ function constants.parallelCap(level)
     return (level == 1) and constants.PARALLEL_CAP_T1 or constants.PARALLEL_CAP_OTHER
 end
 constants.FLUID_NAMES             = {
-    [1] = "grade1purifiedwater",
-    [2] = "grade2purifiedwater",
-    [3] = "grade3purifiedwater",
-    [4] = "grade4purifiedwater",
-    [5] = "grade5purifiedwater",
-    [6] = "grade6purifiedwater",
-    [7] = "grade7purifiedwater",
-    [8] = "grade8purifiedwater"
+    [1] = resources.FLUIDS.PURIFIED_WATER_1.id,
+    [2] = resources.FLUIDS.PURIFIED_WATER_2.id,
+    [3] = resources.FLUIDS.PURIFIED_WATER_3.id,
+    [4] = resources.FLUIDS.PURIFIED_WATER_4.id,
+    [5] = resources.FLUIDS.PURIFIED_WATER_5.id,
+    [6] = resources.FLUIDS.PURIFIED_WATER_6.id,
+    [7] = resources.FLUIDS.PURIFIED_WATER_7.id,
+    [8] = resources.FLUIDS.PURIFIED_WATER_8.id
 }
 constants.MACHINE_NAMES           = {
     ["multimachine.purificationplant"]            = 0,
@@ -8660,6 +8864,117 @@ function models.chunk(message)
 end
 return models
 
+shared/resources.lua
+4199
+local resources = {}
+resources.FLUIDS = {
+    PURIFIED_WATER_1 = { id = "grade1purifiedwater", label = "一级净化水" },
+    PURIFIED_WATER_2 = { id = "grade2purifiedwater", label = "二级净化水" },
+    PURIFIED_WATER_3 = { id = "grade3purifiedwater", label = "三级净化水" },
+    PURIFIED_WATER_4 = { id = "grade4purifiedwater", label = "四级净化水" },
+    PURIFIED_WATER_5 = { id = "grade5purifiedwater", label = "五级净化水" },
+    PURIFIED_WATER_6 = { id = "grade6purifiedwater", label = "六级净化水" },
+    PURIFIED_WATER_7 = { id = "grade7purifiedwater", label = "七级净化水" },
+    PURIFIED_WATER_8 = { id = "grade8purifiedwater", label = "八级净化水" },
+    POLYALUMINIUM_CHLORIDE = { id = "polyaluminiumchloride", label = "聚氯化铝" },
+    HYDROCHLORIC_ACID = { id = "hydrochloricacid_gt5u", label = "氢氯酸" },
+    HELIUM_PLASMA = { id = "plasma.helium", label = "氦等离子" },
+    SUPERCOOLANT  = { id = "supercoolant", label = "超级冷却液" },
+    HELIUM          = { id = "helium", label = "氦" },
+    NEON            = { id = "neon", label = "氖" },
+    KRYPTON         = { id = "krypton", label = "氪" },
+    XENON           = { id = "xenon", label = "氙" },
+    MOLTEN_NEUTRONIUM = { id = "molten.neutronium", label = "熔融中子" },
+    MOLTEN_SUPERCONDUCTOR_UV  = { id = "molten.longasssuperconductornameforuvwire", label = "熔融超导粗胚（UV）" },
+    MOLTEN_SUPERCONDUCTOR_UHV = { id = "molten.longasssuperconductornameforuhvwire", label = "熔融超导粗胚（UHV）" },
+    MOLTEN_SUPERCONDUCTOR_UEV = { id = "molten.superconductoruevbase", label = "熔融超导粗胚（UEV）" },
+    MOLTEN_SUPERCONDUCTOR_UIV = { id = "molten.superconductoruivbase", label = "熔融超导粗胚（UIV）" },
+    MOLTEN_SUPERCONDUCTOR_UMV = { id = "molten.superconductorumvbase", label = "熔融超导粗胚（UMV）" }
+}
+resources.ITEMS = {
+    SODIUM_HYDROXIDE_DUST = {
+        name   = "gregtech:gt.metaitem.01",
+        damage = 2685,
+        label  = "氢氧化钠粉"
+    },
+    LENS_SYNTHETIC_JADE = {
+        name   = "bartworks:gt.bwMetaGeneratedlens",
+        damage = 10023,
+        label  = "合成玉透镜"
+    },
+    LENS_AMBER = {
+        name   = "gregtech:gt.metaitem.01",
+        damage = 24514,
+        label  = "琥珀透镜"
+    },
+    LENS_WIND_MAGIC_CRYSTAL = {
+        name   = "gregtech:gt.metaitem.01",
+        damage = 24540,
+        label  = "风之魔晶透镜"
+    },
+    LENS_EMERALD = {
+        name   = "gregtech:gt.metaitem.01",
+        damage = 24501,
+        label  = "绿宝石透镜"
+    },
+    LENS_MAGIC_DIAMOND = {
+        name   = "gregtech:gt.metaitem.01",
+        damage = 24208,
+        label  = "魔力钻石透镜"
+    },
+    LENS_BLUE_TOPAZ = {
+        name   = "gregtech:gt.metaitem.01",
+        damage = 24513,
+        label  = "蓝黄玉透镜"
+    },
+    LENS_AMETHYST = {
+        name   = "gregtech:gt.metaitem.01",
+        damage = 24509,
+        label  = "紫水晶透镜"
+    },
+    LENS_FLUORINE_IRON_TOURMALINE = {
+        name   = "bartworks:gt.bwMetaGeneratedlens",
+        damage = 5,
+        label  = "氟铁电气石透镜"
+    },
+    LENS_DILITHIUM = {
+        name   = "gregtech:gt.metaitem.01",
+        damage = 24515,
+        label  = "双锂透镜"
+    },
+    QUARK_UP_CATALYST = {
+        name   = "gregtech:gt.metaitem.03",
+        damage = 32235,
+        label  = "上夸克释放催化剂"
+    },
+    QUARK_DOWN_CATALYST = {
+        name   = "gregtech:gt.metaitem.03",
+        damage = 32236,
+        label  = "下夸克释放催化剂"
+    },
+    QUARK_STRANGE_CATALYST = {
+        name   = "gregtech:gt.metaitem.03",
+        damage = 32237,
+        label  = "奇夸克释放催化剂"
+    },
+    QUARK_CHARM_CATALYST = {
+        name   = "gregtech:gt.metaitem.03",
+        damage = 32238,
+        label  = "粲夸克释放催化剂"
+    },
+    QUARK_BOTTOM_CATALYST = {
+        name   = "gregtech:gt.metaitem.03",
+        damage = 32239,
+        label  = "底夸克释放催化剂"
+    },
+    QUARK_TOP_CATALYST = {
+        name   = "gregtech:gt.metaitem.03",
+        damage = 32240,
+        label  = "顶夸克释放催化剂"
+    }
+}
+return resources
+
 shared/state.lua
 7841
 local constants = require("shared.constants")
@@ -8850,8 +9165,9 @@ state.priorityOrder  = read.priorityOrder
 return state
 
 shared/utils.lua
-2061
+2987
 local constants = require("shared.constants")
+local unicode   = require("unicode")
 local utils = {}
 function utils.formatNumber(num)
     if type(num) ~= "number" then return tostring(num) end
@@ -8882,6 +9198,27 @@ end
 function utils.sideLabel(side)
     local names = { [0] = "下", [1] = "上", [2] = "北", [3] = "南", [4] = "西", [5] = "东" }
     return names[side] or tostring(side)
+end
+function utils.truncate(value, maxWidth)
+    local source = tostring(value or "")
+    maxWidth = math.max(1, math.floor(tonumber(maxWidth) or unicode.wlen(source)))
+    if unicode.wlen(source) <= maxWidth then return source end
+    local suffix = "…"
+    local limit  = math.max(0, maxWidth - unicode.wlen(suffix))
+    local out, width = {}, 0
+    for index = 1, unicode.len(source) do
+        local char = unicode.sub(source, index, index)
+        local charWidth = unicode.wlen(char)
+        if width + charWidth > limit then break end
+        out[#out + 1] = char
+        width = width + charWidth
+    end
+    return table.concat(out) .. suffix
+end
+function utils.joinLimited(values, maxWidth, separator)
+    local out = {}
+    for index, value in ipairs(values or {}) do out[index] = tostring(value) end
+    return utils.truncate(table.concat(out, separator or "、"), maxWidth)
 end
 function utils.normalizeFluidName(name)
     local clean = tostring(name or ""):lower():gsub("^gregtech:", ""):gsub("^%s+", ""):gsub("%s+$", "")

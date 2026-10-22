@@ -20,8 +20,7 @@ local chart     = {}
 
 function chart.draw(data)
     local area = fstate.areas.chart
-    widgets.clearArea(area.x, area.y, area.w, area.h)
-    widgets.drawBorder(area.x, area.y, area.w, area.h, theme.borderColor(data.system.priority == "high"))
+    widgets.drawPanelFrame(area, nil, nil, theme.borderColor(data.system.priority == "high"))
 
     -- 标题行：等级按钮（全部 + T1..T8）；切档位只是本地视图动作，主端/镜像端都登记、都画一套色
     fstate.chartChips = {}

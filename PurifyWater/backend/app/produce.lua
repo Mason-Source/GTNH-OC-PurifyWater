@@ -18,11 +18,22 @@ local produce_config = require("backend.store.produce_config")
 
 local binding        = require("backend.app.produce.binding")
 local readiness      = require("backend.app.produce.readiness")
-local patrol         = require("backend.app.produce.patrol")
-local jobs           = require("backend.app.produce.jobs")
 local view           = require("backend.app.produce.view")
 
+local patrol         = nil
+local produceJobs    = nil
 local produceApp     = {}
+
+-- 侧位巡检和 operation 周期任务不在首帧路径上：首次需要时再加载。
+local function patrolApp()
+    patrol = patrol or require("backend.app.produce.patrol")
+    return patrol
+end
+
+local function jobsApp()
+    produceJobs = produceJobs or require("backend.app.produce.jobs")
+    return produceJobs
+end
 
 local bindFailText = nil
 
@@ -91,7 +102,7 @@ end
 
 --- T1：原料巡检
 function produceApp.patrol()
-    return patrol.run()
+    return patrolApp().run()
 end
 
 --- 开始绑定
@@ -165,7 +176,7 @@ function produceApp.setEnabled(level, enabled)
     local label = constants.levelLabel(level)
     if enabled == true then
         binding.refreshOnline()
-        patrol.run(level)
+        patrolApp().run(level)
         local ok, reason, units = readiness.validateForEnable(level)
         if not ok then return false, reason end
         local saved, err = produce_config.set(level, true)
@@ -186,11 +197,11 @@ end
 function produceApp.read() return view.read() end
 
 --- 周期门控转发
-function produceApp.syncJobs() return jobs.sync() end
+function produceApp.syncJobs() return jobsApp().sync() end
 function produceApp.onCycleProgress(progress, maxProgress)
-    return jobs.onCycleProgress(progress, maxProgress)
+    return jobsApp().onCycleProgress(progress, maxProgress)
 end
-function produceApp.onCycleStarted(payload) return jobs.onCycleStarted(payload) end
+function produceApp.onCycleStarted(payload) return jobsApp().onCycleStarted(payload) end
 
 --- T8：绑定中转运器检测
 function produceApp.tick()

@@ -23,7 +23,7 @@ for _, a in ipairs(ARGS) do
     if a == "--monitor" then ROLE = "monitor" end
 end
 
-local BUNDLE_VERSION = "v5.0"
+local BUNDLE_VERSION = "v5.3"
 local REPO_URL       = "https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/build/"
 local MIRROR_PREFIX  = "https://github.xutongxin.me/"
 local RETRY_ROUNDS   = 3
@@ -51,12 +51,9 @@ local FILE_LIST_COMMON = {
     "frontend/decorate.lua",
     "frontend/layout.lua",
     "frontend/panels/chart.lua",
-    "frontend/panels/config.lua",
     "frontend/panels/control.lua",
     "frontend/panels/detail.lua",
-    "frontend/panels/keypad.lua",
     "frontend/panels/log.lua",
-    "frontend/panels/settings.lua",
     "frontend/panels/status.lua",
     "frontend/panels/tabbar.lua",
     "frontend/render.lua",
@@ -68,6 +65,7 @@ local FILE_LIST_COMMON = {
     "shared/constants.lua",
     "shared/logs.lua",
     "shared/models.lua",
+    "shared/resources.lua",
     "shared/utils.lua",
 }
 
@@ -135,6 +133,9 @@ local FILE_LIST_MAIN = {
     "backend/store/trace.lua",
     "core/runtime.lua",
     "frontend/input.lua",
+    "frontend/panels/config.lua",
+    "frontend/panels/keypad.lua",
+    "frontend/panels/settings.lua",
     "frontend/viewmodel.lua",
     "shared/state.lua",
 }

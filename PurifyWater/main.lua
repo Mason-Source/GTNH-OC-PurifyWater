@@ -13,6 +13,9 @@
 --   数据只经 backend/api；命令只经 frontend/input -> api.do。
 --------------------------------------------------------------------------------
 
+local computer   = require("computer")
+local startupAt  = computer.uptime()
+
 -- ① 先把"定位器"本身装进来（全工程唯一一份目录定位实现）
 local selfPath   = (debug.getinfo(1, "S").source or ""):gsub("^@", "")
 local selfDir    = selfPath:match("^(.*)[/\\][^/\\]*$")
@@ -43,6 +46,7 @@ if appDir == "" then
     return
 end
 locate.injectPath(appDir)
+local locateAt = computer.uptime()
 
 -- ② 卫生工作
 -- OpenOS 把模块留在 package.loaded，热更新后首次重跑仍是旧 bootstrap；
@@ -51,12 +55,52 @@ local bootstrap = require("core.bootstrap") -- 可能来自缓存：这一步只
 local removed   = bootstrap.clearModuleCache()
 bootstrap       = require("core.bootstrap") -- 重新装：版本号从这一份起才是新文件的
 bootstrap.applyArgs({ ... })
+local bootstrapAt = computer.uptime()
+
+-- 入口先接管屏幕：模块解析在 OpenOS 上需要数秒，不能让用户一直看着旧终端。
+local bootGpu = nil
+local bootUnicode = nil
+do
+    local ok, component = pcall(require, "component")
+    if ok and type(component) == "table" then bootGpu = component.gpu end
+    local okUnicode, unicode = pcall(require, "unicode")
+    if okUnicode then bootUnicode = unicode end
+end
+
+local function bootWidth(text)
+    if bootUnicode and type(bootUnicode.wlen) == "function" then
+        local ok, width = pcall(bootUnicode.wlen, text)
+        if ok and type(width) == "number" then return width end
+    end
+    return #text
+end
+
+local function bootStatus(text)
+    if not bootGpu then return end
+    local ok, w, h = pcall(bootGpu.getResolution)
+    if not ok or type(w) ~= "number" or type(h) ~= "number" then return end
+    local mid    = math.max(1, math.floor(h / 2))
+    local titleY = math.max(1, mid - 1)
+    local textY  = math.min(h, mid + 1)
+    local title  = "PurifyWater " .. bootstrap.version()
+    local titleX = math.max(1, math.floor((w - bootWidth(title)) / 2) + 1)
+    local textX  = math.max(1, math.floor((w - bootWidth(text)) / 2) + 1)
+    pcall(bootGpu.setBackground, 0x000000)
+    pcall(bootGpu.setForeground, 0xFFFFFF)
+    pcall(bootGpu.fill, 1, 1, w, h, " ")
+    pcall(bootGpu.setForeground, 0x66CCFF)
+    pcall(bootGpu.set, titleX, titleY, title)
+    pcall(bootGpu.setForeground, 0xAAAAAA)
+    pcall(bootGpu.set, textX, textY, text)
+end
+
+bootStatus("正在加载共享模块…")
 
 -- 内存观测仅 --debug；在任何工程模块前取一次读数，此刻只装引导模块，差值为 shell 占用。
 local memwatch, bootFree, bootTotal = nil, nil, nil
 if require("shared.logs").isDebug() then
-    bootFree  = require("computer").freeMemory()
-    bootTotal = require("computer").totalMemory()
+    bootFree  = computer.freeMemory()
+    bootTotal = computer.totalMemory()
     memwatch  = require("backend.debug.memwatch") -- 只有 --debug 才装这个模块
 end
 
@@ -67,6 +111,8 @@ local state         = require("shared.state")
 local utils         = require("shared.utils")
 local models        = require("shared.models")
 local runtime       = require("core.runtime")
+local sharedAt      = computer.uptime()
+bootStatus("正在加载后端模块…")
 
 local files         = require("backend.store.files")
 local settings      = require("backend.store.settings")
@@ -76,17 +122,23 @@ local history       = require("backend.store.history")
 local levels_config = require("backend.store.levels_config")
 local rates_config  = require("backend.store.rates_config")
 local learning      = require("backend.domain.learning")
+local backendBaseAt = computer.uptime()
 local jobs          = require("backend.jobs")
+local jobsReqAt     = computer.uptime()
 local handlers      = require("backend.handlers")
+local handlersReqAt = computer.uptime()
 local api           = require("backend.api")
+local apiReqAt      = computer.uptime()
 local power         = require("backend.domain.power")
 local net           = require("backend.hardware.net")
 local netApp        = require("backend.app.net")
 local system        = require("backend.app.system")
 local autostart     = require("backend.app.autostart")
+local appsReqAt     = computer.uptime()
 local mode          = require("backend.domain.mode")
 local thresholdMode = require("backend.domain.modes.threshold")
 local rateMode      = require("backend.domain.modes.rate")
+local backendApiAt  = computer.uptime()
 local produce       = require("backend.domain.produce")
 local produceT3     = require("backend.domain.produce.t3")
 local produceT4     = require("backend.domain.produce.t4")
@@ -94,7 +146,11 @@ local produceT5     = require("backend.domain.produce.t5")
 local produceT6     = require("backend.domain.produce.t6")
 local produceT7     = require("backend.domain.produce.t7")
 local produceT8     = require("backend.domain.produce.t8")
+local backendAt     = computer.uptime()
+bootStatus("正在加载前端模块…")
 local render        = require("frontend.render")
+local frontendAt    = computer.uptime()
+bootStatus("正在初始化硬件与配置…")
 
 files.setRoot(appDir) -- 数据文件（配置里的相对名）都相对应用目录解析
 
@@ -143,15 +199,19 @@ logs.system("调度模式：" .. mode.labelOf(state.read.mode()))
 -- 下列为 debug 信息：应用目录、任务/事件条数、加载行数
 logs.debug("应用目录 " .. appDir
     .. (removed > 0 and ("（已清掉 " .. removed .. " 个旧模块缓存）") or ""))
+logs.debug(string.format("前端模块加载：%.3f 秒", frontendAt - backendAt))
 
 -- ③ 任务、数据、事件
+local tasksAt = computer.uptime()
 local taskCount = jobs.register()
+local jobsAt = computer.uptime()
 logs.debug(string.format("已注册 %d 个定时任务；日志级别 = %s", taskCount, logs.getLevel()))
 
 -- 注册后已各跑一次（T1 拿到功率、T2 拿到水位），此时读盘才有意义
 local _, ruleText             = levels_config.load()
 local gotHistory, historyText = history.load()
 power.refresh()
+local dataAt = computer.uptime()
 logs.debug(tostring(ruleText))
 logs.debug(tostring(historyText))
 
@@ -161,6 +221,7 @@ logs.debug(string.format("已订阅 %d 类事件", subCount))
 
 -- 【首轮建议】由 jobs.register() 的首轮观测发布（台数 0→N 会触发），这里不重复发布
 system.auditThresholds()
+local eventsAt = computer.uptime()
 
 runtime.discardStaleInterrupts() -- 先丢掉上一个进程残留的 interrupted
 runtime.bindQuitKeys()
@@ -187,9 +248,25 @@ if net.register() then
     logs.debug(string.format("广播任务已注册（当前 %s）",
         state.read.net().enabled and "开" or "关"))
 end
+local configAt = computer.uptime()
+bootStatus("正在准备界面…")
 
 render.boot()
+local bootAt = computer.uptime()
 logs.system("界面已就绪")
+logs.debug(string.format(
+    "启动分段：定位 %.3f；引导 %.3f；共享模块 %.3f；后端模块 %.3f；前端模块 %.3f；任务注册 %.3f；数据加载 %.3f；事件/审计 %.3f；配置恢复 %.3f；渲染 boot %.3f；入口→界面 %.3f 秒",
+    locateAt - startupAt, bootstrapAt - locateAt, sharedAt - bootstrapAt,
+    backendAt - sharedAt, frontendAt - backendAt, jobsAt - tasksAt,
+    dataAt - jobsAt, eventsAt - dataAt, configAt - eventsAt,
+    bootAt - configAt, bootAt - startupAt))
+logs.debug(string.format(
+    "后端分段：基础 %.3f；服务 %.3f；制作方法 %.3f 秒",
+    backendBaseAt - sharedAt, backendApiAt - backendBaseAt, backendAt - backendApiAt))
+logs.debug(string.format(
+    "服务分段：jobs %.3f；handlers %.3f；api %.3f；应用 %.3f；模式 %.3f 秒",
+    jobsReqAt - backendBaseAt, handlersReqAt - jobsReqAt, apiReqAt - handlersReqAt,
+    appsReqAt - apiReqAt, backendApiAt - appsReqAt))
 
 -- 无人值守机房：想让程序一启动就自动开调度，把 CONFIG.SYSTEM.START_ON_BOOT 改成 true
 if CONFIG.SYSTEM.START_ON_BOOT then

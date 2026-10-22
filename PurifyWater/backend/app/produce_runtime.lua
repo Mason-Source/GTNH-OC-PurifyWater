@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------
 -- backend/app/produce_runtime.lua
 --------------------------------------------------------------------------------
--- 【职责】制作 operation 调度：runAt、priority、coroutine 恢复、周期门控。
+-- 【职责】制作任务调度：runAt、priority、coroutine 恢复、周期门控。
 -- 【不做什么】不认识 T3/T4/T5/T7/T8 业务；每拍最多恢复一个 job。
 --------------------------------------------------------------------------------
 
@@ -15,8 +15,9 @@ local jobs    = {}
 local function now() return computer.uptime() end
 
 local function fail(job, reason)
-    logs.warn(string.format("制作自动化 operation 失败（%s）：%s",
-        tostring(job.id), tostring(reason)))
+    local where = tostring(job.machineText or job.machine or job.id or "?")
+    if job.levelLabel then where = tostring(job.levelLabel) .. " " .. where end
+    logs.warn(string.format("制作自动化任务失败（%s）：%s", where, tostring(reason)))
     jobs[job.id] = nil
 end
 
@@ -38,7 +39,7 @@ local function transferSummary(job)
     return table.concat(parts, "、")
 end
 
---- operation 正常完成：user 级提示谁完成，debug 级记录本轮转移内容。
+--- 制作任务正常完成：user 级提示谁完成，debug 级记录本轮转移内容。
 -- @param job table
 local function complete(job)
     local label = job.levelLabel or ("T" .. tostring(job.level))
@@ -50,7 +51,7 @@ local function complete(job)
 end
 
 function runtime.add(job)
-    assert(type(job) == "table" and type(job.operation) == "function", "invalid operation")
+    assert(type(job) == "table" and type(job.operation) == "function", "无效的制作任务")
     assert(type(job.executor) == "function", "invalid executor")
     job.runAt    = tonumber(job.runAt) or now()
     job.priority = tonumber(job.priority) or 100
@@ -124,10 +125,10 @@ local function resume(job)
     end
     if not ok then fail(job, a) return end
     if coroutine.status(job.co) == "dead" then
-        if a == false then fail(job, b or "operation 失败") else complete(job) end
+        if a == false then fail(job, b or "制作任务失败") else complete(job) end
         return
     end
-    if type(a) ~= "table" then fail(job, "operation 返回无效请求") return end
+    if type(a) ~= "table" then fail(job, "制作任务返回无效请求") return end
     if a.kind == "wait" then
         job.runAt = now() + math.max(0.05, tonumber(a.seconds) or 0.05)
         return
@@ -140,10 +141,10 @@ local function resume(job)
         job.runAt = now() + 0.05
         return
     end
-    fail(job, "未知 operation 请求：" .. tostring(a.kind))
+    fail(job, "未知的制作任务请求：" .. tostring(a.kind))
 end
 
---- 执行一拍：最多恢复一个 operation。
+--- 执行一拍：最多恢复一个制作任务。
 function runtime.tick()
     local job = pickDue(now())
     if not job then return end

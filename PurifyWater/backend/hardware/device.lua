@@ -14,10 +14,11 @@ local component      = require("component")
 
 local device         = {}
 
--- ME 网络接口的候选组件名（按序查找）
+-- OpenComputers 组件类型名：只在硬件发现层维护
 local ME_CANDIDATES  = { "fluid_interface", "me_interface" }
--- 网卡候选（modem / tunnel）
 local NET_CANDIDATES = { "modem", "tunnel" }
+local TRANSPOSER     = "transposer"
+local GT_MACHINE     = "gt_machine"
 
 local cache          = { me = false, net = false } -- false = 查过、没有
 local sweepList      = {}                          -- 上次 sweep 的全量结果 {address, ctype}
@@ -37,7 +38,7 @@ function device.sweep()
     local out, transposers = {}, {}
     for address, ctype in component.list() do
         out[#out + 1] = { address = address, ctype = ctype }
-        if ctype == "transposer" then transposers[address] = true end
+        if ctype == TRANSPOSER then transposers[address] = true end
     end
     sweepList = out
     transposerSet = transposers
@@ -70,7 +71,7 @@ end
 function device.scanMachines()
     local out = {}
     for _, item in ipairs(sweepList) do
-        if item.ctype == "gt_machine" then out[#out + 1] = item.address end
+        if item.ctype == GT_MACHINE then out[#out + 1] = item.address end
     end
     machineAddrs = out
     return out
@@ -104,7 +105,7 @@ end
 -- @return table 地址数组
 function device.scanTransposers()
     local out, transposers = {}, {}
-    for address in component.list("transposer") do
+    for address in component.list(TRANSPOSER) do
         out[#out + 1] = address
         transposers[address] = true
     end
@@ -121,7 +122,7 @@ function device.isTransposerOnline(address)
     -- T1 的 sweep / 绑定检测已经枚举过组件，直接用集合；没有缓存时才单点探测。
     if transposerSet then return transposerSet[address] == true end
     local ok, ctype = pcall(component.type, address)
-    return ok and ctype == "transposer"
+    return ok and ctype == TRANSPOSER
 end
 
 --- 机器名（getName()；取不到返回 nil）

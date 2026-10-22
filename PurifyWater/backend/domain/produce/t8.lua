@@ -3,7 +3,7 @@
 --------------------------------------------------------------------------------
 -- 【职责】T8（萃取）制作自动化方法：按最短覆盖路径逐周期投夸克释放催化剂
 -- 【不做什么】不碰组件、不写状态；等待与投料都经 operation ctx 异步执行
--- 【依赖】shared/utils
+-- 【依赖】shared/{resources,utils}
 -- 【被谁用】main.lua（注册到 backend/domain/produce）、produce_job（执行）
 --
 -- 【机器机制】每个主周期开始时，机器随机选择两种不同的夸克释放催化剂；
@@ -16,24 +16,19 @@
 --   下面的 WALK 正是该下界的构造，覆盖全部 15 种无序组合，仅重复 {2,3} 与 {4,6}。
 --------------------------------------------------------------------------------
 
+local resources = require("shared.resources")
 local utils = require("shared.utils")
 
 local t8 = {}
 
-local ITEM_NAME = "gregtech:gt.metaitem.03"
-
-local function catalyst(damage, label)
-    return { name = ITEM_NAME, damage = damage, label = label }
-end
-
 -- 节点顺序固定；任意六种催化剂的排列都保持覆盖性质。
 local CATALYSTS = {
-    catalyst(32235, "上夸克释放催化剂"),   -- Up
-    catalyst(32236, "下夸克释放催化剂"),   -- Down
-    catalyst(32237, "奇夸克释放催化剂"),   -- Strange
-    catalyst(32238, "粲夸克释放催化剂"),   -- Charm
-    catalyst(32239, "底夸克释放催化剂"),   -- Bottom
-    catalyst(32240, "顶夸克释放催化剂")    -- Top
+    resources.ITEMS.QUARK_UP_CATALYST,      -- Up
+    resources.ITEMS.QUARK_DOWN_CATALYST,    -- Down
+    resources.ITEMS.QUARK_STRANGE_CATALYST, -- Strange
+    resources.ITEMS.QUARK_CHARM_CATALYST,   -- Charm
+    resources.ITEMS.QUARK_BOTTOM_CATALYST,  -- Bottom
+    resources.ITEMS.QUARK_TOP_CATALYST      -- Top
 }
 
 -- 18 个顶点 = 17 条相邻边；覆盖 K6 全部 15 条边 + 2 条必要重复边。

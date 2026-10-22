@@ -34,7 +34,6 @@ local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
 local system           = require("backend.app.system")
 local produceApp       = require("backend.app.produce")
-local produceRuntime   = require("backend.app.produce_runtime")
 
 local jobs             = {}
 
@@ -380,7 +379,8 @@ function jobs.register()
     add("schedule", CONFIG.INTERVAL.SCHEDULE, jobs.schedule)          -- T4
     add("persist", CONFIG.INTERVAL.PERSIST, jobs.persist)             -- T5
     add("produce", CONFIG.INTERVAL.PRODUCE, produceApp.tick)          -- T8
-    add("produce_runtime", CONFIG.INTERVAL.PRODUCE_RUNTIME, produceRuntime.tick) -- 制作自动化 operation 调度
+    add("produce_runtime", CONFIG.INTERVAL.PRODUCE_RUNTIME,
+        function() return require("backend.app.produce_runtime").tick() end) -- 制作自动化 operation 调度
     -- T6 内存观测：仅 --debug 装模块、注册任务。
     if logs.isDebug() then
         memwatch = require("backend.debug.memwatch")
