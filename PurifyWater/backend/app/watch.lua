@@ -32,7 +32,6 @@ local lastMismatchWarn = {}
 --- 阈值文件变更（T2 检测到 -> 审计提示 + 立刻重排）
 -- @param payload table { why }
 function watch.onLevelRulesChanged(payload)
-    logs.debug(tostring(payload and payload.why or "阈值配置已更新"))
     system.auditThresholds()
     system.requestPlan("阈值变化")
 end
@@ -106,43 +105,23 @@ function watch.onPlantObserved(payload)
     })
 end
 
---- 并行采样（只对在跑单元读）
--- 过渡值不直接写，连续 N 个运行周期同值才算数（判定在 tracker）。
--- @param payload table { level, address, parallel, success, seq }
-function watch.onParallelSample(payload)
+--- 主机周期开始：消费同一轮观测携带的并行样本
+-- 每台机器每个周期只有一个样本；连续 N 个周期同值才写入学习值。
+-- @param payload table { seq, ratio, samples = { {level,address,parallel,success}, ... } }
+function watch.onHostCycleStarted(payload)
     if not state.read.running() then return end
-
-    local verdict, why = tracker.feed(payload.address, payload.parallel, payload.seq)
-    if verdict ~= "write" then
-        scheduler.emit("parallel_discarded", {
-            level = payload.level, value = payload.parallel, why = why
-        })
-        return
+    local seq = payload and payload.seq
+    for _, sample in ipairs((payload and payload.samples) or {}) do
+        if tracker.feed(sample.address, sample.parallel, seq) == "write" then
+            scheduler.emit("parallel_write", {
+                level   = sample.level,
+                address = sample.address,
+                parallel = sample.parallel,
+                success = sample.success,
+                by = "周期开始采样"
+            })
+        end
     end
-
-    -- 【数据源 = 学习值】（5e530b9 起学习值搬到了 state.learn；读 plant 会永远拿不到 source/parallel）
-    local learned = state.read.learn(payload.level)
-    if learned and learned.source == "measured" and learned.parallel == payload.parallel then
-        scheduler.emit("parallel_discarded", {
-            level = payload.level, value = payload.parallel, why = "与学习值相同"
-        })
-        return
-    end
-
-    scheduler.emit("parallel_write", {
-        level = payload.level,
-        address = payload.address,
-        parallel = payload.parallel,
-        success = payload.success,
-        by = "传感器确认"
-    })
-end
-
---- 采样被丢弃（只写调试，不进用户日志——否则每 5 秒刷一屏）
--- @param payload table { level, value, why }
-function watch.onParallelDiscarded(payload)
-    logs.debug(string.format("%s 并行采样丢弃：%s（%s）",
-        constants.levelLabel(payload.level), tostring(payload.value), tostring(payload.why)))
 end
 
 return watch

@@ -1,6 +1,6 @@
-PW1	role=main	version=v5.3	count=91
+PW1	role=main	version=v5.3.2	count=91
 backend/api.lua
-9187
+9034
 local CONFIG        = require("shared.config")
 local constants     = require("shared.constants")
 local logs          = require("shared.logs")
@@ -256,10 +256,6 @@ COMMANDS.net_strength_set = function(value)
     if not ok then return false, text end
     return true, ""
 end
-COMMANDS.log_level_toggle = function()
-    logs.setLevel(logs.isDebug() and "user" or "debug")
-    return true, "日志级别：" .. logs.getLevel()
-end
 COMMANDS.quit = function()
     runtime.quit("界面退出")
     return true, "正在退出"
@@ -407,7 +403,7 @@ end
 return app
 
 backend/app/plan.lua
-2409
+2307
 local constants = require("shared.constants")
 local logs      = require("shared.logs")
 local state     = require("shared.state")
@@ -447,7 +443,6 @@ function plan.run(reason)
     for level, err in pairs(failed or {}) do
         badNames[#badNames + 1] = constants.levelLabel(level)
         state.write.deleteLastPlanLevel(level)
-        logs.debug(string.format("%s 下发失败：%s", constants.levelLabel(level), tostring(err)))
     end
     if #badNames > 0 then
         table.sort(badNames)
@@ -476,7 +471,7 @@ end
 return plan
 
 backend/app/produce.lua
-8551
+8428
 local constants      = require("shared.constants")
 local logs           = require("shared.logs")
 local state          = require("shared.state")
@@ -634,9 +629,6 @@ function produceApp.setEnabled(level, enabled)
 end
 function produceApp.read() return view.read() end
 function produceApp.syncJobs() return jobsApp().sync() end
-function produceApp.onCycleProgress(progress, maxProgress)
-    return jobsApp().onCycleProgress(progress, maxProgress)
-end
 function produceApp.onCycleStarted(payload) return jobsApp().onCycleStarted(payload) end
 function produceApp.tick()
     local item = state.read.produce().binding
@@ -1084,13 +1076,12 @@ end
 return executor
 
 backend/app/produce/jobs.lua
-4049
+2388
 local computer       = require("computer")
 local CONFIG         = require("shared.config")
 local constants      = require("shared.constants")
-local logs           = require("shared.logs")
 local state          = require("shared.state")
-local scheduler      = require("core.scheduler")
+local hostCycle      = require("backend.domain.host_cycle")
 local produce        = require("backend.domain.produce")
 local interface      = require("backend.domain.produce.interface")
 local binding        = require("backend.app.produce.binding")
@@ -1098,15 +1089,8 @@ local readiness      = require("backend.app.produce.readiness")
 local produceRuntime = require("backend.app.produce_runtime")
 local produceJob     = require("backend.app.produce_job")
 local jobs = {}
-local cycleStartArmed = false
-local function cycleRatio()
-    local cycle = state.read.produce().cycle
-    local progress, max = cycle.lastProgress, cycle.progressMax
-    if type(progress) ~= "number" or type(max) ~= "number" or max <= 0 then return nil end
-    return progress / max
-end
 local function sameCycleAllowed(job, seq)
-    return state.read.produce().cycle.seq == seq
+    return hostCycle.seq() == seq
         and readiness.machineAllowed(job.machine, job.level, job.sub)
 end
 local function addOperation(machine, sub, method, seq)
@@ -1126,62 +1110,32 @@ local function addOperation(machine, sub, method, seq)
     return true
 end
 function jobs.sync()
-    local seq = state.read.produce().cycle.seq
+    local seq = hostCycle.seq()
     return produceRuntime.cancelWhere(function(job)
         return not sameCycleAllowed(job, seq)
     end)
 end
-function jobs.onCycleProgress(progress, maxProgress)
-    if type(progress) ~= "number" then return end
-    local cycle = state.read.produce().cycle
-    local prev = cycle.lastProgress
-    state.write.produceSetCycle({ lastProgress = progress, progressMax = maxProgress })
-    if prev == nil then
-        cycleStartArmed = (progress <= 1)
-        return
-    end
-    if progress < prev and progress <= 1 then cycleStartArmed = true end
-    local newCycle = (progress < prev and progress > 1)
-        or (cycleStartArmed and prev <= 1 and progress > 1)
-    if not newCycle then return end
-    cycleStartArmed = false
-    local seq = (cycle.seq or 0) + 1
-    state.write.produceSetCycle({ seq = seq })
-    scheduler.emit("produce_cycle", { seq = seq })
-end
 function jobs.onCycleStarted(payload)
-    local seq = (payload and payload.seq) or state.read.produce().cycle.seq
-    local dropped = produceRuntime.cancelWhere(function(job)
+    local seq = (payload and payload.seq) or hostCycle.seq()
+    produceRuntime.cancelWhere(function(job)
         return job.cycleSeq ~= seq
     end)
-    if dropped > 0 then
-        logs.debug(string.format("制作自动化：周期 #%s 丢弃未完成制作任务 %d 个",
-            tostring(seq), dropped))
-    end
-    local ratio = cycleRatio()
+    local ratio = payload and payload.ratio
     if ratio and ratio > (tonumber(CONFIG.PRODUCE.CYCLE_CUTOFF) or 0.9) then
-        logs.debug(string.format("制作自动化：周期 #%s 已过 %d%%，不登记任务",
-            tostring(seq), math.floor(ratio * 100)))
         return
     end
-    local planned = 0
     for machine, sub in pairs(state.read.produce().subs) do
         local method = produce.method(sub.level)
         if method and type(interface.operation(method)) == "function"
-            and readiness.machineAllowed(machine, sub.level, sub)
-            and addOperation(machine, sub, method, seq) then
-            planned = planned + 1
+            and readiness.machineAllowed(machine, sub.level, sub) then
+            addOperation(machine, sub, method, seq)
         end
-    end
-    if planned > 0 then
-        logs.debug(string.format("制作自动化：周期 #%s 登记制作任务 %d 台",
-            tostring(seq), planned))
     end
 end
 return jobs
 
 backend/app/produce/patrol.lua
-7940
+6329
 local constants  = require("shared.constants")
 local logs       = require("shared.logs")
 local state      = require("shared.state")
@@ -1193,7 +1147,6 @@ local sides      = require("backend.app.produce.sides")
 local probes     = require("backend.hardware.probes")
 local transposer = require("backend.hardware.transposer")
 local patrol = {}
-local MISSING_DETAIL_WIDTH = 64
 local FORCE_REASON_WIDTH   = 48
 local function resolveAnyFound(found, anyList)
     local picked, best = nil, 0
@@ -1267,39 +1220,15 @@ local function configure(machine, sub, method, changed)
     end
     local ok, reason, config = sides.configure(machine, sub, requiredFluids, requiredItems)
     if ok and config then
-        local names, itemNames = {}, {}
-        for _, side in ipairs(config.sources or {}) do
-            names[#names + 1] = utils.sideLabel(side)
-        end
-        for _, side in ipairs(config.itemSources or {}) do
-            itemNames[#itemNames + 1] = utils.sideLabel(side)
-        end
-        local itemText = config.itemTarget
-            and string.format("；物品输出=%s，物品输入=%s",
-                utils.sideLabel(config.itemTarget),
-                (#itemNames > 0) and table.concat(itemNames, "/") or "-")
-            or ""
-        logs.debug(string.format("%s 制作自动化：侧位配置完成（机器 %s）：流体输出=%s，流体输入=%s%s",
-            constants.levelLabel(sub.level), binding.machineTextOf(sub.level, machine),
-            config.target and utils.sideLabel(config.target) or "-",
-            (#names > 0) and table.concat(names, "/") or "-", itemText))
         return true
     end
-    local prev = sub.sideFail
     state.write.produceSetSub(machine, { sideFail = reason })
-    if prev ~= reason then
-        logs.debug(string.format("%s 制作自动化：侧位配置失败——%s（机器 %s）",
-            constants.levelLabel(sub.level), tostring(reason),
-            binding.machineTextOf(sub.level, machine)))
-    end
     return changed
 end
 local function reconfigureIfMoved(machine, sub, requiredItems)
     local signature = sides.layoutSignature(sub, requiredItems ~= nil and #requiredItems > 0)
     if sub.layout ~= nil and signature ~= sub.layout then
         sides.clear(machine)
-        logs.debug(string.format("%s 制作自动化：容器方位变化，触发重新配置（机器 %s）",
-            constants.levelLabel(sub.level), binding.machineTextOf(sub.level, machine)))
         return true
     end
     return false
@@ -1322,8 +1251,6 @@ local function checkMachine(machine, sub, method, changed)
                 logs.warn(string.format("%s 制作自动化：原料不足，已强制关断（机器 %s）",
                     constants.levelLabel(sub.level), binding.machineTextOf(sub.level, machine)))
             end
-            logs.debug(string.format("%s 制作自动化：原料不足明细——%s",
-                constants.levelLabel(sub.level), utils.joinLimited(miss, MISSING_DETAIL_WIDTH)))
             local requiredItems = interface.requiredItems(method)
             if reconfigureIfMoved(machine, sub, requiredItems) then changed = true end
             local forceReason = "原料不足：" .. utils.joinLimited(miss, FORCE_REASON_WIDTH)
@@ -1365,10 +1292,9 @@ end
 return patrol
 
 backend/app/produce/readiness.lua
-4031
+3723
 local CONFIG    = require("shared.config")
 local constants = require("shared.constants")
-local logs      = require("shared.logs")
 local state     = require("shared.state")
 local produce   = require("backend.domain.produce")
 local interface = require("backend.domain.produce.interface")
@@ -1390,13 +1316,8 @@ function readiness.evaluate(level)
     return ok, reason, units, method
 end
 function readiness.refreshLevel(level)
-    local prevValid = state.read.produceLevel(level).valid == true
     local ok, reason, units = readiness.evaluate(level)
     state.write.produceSetLevel(level, { valid = ok, validReason = reason or "" })
-    if prevValid ~= ok then
-        logs.debug(string.format("%s 制作自动化%s：%s", constants.levelLabel(level),
-            ok and "已就绪" or "未就绪", tostring(reason or "-")))
-    end
     return ok, reason, units
 end
 function readiness.refreshAll()
@@ -1706,7 +1627,7 @@ end
 return view
 
 backend/app/produce_job.lua
-7669
+6553
 local CONFIG   = require("shared.config")
 local state    = require("shared.state")
 local executor = require("backend.app.produce.executor")
@@ -1724,22 +1645,9 @@ local function newContext(machine, sub)
         sources = {},
         itemSource = nil,
         itemReturnSide = nil,
-        trace = { order = {}, byKey = {} },
         limit = math.max(1, math.floor((tonumber(sub.rate) or 0)
             * (tonumber(CONFIG.PRODUCE.CHUNK_RATIO) or 0.05)))
     }
-    local function recordTransfer(kind, name, label, amount)
-        amount = math.floor(tonumber(amount) or 0)
-        if amount <= 0 then return end
-        local key = kind .. ":" .. tostring(name)
-        local entry = ctx.trace.byKey[key]
-        if not entry then
-            entry = { kind = kind, label = label or name, amount = 0 }
-            ctx.trace.byKey[key] = entry
-            ctx.trace.order[#ctx.trace.order + 1] = entry
-        end
-        entry.amount = entry.amount + amount
-    end
     ctx.sensor = function()
         local result = ctx.action({ kind = "sensor" })
         if not result or not result.ok then return nil, result and result.reason or "传感器失败" end
@@ -1783,7 +1691,6 @@ local function newContext(machine, sub)
                 return false, string.format("%s 转运不完整：%d/%d mB（%s）",
                     label, moved, request, result and result.reason or "失败")
             end
-            recordTransfer("fluid", fluid, label, moved)
             remaining = remaining - moved
             source.amount = source.amount - moved
             source.available = source.available - moved
@@ -1831,8 +1738,6 @@ local function newContext(machine, sub)
                 return false, result and result.reason
                     or ((required.label or required.name) .. " 转运失败")
             end
-            recordTransfer("item", required.name .. ":" .. (tonumber(required.damage) or 0),
-                required.label or required.name, moved)
             remaining = remaining - moved
             source.count = source.count - moved
             if source.count <= 0 then source, ctx.itemSource = nil, nil end
@@ -1850,19 +1755,12 @@ local function newContext(machine, sub)
         end
         local moved = tonumber(result.moved) or 0
         if moved <= 0 then return false, "物品未移动" end
-        recordTransfer("item", required.name .. ":" .. (tonumber(required.damage) or 0),
-            required.label or required.name, moved)
         return true, nil
     end
     ctx.recoverTarget = function()
         local result = ctx.action({ kind = "recoverTarget" })
         if not result or not result.ok then
             return false, result and result.reason or "目标侧残留回收失败"
-        end
-        for _, item in ipairs(result.moved or {}) do
-            recordTransfer("item",
-                item.name .. ":" .. (tonumber(item.damage) or 0),
-                item.label or item.name, item.amount)
         end
         return true, nil
     end
@@ -1890,44 +1788,27 @@ end
 return job
 
 backend/app/produce_runtime.lua
-4419
+3704
 local computer = require("computer")
 local logs     = require("shared.logs")
-local utils    = require("shared.utils")
 local runtime = {}
 local jobs    = {}
 local function now() return computer.uptime() end
 local function fail(job, reason)
+    jobs[job.id] = nil
     local where = tostring(job.machineText or job.machine or job.id or "?")
     if job.levelLabel then where = tostring(job.levelLabel) .. " " .. where end
     logs.warn(string.format("制作自动化任务失败（%s）：%s", where, tostring(reason)))
-    jobs[job.id] = nil
-end
-local function transferSummary(job)
-    local trace = job.ctx and job.ctx.trace
-    if not trace or #trace.order == 0 then return "无" end
-    local parts = {}
-    for _, entry in ipairs(trace.order) do
-        local amount = utils.formatNumber(entry.amount)
-        if entry.kind == "fluid" then
-            parts[#parts + 1] = string.format("%s %s mB", tostring(entry.label), amount)
-        else
-            parts[#parts + 1] = string.format("%s×%s", tostring(entry.label), amount)
-        end
-    end
-    return table.concat(parts, "、")
 end
 local function complete(job)
+    jobs[job.id] = nil
     local label = job.levelLabel or ("T" .. tostring(job.level))
     local who   = job.machineText or tostring(job.machine)
     logs.system(string.format("%s 制作自动化：本轮完成（机器 %s）", label, who))
-    logs.debug(string.format("%s 制作自动化：本轮转移 %s（机器 %s）",
-        label, transferSummary(job), who))
-    jobs[job.id] = nil
 end
 function runtime.add(job)
     assert(type(job) == "table" and type(job.operation) == "function", "无效的制作任务")
-    assert(type(job.executor) == "function", "invalid executor")
+    assert(type(job.executor) == "function", "无效的执行器")
     job.runAt    = tonumber(job.runAt) or now()
     job.priority = tonumber(job.priority) or 100
     job.ctx.action = function(action)
@@ -2005,7 +1886,7 @@ local function resume(job)
     if a.kind == "action" then
         local okExec, result = pcall(job.executor, a.action, job)
         if not okExec then fail(job, result) return end
-        if type(result) ~= "table" then fail(job, "executor 返回无效结果") return end
+        if type(result) ~= "table" then fail(job, "执行器返回无效结果") return end
         job.pending = result
         job.runAt = now() + 0.05
         return
@@ -2020,7 +1901,7 @@ end
 return runtime
 
 backend/app/rates.lua
-4863
+4786
 local scheduler    = require("core.scheduler")
 local CONFIG       = require("shared.config")
 local constants    = require("shared.constants")
@@ -2114,7 +1995,6 @@ function app.onModeChanged()
     afterSuggestChange("调度模式切换")
 end
 function app.onRatesChanged(payload)
-    logs.debug(tostring(payload and payload.why or "速率配置已更新"))
     if not system.effectiveConfig().weight then return end
     afterSuggestChange(payload and payload.why or "权重变化")
 end
@@ -2125,7 +2005,7 @@ end
 return app
 
 backend/app/system.lua
-7997
+7592
 local constants       = require("shared.constants")
 local logs            = require("shared.logs")
 local state           = require("shared.state")
@@ -2194,20 +2074,13 @@ function system.checkSuggestionChange()
     end
     if #changed == 0 then return false end
     state.write.setBaseline(now)
-    local texts = {}
-    for _, item in ipairs(changed) do
-        texts[#texts + 1] = string.format("%s %s→%s", constants.levelLabel(item.level),
-            tostring(item.from), tostring(item.to))
-    end
-    logs.debug("建议并行变化（等待用户）：" .. table.concat(texts, "、"))
     system.enterAwaiting("建议并行已变化", true, "请按新建议调好机器并行，再点【启动系统】")
     return true
 end
 function system.auditThresholds()
-    local texts, signature, warnText, debugTexts = mode.audit()
+    local texts, signature, warnText = mode.audit()
     texts     = texts or {}
     signature = signature or ""
-    debugTexts = debugTexts or {}
     if warnText then
         if warnText ~= lastZeroWarn then
             logs.warn(warnText)
@@ -2219,7 +2092,6 @@ function system.auditThresholds()
     if signature == lastWarnSig then return end
     lastWarnSig = signature
     for _, text in ipairs(texts) do logs.warn(text) end
-    for _, text in ipairs(debugTexts) do logs.debug(text) end
 end
 function system.resetLearning(why)
     trackerApp().resetAll()
@@ -2351,7 +2223,7 @@ end
 return system
 
 backend/app/watch.lua
-3736
+3131
 local constants = require("shared.constants")
 local logs      = require("shared.logs")
 local state     = require("shared.state")
@@ -2364,7 +2236,6 @@ local system    = require("backend.app.system")
 local watch     = {}
 local lastMismatchWarn = {}
 function watch.onLevelRulesChanged(payload)
-    logs.debug(tostring(payload and payload.why or "阈值配置已更新"))
     system.auditThresholds()
     system.requestPlan("阈值变化")
 end
@@ -2417,92 +2288,22 @@ function watch.onPlantObserved(payload)
         level = level, want = want, got = payload.switch
     })
 end
-function watch.onParallelSample(payload)
+function watch.onHostCycleStarted(payload)
     if not state.read.running() then return end
-    local verdict, why = tracker.feed(payload.address, payload.parallel, payload.seq)
-    if verdict ~= "write" then
-        scheduler.emit("parallel_discarded", {
-            level = payload.level, value = payload.parallel, why = why
-        })
-        return
+    local seq = payload and payload.seq
+    for _, sample in ipairs((payload and payload.samples) or {}) do
+        if tracker.feed(sample.address, sample.parallel, seq) == "write" then
+            scheduler.emit("parallel_write", {
+                level   = sample.level,
+                address = sample.address,
+                parallel = sample.parallel,
+                success = sample.success,
+                by = "周期开始采样"
+            })
+        end
     end
-    local learned = state.read.learn(payload.level)
-    if learned and learned.source == "measured" and learned.parallel == payload.parallel then
-        scheduler.emit("parallel_discarded", {
-            level = payload.level, value = payload.parallel, why = "与学习值相同"
-        })
-        return
-    end
-    scheduler.emit("parallel_write", {
-        level = payload.level,
-        address = payload.address,
-        parallel = payload.parallel,
-        success = payload.success,
-        by = "传感器确认"
-    })
-end
-function watch.onParallelDiscarded(payload)
-    logs.debug(string.format("%s 并行采样丢弃：%s（%s）",
-        constants.levelLabel(payload.level), tostring(payload.value), tostring(payload.why)))
 end
 return watch
-
-backend/debug/memwatch.lua
-2395
-local computer          = require("computer")
-local logs              = require("shared.logs")
-local trace             = require("backend.store.trace")
-local memwatch          = {}
-local memFloor, memPeak = nil, nil
-local memFloorWarned    = nil
-local memTraceAt        = 0
-local function note()
-    local free   = computer.freeMemory() or 0
-    local total  = computer.totalMemory() or 0
-    local floorK = math.floor(free / 1024)
-    if not memFloor or floorK < memFloor then memFloor = floorK end
-    memPeak = math.floor(total / 1024) - memFloor
-    return floorK, free, total
-end
-function memwatch.sample()
-    note()
-end
-function memwatch.watch(elapsed)
-    local floorK, _, total = note()
-    logs.debug(string.format("内存：可用 %dK / 地板 %dK / 峰值 %dK / 总 %dK",
-        floorK, memFloor, memPeak, math.floor(total / 1024)))
-    if total > 0 and memFloor * 1024 < total * 0.06 then
-        if not memFloorWarned or memFloor <= memFloorWarned - 16 then
-            memFloorWarned = memFloor
-            logs.warn(string.format("内存新低：可用 %dK / 总 %dK",
-                memFloor, math.floor(total / 1024)))
-        end
-    end
-    local now = computer.uptime()
-    if (memFloor * 1024 < total * 0.3) or logs.isDebug() then
-        if (now - memTraceAt) > 600 then
-            memTraceAt = now
-            trace.line(string.format("内存：峰值 %dK / 总 %dK（地板 %dK），本次运行 %d 分",
-                memPeak, math.floor(total / 1024), memFloor,
-                math.floor((elapsed or 0) / 60)))
-        end
-    end
-end
-function memwatch.traceBoot(bootFree, bootTotal)
-    trace.line(string.format("内存基线：可用 %dK / 总 %dK（仅已加载引导模块，差值为 OpenOS shell）",
-        math.floor((bootFree or 0) / 1024), math.floor((bootTotal or 0) / 1024)))
-    local free  = computer.freeMemory() or 0
-    local total = computer.totalMemory() or 0
-    trace.line(string.format("内存加载后：可用 %dK / 总 %dK（含加载期垃圾，略高于实际占用）",
-        math.floor(free / 1024), math.floor(total / 1024)))
-end
-function memwatch.summary()
-    if not memPeak then return nil end
-    return string.format("峰值 %dK / 总 %dK（可用 %dK / 地板 %dK）",
-        memPeak, math.floor((computer.totalMemory() or 0) / 1024),
-        math.floor((computer.freeMemory() or 0) / 1024), memFloor)
-end
-return memwatch
 
 backend/domain/actuator.lua
 1468
@@ -2598,6 +2399,36 @@ function allocator.describe(plan)
 end
 return allocator
 
+backend/domain/host_cycle.lua
+1001
+local state = require("shared.state")
+local hostCycle = {}
+local cycleStartArmed = false
+function hostCycle.observe(progress, maxProgress)
+    if type(progress) ~= "number" then return false end
+    local cycle = state.read.hostCycle()
+    local prev  = cycle.lastProgress
+    state.write.setHostCycleProgress(progress, maxProgress)
+    if prev == nil then
+        cycleStartArmed = (progress <= 1)
+        return false
+    end
+    if progress < prev and progress <= 1 then cycleStartArmed = true end
+    local started = (progress < prev and progress > 1)
+        or (cycleStartArmed and prev <= 1 and progress > 1)
+    if not started then return false end
+    cycleStartArmed = false
+    local seq = (cycle.seq or 0) + 1
+    state.write.setHostCycle({ seq = seq })
+    local ratio = (type(maxProgress) == "number" and maxProgress > 0)
+        and (progress / maxProgress) or nil
+    return true, seq, ratio
+end
+function hostCycle.seq()
+    return state.read.hostCycle().seq or 0
+end
+return hostCycle
+
 backend/domain/learning.lua
 926
 local constants = require("shared.constants")
@@ -2635,7 +2466,7 @@ end
 return learning
 
 backend/domain/mode.lua
-1265
+1241
 local state     = require("shared.state")
 local mode      = {}
 local impls     = {}
@@ -2672,13 +2503,13 @@ function mode.order()
     return mode.current().order()
 end
 function mode.audit()
-    local texts, signature, warnText, debugTexts = mode.current().audit()
-    return texts, signature, warnText, debugTexts
+    local texts, signature, warnText = mode.current().audit()
+    return texts, signature, warnText
 end
 return mode
 
 backend/domain/modes/rate.lua
-3426
+3080
 local constants = require("shared.constants")
 local state     = require("shared.state")
 local utils     = require("shared.utils")
@@ -2724,7 +2555,7 @@ function rate.order()
     return state.priorityOrder()
 end
 function rate.audit()
-    local texts, sigs, debugTexts = {}, {}, {}
+    local texts, sigs = {}, {}
     if state.read.enforceThreshold() then
         local notes, sig = rules.thresholdNotes()
         for _, text in ipairs(notes) do texts[#texts + 1] = text end
@@ -2735,11 +2566,6 @@ function rate.audit()
         if note.kind == "too_small" then
             texts[#texts + 1] = string.format(
                 "速率模式：功率不足，%s 按比例分不到 1 并行（本轮不开）", label)
-        elseif note.kind == "trimmed" then
-            debugTexts[#debugTexts + 1] = string.format(
-                "速率模式：%s 建议并行 %s → %s（上游 %s 供给不足）",
-                label, tostring(note.from), tostring(note.to),
-                constants.levelLabel(math.max(1, note.level - 1)))
         end
         sigs[#sigs + 1] = string.format("%s:%d", note.kind, note.level)
     end
@@ -2751,7 +2577,7 @@ function rate.audit()
     elseif state.read.enforceThreshold() and not rules.hasPositiveThreshold() then
         warnText = "速率模式：用户阈值全为 0，按低保线执行（请到配置页设置阈值）"
     end
-    return texts, table.concat(sigs, "|"), warnText, debugTexts
+    return texts, table.concat(sigs, "|"), warnText
 end
 return rate
 
@@ -3534,7 +3360,7 @@ end
 return rules
 
 backend/domain/tracker.lua
-1998
+1355
 local CONFIG  = require("shared.config")
 local state   = require("shared.state")
 local tracker = {}
@@ -3542,42 +3368,28 @@ local function limit()
     return math.max(1, CONFIG.PARALLEL_CONFIRM_CYCLES or 3)
 end
 function tracker.feed(address, value, seq)
-    if type(value) ~= "number" or value <= 0 then
+    if type(value) ~= "number" or value <= 0 or type(seq) ~= "number" then
         tracker.reset(address)
-        return "discard", "并行读数无效"
-    end
-    if type(seq) ~= "number" then
-        return "discard", "周期号不可读（不结算）"
+        return "discard"
     end
     local t = state.read.tracker()[address]
     if not t then
-        state.write.trackerSet(address, { seq = seq, value = value })
-        return "discard", string.format("首读 %d（待下一周期结算）", value)
+        state.write.trackerSet(address, { seq = seq, value = value, streak = 1 })
+        return "discard"
     end
-    if seq == t.seq then
-        t.value = value
-        return "discard", string.format("本周期读到 %d（周期未结束）", value)
-    end
+    if seq == t.seq then return "discard" end
     if seq ~= t.seq + 1 then
-        t.seq, t.value, t.settled, t.streak = seq, value, nil, 0
-        return "discard", "周期不连续（重新累积）"
+        t.seq, t.value, t.streak = seq, value, 1
+        return "discard"
     end
-    local settled = t.value
+    local streak = (t.value == value) and ((t.streak or 1) + 1) or 1
     t.seq, t.value = seq, value
-    if t.settled == settled then
-        t.streak = math.min(limit(), (t.streak or 0) + 1)
-    else
-        t.streak = 1
+    if streak >= limit() and t.confirmed ~= value then
+        t.streak, t.confirmed = limit(), value
+        return "write"
     end
-    t.settled = settled
-    if t.streak >= limit() then
-        if t.confirmed == settled then
-            return "discard", string.format("与已确认值相同（%d）", settled)
-        end
-        t.confirmed = settled
-        return "write", string.format("连续 %d 个运行周期均为 %d", limit(), settled)
-    end
-    return "discard", string.format("周期值 %d（%d/%d 个周期）", settled, t.streak, limit())
+    t.streak = streak
+    return "discard"
 end
 function tracker.reset(address)
     state.write.trackerDelete(address)
@@ -3594,7 +3406,7 @@ end
 return tracker
 
 backend/handlers.lua
-1847
+1756
 local scheduler = require("core.scheduler")
 local system    = require("backend.app.system")
 local produceApp = require("backend.app.produce")
@@ -3615,21 +3427,20 @@ function handlers.subscribe()
     scheduler.on("power_changed", system.onPowerChanged)
     scheduler.on("deployed_changed", system.onDeployedChanged)
     scheduler.on("plant_observed", function(...) return watchApp().onPlantObserved(...) end)
-    scheduler.on("parallel_sample", function(...) return watchApp().onParallelSample(...) end)
     scheduler.on("level_rules_changed", function(...) return watchApp().onLevelRulesChanged(...) end)
     scheduler.on("rates_changed", function(...) return ratesApp().onRatesChanged(...) end)
     scheduler.on("mode_changed", function(...) return ratesApp().onModeChanged(...) end)
     scheduler.on("enforce_changed", function(...) return ratesApp().onEnforceChanged(...) end)
-    scheduler.on("parallel_discarded", function(...) return watchApp().onParallelDiscarded(...) end)
     scheduler.on("parallel_write", system.onParallelWrite)
     scheduler.on("switch_mismatch", system.onSwitchMismatch)
     scheduler.on("rules_audit", system.auditThresholds)
     scheduler.on("produce_changed", system.onProduceChanged)
     scheduler.on("produce_changed", produceApp.syncJobs)
     scheduler.on("plant_observed", produceApp.syncJobs)
-    scheduler.on("produce_cycle", produceApp.onCycleStarted)
+    scheduler.on("host_cycle_started", produceApp.onCycleStarted)
+    scheduler.on("host_cycle_started", function(...) return watchApp().onHostCycleStarted(...) end)
     scheduler.on("schedule_now", system.onScheduleRequest)
-    return 19
+    return 18
 end
 return handlers
 
@@ -4475,14 +4286,13 @@ end
 return transposer
 
 backend/jobs.lua
-10135
+9747
 local computer         = require("computer")
 local scheduler        = require("core.scheduler")
 local CONFIG           = require("shared.config")
 local constants        = require("shared.constants")
 local logs             = require("shared.logs")
 local state            = require("shared.state")
-local utils            = require("shared.utils")
 local device           = require("backend.hardware.device")
 local machines         = require("backend.hardware.machines")
 local probes           = require("backend.hardware.probes")
@@ -4496,6 +4306,7 @@ local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
 local system           = require("backend.app.system")
 local produceApp       = require("backend.app.produce")
+local hostCycle        = require("backend.domain.host_cycle")
 local jobs             = {}
 local last             = {
     scanCount = 0,
@@ -4507,7 +4318,6 @@ local last             = {
     fluidErr = nil
 }
 local startedAt        = computer.uptime()
-local memwatch         = nil
 function jobs.elapsed()
     return computer.uptime() - startedAt
 end
@@ -4562,10 +4372,6 @@ function jobs.scanHardware(skipProducePatrol)
         scheduler.emit("power_changed", { from = prevAll, to = nowAll, note = powerNote })
     end
     last.powerBefore = totalPower
-    logs.debug(string.format("硬件扫描 #%d：主机 %d、单元 %d、能量仓 %s、网卡 %s、其它 %d、总功率 %s、缺失 %s",
-        last.scanCount, summary.host, summary.unitTotal, hatch and hatch.name or "无",
-        device.net() and "有" or "无", summary.other,
-        utils.formatNumber(totalPower), (#missing > 0 and table.concat(missing, "/") or "无")))
 end
 function jobs.scanSettings()
     local snapshot = settings.load() or {}
@@ -4592,9 +4398,10 @@ function jobs.readFluids()
     state.write.setFluids(fluids)
 end
 function jobs.observePlants()
-    local samples, runningTotal = 0, 0
     local hostAllowed = nil
     local hostProgress, hostProgressMax
+    local cycleStarted, cycleSeq, cycleRatio
+    local cycleSamples
     local deployedLevels = {}
     for level = constants.HOST_LEVEL, constants.LEVEL_COUNT do
         local list                 = machines.of(level)
@@ -4610,7 +4417,11 @@ function jobs.observePlants()
             local act = probes.active(machine.address)
             if level == constants.HOST_LEVEL and sw ~= false then
                 hostProgress, hostProgressMax = probes.progress(machine.address)
-                produceApp.onCycleProgress(hostProgress, hostProgressMax)
+                local started, seq, ratio = hostCycle.observe(hostProgress, hostProgressMax)
+                if started then
+                    cycleStarted, cycleSeq, cycleRatio = true, seq, ratio
+                    cycleSamples = {}
+                end
             end
             local fact = { address = machine.address, switch = sw, active = act }
             if sw == true then
@@ -4632,14 +4443,14 @@ function jobs.observePlants()
                     fact.success  = success
                     if not minSample or value < minSample then minSample = value end
                     if success and (not minSuccess or success < minSuccess) then minSuccess = success end
-                    samples = samples + 1
-                    scheduler.emit("parallel_sample", {
-                        level    = level,
-                        address  = machine.address,
-                        parallel = value,
-                        success  = success,
-                        seq      = state.read.produce().cycle.seq
-                    })
+                    if cycleStarted then
+                        cycleSamples[#cycleSamples + 1] = {
+                            level    = level,
+                            address  = machine.address,
+                            parallel = value,
+                            success  = success
+                        }
+                    end
                 end
             end
         end
@@ -4669,7 +4480,6 @@ function jobs.observePlants()
             fields.progressMax = hostProgressMax
         end
         state.write.recordPlant(level, fields)
-        runningTotal = runningTotal + running
         if level == constants.HOST_LEVEL then
             hostAllowed = observed
         end
@@ -4682,18 +4492,23 @@ function jobs.observePlants()
     if #deployedLevels > 0 then
         scheduler.emit("deployed_changed", { levels = deployedLevels })
     end
-    logs.debug(string.format("观测：单元在跑 %d 台，本轮采样 %d 条", runningTotal, samples))
+    if cycleStarted then
+        scheduler.emit("host_cycle_started", {
+            seq = cycleSeq,
+            ratio = cycleRatio,
+            samples = cycleSamples
+        })
+    end
 end
 function jobs.schedule()
     system.requestPlan("定时")
 end
 function jobs.persist()
-    if memwatch then memwatch.watch(jobs.elapsed()) end
     history.append()
     local ok, text = history.save()
-    if not ok then logs.debug("T5 写历史失败：" .. tostring(text)) end
+    if not ok then logs.warn("T5 写历史失败：" .. tostring(text)) end
     local okLog, logNote = log_file.flush()
-    if not okLog then logs.debug("T5 写日志失败：" .. tostring(logNote)) end
+    if not okLog then logs.warn("T5 写日志失败：" .. tostring(logNote)) end
 end
 function jobs.register()
     local n = 0
@@ -4708,10 +4523,6 @@ function jobs.register()
     add("produce", CONFIG.INTERVAL.PRODUCE, produceApp.tick)          
     add("produce_runtime", CONFIG.INTERVAL.PRODUCE_RUNTIME,
         function() return require("backend.app.produce_runtime").tick() end) 
-    if logs.isDebug() then
-        memwatch = require("backend.debug.memwatch")
-        add("sampleMemory", CONFIG.INTERVAL.SAMPLE, memwatch.sample) 
-    end
     jobs.scanSettings()
     jobs.scanHardware(true)
     jobs.readFluids()
@@ -5572,8 +5383,7 @@ end
 return trace
 
 core/bootstrap.lua
-1441
-local logs         = require("shared.logs")
+1288
 local constants    = require("shared.constants")
 local bootstrap    = {}
 local OWN_PREFIXES = { "core.", "shared.", "backend", "frontend" }
@@ -5591,9 +5401,6 @@ function bootstrap.clearModuleCache(prefixes)
     end
     return removed
 end
-function bootstrap.applyArgs(args)
-    logs.applyArgs(args or {})
-end
 function bootstrap.releaseConsole()
     local okComp, component = pcall(require, "component")
     if okComp and type(component) == "table" and component.gpu then
@@ -5609,7 +5416,7 @@ function bootstrap.releaseConsole()
     end
 end
 function bootstrap.version()
-    return constants.CODE_VERSION .. (logs.isDebug() and "-debug" or "")
+    return constants.CODE_VERSION
 end
 function bootstrap.versionLine()
     return "内核版本 " .. bootstrap.version()
@@ -5652,7 +5459,7 @@ end
 return locate
 
 core/runtime.lua
-2143
+2000
 local event      = require("event")
 local computer   = require("computer")
 local CONFIG     = require("shared.config")
@@ -5679,9 +5486,6 @@ function runtime.discardStaleInterrupts()
         else
             scheduler.emit(ev[1], ev)
         end
-    end
-    if dropped > 0 then
-        logs.debug(string.format("忽略启动瞬间的 %d 个 interrupted（上个进程残留）", dropped))
     end
     return dropped
 end
@@ -6142,7 +5946,7 @@ end
 return M
 
 frontend/input.lua
-9797
+9651
 local utils     = require("shared.utils")
 local constants = require("shared.constants")
 local CONFIG    = require("shared.config")
@@ -6217,7 +6021,6 @@ local function applyKey(key)
     if field ~= "factor" and field ~= "strength" and not level then return end
     local kind = key.kind
     if kind == "cancel" then
-        logs.debug("退出编辑（✘）")
         clearEdit()
         return
     end
@@ -6341,10 +6144,6 @@ local function onClick(x, y)
         end
     end
     if viewinput.statusArea(x, y) then return end
-    if fstate.hit(fstate.logTitle, x, y) then
-        fire("log_level_toggle")
-        return
-    end
     if viewinput.chartChip(x, y) then
         viewmodel.expire()
         return
@@ -6419,9 +6218,8 @@ end
 return input
 
 frontend/layout.lua
-4384
+3834
 local fstate         = require("frontend.state")
-local logs           = require("shared.logs")
 local layout         = {}
 layout.TAB_H         = 1
 layout.CONTROL_H     = 18
@@ -6512,11 +6310,6 @@ function layout.calculate()
     fstate.areas.config   = { x = configX, y = bodyY, w = configW, h = configH }
     fstate.areas.keypad   = { x = innerX, y = keypadY, w = innerW, h = keypadH }
     fstate.areas.settings = { x = configX, y = settingsY, w = configW, h = settingsH }
-    logs.debug(string.format("布局 控制 %dx%d@%d,%d 状态 %dx%d@%d,%d 图表 %dx%d@%d,%d 日志 %dx%d@%d,%d",
-        fstate.areas.control.w, fstate.areas.control.h, fstate.areas.control.x, fstate.areas.control.y,
-        fstate.areas.status.w, fstate.areas.status.h, fstate.areas.status.x, fstate.areas.status.y,
-        fstate.areas.chart.w, fstate.areas.chart.h, fstate.areas.chart.x, fstate.areas.chart.y,
-        fstate.areas.log.w, fstate.areas.log.h, fstate.areas.log.x, fstate.areas.log.y))
     fstate.clearHitboxes()
     fstate.invalidateAll()
 end
@@ -7411,8 +7204,7 @@ end
 return keypad
 
 frontend/panels/log.lua
-2354
-local unicode = require("unicode")
+2059
 local fstate  = require("frontend.state")
 local theme   = require("frontend.theme")
 local widgets = require("frontend.widgets")
@@ -7423,16 +7215,11 @@ function log.draw(data)
     local rows       = widgets.textAreaRows(area, 1)
     local maxW       = area.w - 3
     local ro         = fstate.readOnly == true
-    local title      = ro and " 系统日志（只读） "
-        or string.format(" 系统日志（%s）点这里切换 ", logs.getLevel())
-    if not ro then
-        fstate.logTitle  = { x = area.x + 1, y = area.y + 1, w = unicode.wlen(title), h = 1 }
-    end
+    local title      = ro and " 系统日志（只读） " or " 系统日志 "
     local frameDirty = fstate.subDirty("log", "frame", table.concat({ area.x, area.y, area.w, area.h,
-        tostring(data.system.priority), logs.getLevel() }, ":"))
+        tostring(data.system.priority) }, ":"))
     if frameDirty then
-        widgets.drawPanelFrame(area, title,
-            logs.isDebug() and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_CYAN,
+        widgets.drawPanelFrame(area, title, theme.COLORS.TEXT_CYAN,
             theme.borderColor(data.system.priority == "high"))
     end
     local all       = data.logs or {}
@@ -7695,10 +7482,9 @@ end
 return tabbar
 
 frontend/render.lua
-5008
+4524
 local fstate        = require("frontend.state")
 local theme         = require("frontend.theme")
-local computer      = require("computer")
 local layout        = require("frontend.layout")
 local CONFIG        = require("shared.config")
 local logs          = require("shared.logs")
@@ -7711,7 +7497,6 @@ local logPanel      = require("frontend.panels.log")
 local render        = {}
 local inputModule   = nil
 local viewmodel     = nil
-local firstFrame    = true
 local PANELS        = {
     tabBar   = { draw = tabBarPanel.draw, fingerprint = tabBarPanel.fingerprint },
     control  = { draw = controlPanel.draw, fingerprint = controlPanel.fingerprint },
@@ -7767,14 +7552,10 @@ function render.restoreResolution()
     end
 end
 function render.setup()
-    local started = computer.uptime()
     fstate.gpu = require("component").gpu
     render.applyResolution()
     layout.calculate()
     fstate.invalidateAll()
-    if logs.isDebug() then
-        logs.debug(string.format("前端 setup：%.3f 秒", computer.uptime() - started))
-    end
 end
 function render.bindInput()
     local function dispatch(name, payload)
@@ -7815,22 +7596,15 @@ function render.renderAll(forceAll)
     fstate.render.forceAll = false
 end
 function render.frame()
-    local started = firstFrame and computer.uptime() or nil
     viewmodel = viewmodel or require("frontend.viewmodel")
     local data = viewmodel.build()
     fstate.lastData = data
     render.renderAll()
-    if started then
-        if logs.isDebug() then
-            logs.debug(string.format("前端首帧：%.3f 秒", computer.uptime() - started))
-        end
-        firstFrame = false
-    end
 end
 return render
 
 frontend/state.lua
-1751
+1699
 local fstate = {
     gpu            = nil,
     W              = 0,
@@ -7844,7 +7618,6 @@ local fstate = {
     detailLevel    = nil,
     chartLevel     = 0,
     chartChips     = {},
-    logTitle       = nil,
     autostartRow   = nil,
     cells          = {},
     keys           = {},
@@ -7878,7 +7651,6 @@ function fstate.clearHitboxes()
     fstate.buttons, fstate.tabs, fstate.chartChips = {}, {}, {}
     fstate.cells, fstate.keys, fstate.produceHits = {}, {}, {}
     fstate.levelRows = {}
-    fstate.logTitle = nil
     fstate.autostartRow = nil
     fstate.factorCell = nil
     fstate.strengthCell = nil
@@ -7896,7 +7668,7 @@ end
 return fstate
 
 frontend/theme.lua
-2228
+2203
 local theme      = {}
 theme.COLORS     = {
     BG                = 0x0d1117,
@@ -7924,7 +7696,6 @@ theme.LOG_COLORS = {
     schedule = 0x38bdf8,
     system   = 0xe2e8f0,
     ui       = 0x64748b,
-    debug    = 0x64748b,
     info     = 0xe2e8f0
 }
 function theme.logColor(kind)
@@ -8148,9 +7919,7 @@ end
 return widgets
 
 main.lua
-10642
-local computer   = require("computer")
-local startupAt  = computer.uptime()
+7817
 local selfPath   = (debug.getinfo(1, "S").source or ""):gsub("^@", "")
 local selfDir    = selfPath:match("^(.*)[/\\][^/\\]*$")
 local candidates = { "core/locate.lua", "./core/locate.lua", "PurifyWater/core/locate.lua" }
@@ -8178,12 +7947,9 @@ if appDir == "" then
     return
 end
 locate.injectPath(appDir)
-local locateAt = computer.uptime()
 local bootstrap = require("core.bootstrap") 
-local removed   = bootstrap.clearModuleCache()
+bootstrap.clearModuleCache()
 bootstrap       = require("core.bootstrap") 
-bootstrap.applyArgs({ ... })
-local bootstrapAt = computer.uptime()
 local bootGpu = nil
 local bootUnicode = nil
 do
@@ -8218,12 +7984,6 @@ local function bootStatus(text)
     pcall(bootGpu.set, textX, textY, text)
 end
 bootStatus("正在加载共享模块…")
-local memwatch, bootFree, bootTotal = nil, nil, nil
-if require("shared.logs").isDebug() then
-    bootFree  = computer.freeMemory()
-    bootTotal = computer.totalMemory()
-    memwatch  = require("backend.debug.memwatch") 
-end
 local CONFIG        = require("shared.config")
 local constants     = require("shared.constants")
 local logs          = require("shared.logs")
@@ -8231,7 +7991,6 @@ local state         = require("shared.state")
 local utils         = require("shared.utils")
 local models        = require("shared.models")
 local runtime       = require("core.runtime")
-local sharedAt      = computer.uptime()
 bootStatus("正在加载后端模块…")
 local files         = require("backend.store.files")
 local settings      = require("backend.store.settings")
@@ -8241,23 +8000,17 @@ local history       = require("backend.store.history")
 local levels_config = require("backend.store.levels_config")
 local rates_config  = require("backend.store.rates_config")
 local learning      = require("backend.domain.learning")
-local backendBaseAt = computer.uptime()
 local jobs          = require("backend.jobs")
-local jobsReqAt     = computer.uptime()
 local handlers      = require("backend.handlers")
-local handlersReqAt = computer.uptime()
 local api           = require("backend.api")
-local apiReqAt      = computer.uptime()
 local power         = require("backend.domain.power")
 local net           = require("backend.hardware.net")
 local netApp        = require("backend.app.net")
 local system        = require("backend.app.system")
 local autostart     = require("backend.app.autostart")
-local appsReqAt     = computer.uptime()
 local mode          = require("backend.domain.mode")
 local thresholdMode = require("backend.domain.modes.threshold")
 local rateMode      = require("backend.domain.modes.rate")
-local backendApiAt  = computer.uptime()
 local produce       = require("backend.domain.produce")
 local produceT3     = require("backend.domain.produce.t3")
 local produceT4     = require("backend.domain.produce.t4")
@@ -8265,10 +8018,8 @@ local produceT5     = require("backend.domain.produce.t5")
 local produceT6     = require("backend.domain.produce.t6")
 local produceT7     = require("backend.domain.produce.t7")
 local produceT8     = require("backend.domain.produce.t8")
-local backendAt     = computer.uptime()
 bootStatus("正在加载前端模块…")
 local render        = require("frontend.render")
-local frontendAt    = computer.uptime()
 bootStatus("正在初始化硬件与配置…")
 files.setRoot(appDir)
 local bootSettings = settings.load() or {}
@@ -8300,26 +8051,14 @@ if bootSettings[CONFIG.ENERGY.FACTOR_KEY] == nil then
 end
 rates_config.load()
 trace.start(appDir, bootstrap.version())
-if memwatch then memwatch.traceBoot(bootFree, bootTotal) end
 logs.system(bootstrap.versionLine())
 logs.system("调度模式：" .. mode.labelOf(state.read.mode()))
-logs.debug("应用目录 " .. appDir
-    .. (removed > 0 and ("（已清掉 " .. removed .. " 个旧模块缓存）") or ""))
-logs.debug(string.format("前端模块加载：%.3f 秒", frontendAt - backendAt))
-local tasksAt = computer.uptime()
-local taskCount = jobs.register()
-local jobsAt = computer.uptime()
-logs.debug(string.format("已注册 %d 个定时任务；日志级别 = %s", taskCount, logs.getLevel()))
-local _, ruleText             = levels_config.load()
-local gotHistory, historyText = history.load()
+jobs.register()
+levels_config.load()
+history.load()
 power.refresh()
-local dataAt = computer.uptime()
-logs.debug(tostring(ruleText))
-logs.debug(tostring(historyText))
-local subCount = handlers.subscribe()
-logs.debug(string.format("已订阅 %d 类事件", subCount))
+handlers.subscribe()
 system.auditThresholds()
-local eventsAt = computer.uptime()
 runtime.discardStaleInterrupts()
 runtime.bindQuitKeys()
 local savedSettings = settings.load()
@@ -8334,27 +8073,10 @@ autostart.refresh()
 netApp.loadSettings(savedSettings)
 if net.register() then
     net.setSource(api.snapshot)
-    logs.debug(string.format("广播任务已注册（当前 %s）",
-        state.read.net().enabled and "开" or "关"))
 end
-local configAt = computer.uptime()
 bootStatus("正在准备界面…")
 render.boot()
-local bootAt = computer.uptime()
 logs.system("界面已就绪")
-logs.debug(string.format(
-    "启动分段：定位 %.3f；引导 %.3f；共享模块 %.3f；后端模块 %.3f；前端模块 %.3f；任务注册 %.3f；数据加载 %.3f；事件/审计 %.3f；配置恢复 %.3f；渲染 boot %.3f；入口→界面 %.3f 秒",
-    locateAt - startupAt, bootstrapAt - locateAt, sharedAt - bootstrapAt,
-    backendAt - sharedAt, frontendAt - backendAt, jobsAt - tasksAt,
-    dataAt - jobsAt, eventsAt - dataAt, configAt - eventsAt,
-    bootAt - configAt, bootAt - startupAt))
-logs.debug(string.format(
-    "后端分段：基础 %.3f；服务 %.3f；制作方法 %.3f 秒",
-    backendBaseAt - sharedAt, backendApiAt - backendBaseAt, backendAt - backendApiAt))
-logs.debug(string.format(
-    "服务分段：jobs %.3f；handlers %.3f；api %.3f；应用 %.3f；模式 %.3f 秒",
-    jobsReqAt - backendBaseAt, handlersReqAt - jobsReqAt, apiReqAt - handlersReqAt,
-    appsReqAt - apiReqAt, backendApiAt - appsReqAt))
 if CONFIG.SYSTEM.START_ON_BOOT then
     system.start("开机自启")
 end
@@ -8368,17 +8090,14 @@ do
     end
     local okHistory, historyNote = history.save()
     if not okHistory then logs.warn(tostring(historyNote)) end
-    if memwatch then memwatch.watch(jobs.elapsed()) end
     log_file.flush()
-    local j       = jobs.last()
-    local memText = memwatch and memwatch.summary()
+    local j = jobs.last()
     trace.stop(runtime.quitReason(), string.format(
-        "运行 %.0f 秒，硬件扫描 %d 次，水位 %s，总功率 %s，本次学习并行 %d 级，历史 %d 点%s",
+        "运行 %.0f 秒，硬件扫描 %d 次，水位 %s，总功率 %s，本次学习并行 %d 级，历史 %d 点",
         jobs.elapsed(), j.scanCount,
         j.fluidOk and "读取成功" or ("读取失败(" .. tostring(j.fluidErr) .. ")"),
         utils.formatNumber(j.powerBefore or 0), learnedCount,
-        #state.read.chart().points,
-        memText and ("，内存 " .. memText) or ""))
+        #state.read.chart().points))
 end
 print("已退出：" .. tostring(runtime.quitReason() or "未说明"))
 print("运行痕迹：" .. tostring(trace.path()))
@@ -8387,7 +8106,7 @@ if state.read.autostart() then
 end
 
 shared/config.lua
-1995
+1950
 local CONFIG                     = {}
 CONFIG.FILES                     = {
     SETTINGS = "data/settings.txt", 
@@ -8403,7 +8122,6 @@ CONFIG.INTERVAL                  = {
     OBSERVE   = 5,
     SCHEDULE  = 5,
     PERSIST   = 30,
-    SAMPLE    = 1,
     BROADCAST = 1,
     PRODUCE   = 1,
     PRODUCE_RUNTIME = 0.5
@@ -8459,17 +8177,16 @@ CONFIG.SYSTEM                    = {
     START_ON_BOOT           = false,
 }
 CONFIG.LOG                       = {
-    LEVEL      = "user", 
     MAX_LINES  = 10,
     FILE_LINES = 200
 }
 return CONFIG
 
 shared/constants.lua
-3262
+3264
 local resources                   = require("shared.resources")
 local constants                   = {}
-constants.CODE_VERSION            = "v5.3"
+constants.CODE_VERSION            = "v5.3.2"
 constants.LEVEL_COUNT             = 8
 constants.HOST_LEVEL              = 0
 constants.T3_LEVEL                = 3
@@ -8556,45 +8273,19 @@ end
 return constants
 
 shared/logs.lua
-3555
+1844
 local CONFIG       = require("shared.config")
 local logs         = {}
-local LEVEL_ORDER  = { user = 1, debug = 2 }
-local buffers      = { user = {}, debug = {} }
+local lines        = {}
 local pending      = {}
 local maxLines     = (CONFIG.LOG and CONFIG.LOG.MAX_LINES) or 10
 local maxPending   = (CONFIG.LOG and CONFIG.LOG.FILE_LINES) or 200
-local currentLevel = (CONFIG.LOG and CONFIG.LOG.LEVEL) or "user"
 local pushed       = 0
-function logs.setLevel(level)
-    if LEVEL_ORDER[level] == nil then return false end
-    local changed = (level ~= currentLevel)
-    currentLevel = level
-    if CONFIG.LOG then CONFIG.LOG.LEVEL = level end
-    if changed then
-        logs.system("日志级别 = " .. level)
-    end
-    return true
-end
-function logs.getLevel() return currentLevel end
-function logs.isDebug() return currentLevel == "debug" end
-function logs.applyArgs(args)
-    local wantDebug = false
-    for _, raw in ipairs(args or {}) do
-        local s = tostring(raw)
-        if s == "--debug" or s == "-d" or s == "--verbose" then wantDebug = true end
-        if s == "--log=debug" or s == "--log-level=debug" then wantDebug = true end
-        if s == "--log=user" or s == "--log-level=user" then wantDebug = false end
-    end
-    logs.setLevel(wantDebug and "debug" or "user")
-    return wantDebug
-end
 local KINDS = {
     { prefix = "[警告]", kind = "warn" },
     { prefix = "[调度]", kind = "schedule" },
     { prefix = "[系统]", kind = "system" },
-    { prefix = "[界面]", kind = "ui" },
-    { prefix = "[调试]", kind = "debug" }
+    { prefix = "[界面]", kind = "ui" }
 }
 function logs.kindOf(text)
     local s = tostring(text)
@@ -8603,7 +8294,7 @@ function logs.kindOf(text)
     end
     return "info"
 end
-local function note(kind, text, level)
+local function note(kind, text)
     local prefix = "[" .. tostring(kind) .. "]"
     for _, item in ipairs(KINDS) do
         if item.kind == kind then
@@ -8611,36 +8302,19 @@ local function note(kind, text, level)
             break
         end
     end
-    logs.append(prefix .. " " .. tostring(text), level)
+    logs.append(prefix .. " " .. tostring(text))
 end
 function logs.warn(text) return note("warn", text) end
 function logs.schedule(text) return note("schedule", text) end
 function logs.system(text) return note("system", text) end
 function logs.ui(text) return note("ui", text) end
-local function visible(level)
-    local need = LEVEL_ORDER[level or "user"] or LEVEL_ORDER.user
-    return need <= (LEVEL_ORDER[currentLevel] or LEVEL_ORDER.user)
-end
-function logs.append(text, level)
-    local lv   = level or "user"
+function logs.append(text)
     local line = tostring(text)
-    local buf  = buffers[lv]
-    if buf then
-        buf[#buf + 1] = line
-        while #buf > maxLines do table.remove(buf, 1) end
-    end
-    local cur = buffers[currentLevel]
-    if cur and cur ~= buf and visible(lv) then
-        cur[#cur + 1] = line
-        while #cur > maxLines do table.remove(cur, 1) end
-    end
-    if not visible(level) then return end
+    lines[#lines + 1] = line
+    while #lines > maxLines do table.remove(lines, 1) end
     pending[#pending + 1] = line
     pushed = pushed + 1
     while #pending > maxPending do table.remove(pending, 1) end
-end
-function logs.debug(text)
-    return note("debug", text, "debug")
 end
 function logs.pendingLines()
     local out = {}
@@ -8651,14 +8325,12 @@ function logs.markFlushed()
     pending = {}
 end
 function logs.list()
-    local buf = buffers[currentLevel] or {}
     local out = {}
-    for i, line in ipairs(buf) do out[i] = line end
+    for i, line in ipairs(lines) do out[i] = line end
     return out
 end
 function logs.fingerprint()
-    local buf = buffers[currentLevel] or {}
-    return table.concat({ #buf, pushed, (buf[#buf] or ""), currentLevel }, "")
+    return table.concat({ #lines, pushed, (lines[#lines] or "") }, "\x1f")
 end
 return logs
 
@@ -8976,7 +8648,7 @@ resources.ITEMS = {
 return resources
 
 shared/state.lua
-7841
+8031
 local constants = require("shared.constants")
 local F = {
     facts   = { plants = {}, fluids = {}, powerMax = 0 },
@@ -8990,7 +8662,8 @@ local F = {
     chart   = { points = {} },
     net     = { enabled = false, frame = 0, warned = nil },
     tracker = {},
-    produce = { cycle = { lastProgress = nil, seq = 0 }, levels = {}, subs = {}, binds = {}, binding = nil, online = {} }
+    hostCycle = { lastProgress = nil, progressMax = nil, seq = 0 },
+    produce = { levels = {}, subs = {}, binds = {}, binding = nil, online = {} }
 }
 local state = {}
 local read  = {}
@@ -9033,6 +8706,7 @@ function read.budget()   return F.plan.budget or 0 end
 function read.chart()    return F.chart end
 function read.net()      return F.net end
 function read.tracker()  return F.tracker end
+function read.hostCycle() return F.hostCycle end
 function read.produce() return F.produce end
 function read.produceLevel(level)
     local l = F.produce.levels[level]
@@ -9146,9 +8820,12 @@ function write.produceSetSub(addr, fields)
     if not sub then return end
     for key, value in pairs(fields or {}) do sub[key] = value end
 end
-function write.produceSetCycle(fields)
-    local cycle = F.produce.cycle
-    for key, value in pairs(fields or {}) do cycle[key] = value end
+function write.setHostCycleProgress(progress, maxProgress)
+    F.hostCycle.lastProgress = progress
+    F.hostCycle.progressMax = maxProgress
+end
+function write.setHostCycle(fields)
+    for key, value in pairs(fields or {}) do F.hostCycle[key] = value end
 end
 function write.produceSetBinds(list) F.produce.binds = list or {} end
 function write.produceSetBinding(binding) F.produce.binding = binding end

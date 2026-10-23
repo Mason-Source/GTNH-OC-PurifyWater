@@ -3,7 +3,7 @@
 --------------------------------------------------------------------------------
 -- 【职责】先定**网格**（几行几列、每格坐标），再由网格派生出各面板矩形写进 `fstate.areas`
 -- 【不做什么】不画东西、不取数据
--- 【依赖】frontend/state、shared/logs
+-- 【依赖】frontend/state
 -- 【被谁用】frontend/render（boot 与分辨率变化时各调一次）；面板用 layout.cols 做列对齐
 --
 -- 【版面】无顶部标题栏，左右两列：
@@ -22,7 +22,6 @@
 --------------------------------------------------------------------------------
 
 local fstate         = require("frontend.state")
-local logs           = require("shared.logs")
 
 local layout         = {}
 
@@ -149,12 +148,6 @@ function layout.calculate()
     -- 缓冲上限与"面板能画几行"无关：内存固定留 CONFIG.LOG.MAX_LINES（超出删最前面的），
     --   面板从尾部取可见行数画
 
-    -- 布局摘要进 debug 日志：屏幕上的错位抄不回来，排错时靠这行数字。
-    logs.debug(string.format("布局 控制 %dx%d@%d,%d 状态 %dx%d@%d,%d 图表 %dx%d@%d,%d 日志 %dx%d@%d,%d",
-        fstate.areas.control.w, fstate.areas.control.h, fstate.areas.control.x, fstate.areas.control.y,
-        fstate.areas.status.w, fstate.areas.status.h, fstate.areas.status.x, fstate.areas.status.y,
-        fstate.areas.chart.w, fstate.areas.chart.h, fstate.areas.chart.x, fstate.areas.chart.y,
-        fstate.areas.log.w, fstate.areas.log.h, fstate.areas.log.x, fstate.areas.log.y))
 
     -- 版面变了：旧热区与旧指纹全部作废
     fstate.clearHitboxes()

@@ -376,12 +376,6 @@ COMMANDS.net_strength_set = function(value)
     return true, ""
 end
 
---- 切日志级别（点面板标题）
-COMMANDS.log_level_toggle = function()
-    logs.setLevel(logs.isDebug() and "user" or "debug")
-    return true, "日志级别：" .. logs.getLevel()
-end
-
 COMMANDS.quit = function()
     runtime.quit("界面退出")
     return true, "正在退出"

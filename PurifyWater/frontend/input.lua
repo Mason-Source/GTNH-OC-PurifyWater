@@ -141,7 +141,6 @@ local function applyKey(key)
     local kind = key.kind
 
     if kind == "cancel" then
-        logs.debug("退出编辑（✘）")
         clearEdit()
         return
     end
@@ -291,12 +290,6 @@ local function onClick(x, y)
     -- 命中判定与镜像端共用（frontend/viewinput）；不 invalidateAll：详情与列表是同一格位的
     --   两套内容，只让 status 的指纹变，下一帧只重画这一块。
     if viewinput.statusArea(x, y) then return end
-
-    -- 日志面板标题 -> 切 user/debug
-    if fstate.hit(fstate.logTitle, x, y) then
-        fire("log_level_toggle")
-        return
-    end
 
     -- 图表标题行的等级按钮（0 = 全部）：命中判定与镜像端共用；主端要让窗口秒数跟着重算
     if viewinput.chartChip(x, y) then

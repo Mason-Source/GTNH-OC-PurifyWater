@@ -7,7 +7,6 @@
 
 local CONFIG    = require("shared.config")
 local constants = require("shared.constants")
-local logs      = require("shared.logs")
 local state     = require("shared.state")
 
 local produce   = require("backend.domain.produce")
@@ -36,13 +35,8 @@ end
 
 --- 刷新单级 valid 状态
 function readiness.refreshLevel(level)
-    local prevValid = state.read.produceLevel(level).valid == true
     local ok, reason, units = readiness.evaluate(level)
     state.write.produceSetLevel(level, { valid = ok, validReason = reason or "" })
-    if prevValid ~= ok then
-        logs.debug(string.format("%s 制作自动化%s：%s", constants.levelLabel(level),
-            ok and "已就绪" or "未就绪", tostring(reason or "-")))
-    end
     return ok, reason, units
 end
 

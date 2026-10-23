@@ -17,7 +17,6 @@
 
 local fstate        = require("frontend.state")
 local theme         = require("frontend.theme")
-local computer      = require("computer")
 local layout        = require("frontend.layout")
 local CONFIG        = require("shared.config")
 local logs          = require("shared.logs")
@@ -32,7 +31,6 @@ local logPanel      = require("frontend.panels.log")
 local render        = {}
 local inputModule   = nil
 local viewmodel     = nil
-local firstFrame    = true
 
 -- 面板注册表：一个面板 = 一个"画" + 一个"指纹"
 -- 【详情不在这一层】单级详情是"净水状态面板换了个内容"（同一格位、同一矩形）：
@@ -111,14 +109,10 @@ end
 
 --- 取 gpu、按配置调分辨率、算布局（主端与镜像端共用；不接输入）
 function render.setup()
-    local started = computer.uptime()
     fstate.gpu = require("component").gpu
     render.applyResolution()
     layout.calculate()
     fstate.invalidateAll()
-    if logs.isDebug() then
-        logs.debug(string.format("前端 setup：%.3f 秒", computer.uptime() - started))
-    end
 end
 
 --- 订阅输入事件（**只有主端调**；镜像端不加载 input）
@@ -182,17 +176,10 @@ end
 -- 取数据在前：指纹比较要用这一帧的数据，必须同帧一致
 function render.frame()
     -- 主端专用：镜像端用自己的收帧循环，不走这里（懒加载 = 镜像端不拉 backend/api）
-    local started = firstFrame and computer.uptime() or nil
     viewmodel = viewmodel or require("frontend.viewmodel")
     local data = viewmodel.build()
     fstate.lastData = data
     render.renderAll()
-    if started then
-        if logs.isDebug() then
-            logs.debug(string.format("前端首帧：%.3f 秒", computer.uptime() - started))
-        end
-        firstFrame = false
-    end
 end
 
 return render

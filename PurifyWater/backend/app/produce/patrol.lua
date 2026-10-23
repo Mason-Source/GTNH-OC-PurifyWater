@@ -19,7 +19,6 @@ local transposer = require("backend.hardware.transposer")
 
 local patrol = {}
 
-local MISSING_DETAIL_WIDTH = 64
 local FORCE_REASON_WIDTH   = 48
 
 --- “任意一种”需求按库存选最大者
@@ -104,31 +103,9 @@ local function configure(machine, sub, method, changed)
     end
     local ok, reason, config = sides.configure(machine, sub, requiredFluids, requiredItems)
     if ok and config then
-        local names, itemNames = {}, {}
-        for _, side in ipairs(config.sources or {}) do
-            names[#names + 1] = utils.sideLabel(side)
-        end
-        for _, side in ipairs(config.itemSources or {}) do
-            itemNames[#itemNames + 1] = utils.sideLabel(side)
-        end
-        local itemText = config.itemTarget
-            and string.format("；物品输出=%s，物品输入=%s",
-                utils.sideLabel(config.itemTarget),
-                (#itemNames > 0) and table.concat(itemNames, "/") or "-")
-            or ""
-        logs.debug(string.format("%s 制作自动化：侧位配置完成（机器 %s）：流体输出=%s，流体输入=%s%s",
-            constants.levelLabel(sub.level), binding.machineTextOf(sub.level, machine),
-            config.target and utils.sideLabel(config.target) or "-",
-            (#names > 0) and table.concat(names, "/") or "-", itemText))
         return true
     end
-    local prev = sub.sideFail
     state.write.produceSetSub(machine, { sideFail = reason })
-    if prev ~= reason then
-        logs.debug(string.format("%s 制作自动化：侧位配置失败——%s（机器 %s）",
-            constants.levelLabel(sub.level), tostring(reason),
-            binding.machineTextOf(sub.level, machine)))
-    end
     return changed
 end
 
@@ -137,8 +114,6 @@ local function reconfigureIfMoved(machine, sub, requiredItems)
     local signature = sides.layoutSignature(sub, requiredItems ~= nil and #requiredItems > 0)
     if sub.layout ~= nil and signature ~= sub.layout then
         sides.clear(machine)
-        logs.debug(string.format("%s 制作自动化：容器方位变化，触发重新配置（机器 %s）",
-            constants.levelLabel(sub.level), binding.machineTextOf(sub.level, machine)))
         return true
     end
     return false
@@ -164,8 +139,6 @@ local function checkMachine(machine, sub, method, changed)
                 logs.warn(string.format("%s 制作自动化：原料不足，已强制关断（机器 %s）",
                     constants.levelLabel(sub.level), binding.machineTextOf(sub.level, machine)))
             end
-            logs.debug(string.format("%s 制作自动化：原料不足明细——%s",
-                constants.levelLabel(sub.level), utils.joinLimited(miss, MISSING_DETAIL_WIDTH)))
             local requiredItems = interface.requiredItems(method)
             if reconfigureIfMoved(machine, sub, requiredItems) then changed = true end
             local forceReason = "原料不足：" .. utils.joinLimited(miss, FORCE_REASON_WIDTH)

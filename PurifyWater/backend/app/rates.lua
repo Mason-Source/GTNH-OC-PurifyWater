@@ -158,7 +158,6 @@ end
 
 --- 权重 / T7 倍率变化（命令或启动读入两条来源汇到这里）
 function app.onRatesChanged(payload)
-    logs.debug(tostring(payload and payload.why or "速率配置已更新"))
     -- 生效性门：这两个输入只在速率模式生效；不生效只保存，不动运行时
     if not system.effectiveConfig().weight then return end
     afterSuggestChange(payload and payload.why or "权重变化")

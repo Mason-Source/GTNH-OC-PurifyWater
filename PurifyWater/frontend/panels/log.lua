@@ -9,7 +9,6 @@
 -- 不带时间戳：os.time 是游戏内时间，对日志无意义。
 --------------------------------------------------------------------------------
 
-local unicode = require("unicode")
 local fstate  = require("frontend.state")
 local theme   = require("frontend.theme")
 local widgets = require("frontend.widgets")
@@ -22,20 +21,13 @@ function log.draw(data)
     local rows       = widgets.textAreaRows(area, 1)
     local maxW       = area.w - 3
     local ro         = fstate.readOnly == true
-    local title      = ro and " 系统日志（只读） "
-        or string.format(" 系统日志（%s）点这里切换 ", logs.getLevel())
-
-    -- 标题即按钮：点击切 user/debug（镜像端不登记）
-    if not ro then
-        fstate.logTitle  = { x = area.x + 1, y = area.y + 1, w = unicode.wlen(title), h = 1 }
-    end
+    local title      = ro and " 系统日志（只读） " or " 系统日志 "
 
     -- ① 框+标题：几何/边框色/级别变才重画
     local frameDirty = fstate.subDirty("log", "frame", table.concat({ area.x, area.y, area.w, area.h,
-        tostring(data.system.priority), logs.getLevel() }, ":"))
+        tostring(data.system.priority) }, ":"))
     if frameDirty then
-        widgets.drawPanelFrame(area, title,
-            logs.isDebug() and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_CYAN,
+        widgets.drawPanelFrame(area, title, theme.COLORS.TEXT_CYAN,
             theme.borderColor(data.system.priority == "high"))
     end
 
@@ -72,7 +64,7 @@ function log.draw(data)
 end
 
 --- 指纹：logs.fingerprint() + 尺寸 + 边框色依据
--- 级别与宽高都必须进指纹。
+-- 宽高必须进指纹。
 function log.fingerprint(data)
     local area = fstate.areas.log
     local all  = data.logs or {}

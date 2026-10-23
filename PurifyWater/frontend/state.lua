@@ -32,7 +32,6 @@ local fstate = {
     detailLevel    = nil,                      -- 非 nil = 净水状态面板正显示这一级的详情（点任意处返回）
     chartLevel     = 0,                        -- 0 = 全部（柱状图）｜ 1..8 = 单级（2 游戏日曲线）
     chartChips     = {},                       -- 图表标题行的等级按钮热区 { [level] = {x,y,w,h} }，level 0 = 全部
-    logTitle       = nil,                      -- 日志面板标题热区（点它切 user/debug）
     autostartRow   = nil,                      -- 配置页「运行设置」子项行热区（点它切开机自启）
     -- 配置页「调度配置」大表：点某一格选中 -> 表格下方的固定键盘槽换成那一列自己的键盘
     cells          = {},                       -- 每格热区 { [level] = { enabled=, threshold=, weight=, boost= } }
@@ -82,7 +81,6 @@ function fstate.clearHitboxes()
     fstate.buttons, fstate.tabs, fstate.chartChips = {}, {}, {}
     fstate.cells, fstate.keys, fstate.produceHits = {}, {}, {}
     fstate.levelRows = {}
-    fstate.logTitle = nil
     fstate.autostartRow = nil
     fstate.factorCell = nil
     fstate.strengthCell = nil

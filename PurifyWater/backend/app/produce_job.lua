@@ -25,23 +25,10 @@ local function newContext(machine, sub)
         sources = {},
         itemSource = nil,
         itemReturnSide = nil,
-        trace = { order = {}, byKey = {} },
         limit = math.max(1, math.floor((tonumber(sub.rate) or 0)
             * (tonumber(CONFIG.PRODUCE.CHUNK_RATIO) or 0.05)))
     }
 
-    local function recordTransfer(kind, name, label, amount)
-        amount = math.floor(tonumber(amount) or 0)
-        if amount <= 0 then return end
-        local key = kind .. ":" .. tostring(name)
-        local entry = ctx.trace.byKey[key]
-        if not entry then
-            entry = { kind = kind, label = label or name, amount = 0 }
-            ctx.trace.byKey[key] = entry
-            ctx.trace.order[#ctx.trace.order + 1] = entry
-        end
-        entry.amount = entry.amount + amount
-    end
 
     ctx.sensor = function()
         local result = ctx.action({ kind = "sensor" })
@@ -91,7 +78,6 @@ local function newContext(machine, sub)
                 return false, string.format("%s 转运不完整：%d/%d mB（%s）",
                     label, moved, request, result and result.reason or "失败")
             end
-            recordTransfer("fluid", fluid, label, moved)
             remaining = remaining - moved
             source.amount = source.amount - moved
             source.available = source.available - moved
@@ -142,8 +128,6 @@ local function newContext(machine, sub)
                 return false, result and result.reason
                     or ((required.label or required.name) .. " 转运失败")
             end
-            recordTransfer("item", required.name .. ":" .. (tonumber(required.damage) or 0),
-                required.label or required.name, moved)
             remaining = remaining - moved
             source.count = source.count - moved
             if source.count <= 0 then source, ctx.itemSource = nil, nil end
@@ -163,8 +147,6 @@ local function newContext(machine, sub)
         end
         local moved = tonumber(result.moved) or 0
         if moved <= 0 then return false, "物品未移动" end
-        recordTransfer("item", required.name .. ":" .. (tonumber(required.damage) or 0),
-            required.label or required.name, moved)
         return true, nil
     end
 
@@ -173,11 +155,6 @@ local function newContext(machine, sub)
         local result = ctx.action({ kind = "recoverTarget" })
         if not result or not result.ok then
             return false, result and result.reason or "目标侧残留回收失败"
-        end
-        for _, item in ipairs(result.moved or {}) do
-            recordTransfer("item",
-                item.name .. ":" .. (tonumber(item.damage) or 0),
-                item.label or item.name, item.amount)
         end
         return true, nil
     end

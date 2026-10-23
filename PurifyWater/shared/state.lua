@@ -23,7 +23,8 @@ local F = {
     chart   = { points = {} },
     net     = { enabled = false, frame = 0, warned = nil },
     tracker = {},
-    produce = { cycle = { lastProgress = nil, seq = 0 }, levels = {}, subs = {}, binds = {}, binding = nil, online = {} }
+    hostCycle = { lastProgress = nil, progressMax = nil, seq = 0 },
+    produce = { levels = {}, subs = {}, binds = {}, binding = nil, online = {} }
 }
 
 local state = {}
@@ -75,7 +76,10 @@ function read.chart()    return F.chart end
 function read.net()      return F.net end
 function read.tracker()  return F.tracker end
 
---- 制作自动化：周期钟 + 各级配置 + 子系统表（原始引用；只读约定）
+--- 主机周期钟（中性数据；produce / tracker / 调度共同消费）
+function read.hostCycle() return F.hostCycle end
+
+--- 制作自动化：各级配置 + 子系统表（原始引用；只读约定）
 function read.produce() return F.produce end
 
 --- 制作自动化的某级配置（缺省：未启用、未就绪）
@@ -233,10 +237,15 @@ function write.produceSetSub(addr, fields)
     for key, value in pairs(fields or {}) do sub[key] = value end
 end
 
---- produce：T0 周期钟（lastProgress / seq）
-function write.produceSetCycle(fields)
-    local cycle = F.produce.cycle
-    for key, value in pairs(fields or {}) do cycle[key] = value end
+--- 主机周期进度（host_cycle 每次采样原地更新）
+function write.setHostCycleProgress(progress, maxProgress)
+    F.hostCycle.lastProgress = progress
+    F.hostCycle.progressMax = maxProgress
+end
+
+--- 主机周期钟（host_cycle 唯一写入口）
+function write.setHostCycle(fields)
+    for key, value in pairs(fields or {}) do F.hostCycle[key] = value end
 end
 
 --- produce：绑定表（数组；只由 app/produce 整表替换：{ {level=, machine=, transposer=}, ... }）

@@ -27,10 +27,9 @@ CONFIG.INTERVAL                  = {
     OBSERVE   = 5,  -- T3 读开关/运行；在运行的读传感器
     SCHEDULE  = 5,  -- T4 贪心调度
     PERSIST   = 30, -- T5 落盘（抽曲线点 + 写历史/日志）
-    SAMPLE    = 1,  -- T6 内存采样（仅 --debug 注册）
     BROADCAST = 1,  -- T7 无线广播（门控：总开关 + 网卡在位）
-    PRODUCE   = 1,  -- T8 制作自动化（绑定检测 + T0 周期钟；只有"绑定中"才枚举转运器）
-    PRODUCE_RUNTIME = 0.5 -- 制作自动化 operation runtime（空队列时只扫一个小表）
+    PRODUCE   = 1,  -- T8 制作自动化（绑定检测；周期由 host_cycle 通知；只有"绑定中"才枚举转运器）
+    PRODUCE_RUNTIME = 0.5 -- 制作任务 runtime（空队列时只扫一个小表）
 }
 
 -- ---- 界面（可调） ----
@@ -125,7 +124,6 @@ CONFIG.SYSTEM                    = {
 
 -- ---- 日志 ----
 CONFIG.LOG                       = {
-    LEVEL      = "user", -- user | debug（--debug 打开）
     -- 内存只留 MAX_LINES 行；超出删最前。
     MAX_LINES  = 10,
     -- 盘上 data/log.txt 保留行数（T5 追加并裁到上限）。

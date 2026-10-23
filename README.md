@@ -72,7 +72,6 @@ installer_core.lua
 ```bash
 cd PurifyWater
 main.lua            # 主控端（按 Q 退出）
-main.lua --debug    # 打开调度/采样细节
 monitor.lua [端口]  # 镜像端（等控制端开了【无线广播】再跑；Q 退出）
 ```
 
@@ -106,4 +105,4 @@ GTNH 2.8.4以上； OpenComputers：T3机箱 T3显示屏 T3APU（=T4CPU+T3显卡
 
 内存实测：**2048K（2MB）稳定** —— 1024K 能启动，但半小时内会崩；
 
-内存诊断（`内存基线` / `可用 / 地板 / 峰值`）带 `--debug` 跑：
+内存诊断（`内存基线` / `可用 / 地板 / 峰值`）只在 `debugTools` 分支提供；发布线不加载任何诊断模块。

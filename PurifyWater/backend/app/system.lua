@@ -90,7 +90,7 @@ function system.resetSuggestBaseline()
     state.write.setBaseline(power.suggestVector())
 end
 
---- 建议相对会话基线变化 -> 停会话 + 等待用户（明细进 debug）
+--- 建议相对会话基线变化 -> 停会话 + 等待用户
 -- 只比整数建议；无基线只记。唯一调用者 requestPlan 已先过"运行中"闸。
 -- @return boolean 是否因此进入等待（true = 调用方本轮不要再排计划）
 function system.checkSuggestionChange()
@@ -111,13 +111,6 @@ function system.checkSuggestionChange()
 
     state.write.setBaseline(now)
 
-    local texts = {}
-    for _, item in ipairs(changed) do
-        texts[#texts + 1] = string.format("%s %s→%s", constants.levelLabel(item.level),
-            tostring(item.from), tostring(item.to))
-    end
-    logs.debug("建议并行变化（等待用户）：" .. table.concat(texts, "、"))
-
     system.enterAwaiting("建议并行已变化", true, "请按新建议调好机器并行，再点【启动系统】")
     return true
 end
@@ -125,10 +118,9 @@ end
 --- 检查"一次性提示"（阈值低于保供线 / 全 0 / 速率模式备注…）
 -- 文本/指纹/整块提示由模式给；只报一次哨兵在此。
 function system.auditThresholds()
-    local texts, signature, warnText, debugTexts = mode.audit()
+    local texts, signature, warnText = mode.audit()
     texts     = texts or {}
     signature = signature or ""
-    debugTexts = debugTexts or {}
 
     if warnText then
         if warnText ~= lastZeroWarn then
@@ -142,7 +134,6 @@ function system.auditThresholds()
     if signature == lastWarnSig then return end
     lastWarnSig = signature
     for _, text in ipairs(texts) do logs.warn(text) end
-    for _, text in ipairs(debugTexts) do logs.debug(text) end
 end
 
 --- 清空本轮并行学习与采样确认器

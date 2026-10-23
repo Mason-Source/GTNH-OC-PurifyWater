@@ -79,13 +79,12 @@ function rate.order()
     return state.priorityOrder()
 end
 
---- 审计数据（文本 + 指纹 + 整块提示 + debug 文本；只算不写日志）
+--- 审计数据（文本 + 指纹 + 整块提示；只算不写日志）
 -- @return table texts        user 级（logs.warn）
 -- @return string signature   指纹：文案不变就不重复报
 -- @return string|nil warnText 整块提示（"全 0"/"T1 未部署"这类；只报一次）
--- @return table debugTexts   debug 级明细（取整收紧这类，不刷 user）
 function rate.audit()
-    local texts, sigs, debugTexts = {}, {}, {}
+    local texts, sigs = {}, {}
 
     -- 受阈值约束时沿用阈值模式提示
     if state.read.enforceThreshold() then
@@ -100,12 +99,6 @@ function rate.audit()
         if note.kind == "too_small" then
             texts[#texts + 1] = string.format(
                 "速率模式：功率不足，%s 按比例分不到 1 并行（本轮不开）", label)
-        elseif note.kind == "trimmed" then
-            -- 取整收紧，只进 debug
-            debugTexts[#debugTexts + 1] = string.format(
-                "速率模式：%s 建议并行 %s → %s（上游 %s 供给不足）",
-                label, tostring(note.from), tostring(note.to),
-                constants.levelLabel(math.max(1, note.level - 1)))
         end
         sigs[#sigs + 1] = string.format("%s:%d", note.kind, note.level)
     end
@@ -118,7 +111,7 @@ function rate.audit()
     elseif state.read.enforceThreshold() and not rules.hasPositiveThreshold() then
         warnText = "速率模式：用户阈值全为 0，按低保线执行（请到配置页设置阈值）"
     end
-    return texts, table.concat(sigs, "|"), warnText, debugTexts
+    return texts, table.concat(sigs, "|"), warnText
 end
 
 return rate

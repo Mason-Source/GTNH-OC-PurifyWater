@@ -1,13 +1,12 @@
 --------------------------------------------------------------------------------
 -- core/bootstrap.lua
 --------------------------------------------------------------------------------
--- 【职责】启动前清旧模块缓存、解析参数、拼版本戳；退出前交还屏幕
+-- 【职责】启动前清旧模块缓存、拼版本戳；退出前交还屏幕
 -- 【不做什么】不注册任务、不建事件循环、不碰硬件
--- 【依赖】shared/{logs,constants}
+-- 【依赖】shared/constants
 -- 【被谁用】main.lua / monitor.lua
 --------------------------------------------------------------------------------
 
-local logs         = require("shared.logs")
 local constants    = require("shared.constants")
 
 local bootstrap    = {}
@@ -34,11 +33,6 @@ function bootstrap.clearModuleCache(prefixes)
     return removed
 end
 
---- 解析命令行参数（目前只有日志级别，见 logs.applyArgs）
--- @param args table 参数数组
-function bootstrap.applyArgs(args)
-    logs.applyArgs(args or {})
-end
 
 --- 退出前把屏幕交还 shell：整屏刷黑 + 光标回左上
 -- 界面直接画在 gpu，shell 不知道屏幕被占过，退出信息会压在残影上，先清一次。
@@ -62,11 +56,10 @@ end
 
 -- OC 无 collectgarbage；内存控制靠少造垃圾、少留数据。
 
---- 内核版本戳：vX.Y；--debug 加 -debug 后缀。
--- 后缀依赖日志级别，故在此拼（constants 不能 require logs）。
+--- 内核版本戳：vX.Y。
 -- @return string
 function bootstrap.version()
-    return constants.CODE_VERSION .. (logs.isDebug() and "-debug" or "")
+    return constants.CODE_VERSION
 end
 
 --- 启动日志第一行（前缀由 logs 统一加）

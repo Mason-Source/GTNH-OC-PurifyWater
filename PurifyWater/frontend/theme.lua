@@ -44,7 +44,6 @@ theme.LOG_COLORS = {
     schedule = 0x38bdf8, -- [调度] 调度与判定
     system   = 0xe2e8f0, -- [系统] 状态变化
     ui       = 0x64748b, -- [界面] 操作回执 / 被拒原因
-    debug    = 0x64748b, -- [调试] debug 细节
     info     = 0xe2e8f0  -- 没前缀的普通行
 }
 

@@ -71,7 +71,6 @@ function plan.run(reason)
     for level, err in pairs(failed or {}) do
         badNames[#badNames + 1] = constants.levelLabel(level)
         state.write.deleteLastPlanLevel(level)
-        logs.debug(string.format("%s 下发失败：%s", constants.levelLabel(level), tostring(err)))
     end
     if #badNames > 0 then
         table.sort(badNames)

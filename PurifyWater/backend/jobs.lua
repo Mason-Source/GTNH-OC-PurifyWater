@@ -4,11 +4,11 @@
 -- 【职责】**定时任务表**：注册所有周期任务，每个任务只做一小步（不许 sleep / 长跑）
 -- 【不做什么】不含状态机判断——采集任务只做"读事实 -> 写快照 -> emit 事件"；
 --             下发只有 plan.run 一条路（T4 经 system.requestPlan），落盘集中在 store/*（T5）。
--- 【依赖】core/scheduler、shared/*、backend/hardware/*、backend/store/*、backend/debug/memwatch（仅 --debug）
+-- 【依赖】core/scheduler、shared/*、backend/hardware/*、backend/store/*
 -- 【被谁用】main.lua（启动时调 jobs.register()）
 --
 -- 任务清单见 ARCHITECTURE.md §3：T1 硬件(10s) / T2 水位(5s) / T3 观测(5s) /
--- T4 调度(5s) / T5 落盘(30s) / T6 内存(1s, --debug) / T7 广播(1s) / T8 制作自动化(1s) / operation runtime(0.5s)；
+-- T4 调度(5s) / T5 落盘(30s) / T7 广播(1s) / T8 制作自动化(1s) / operation runtime(0.5s)；
 -- T2s 设置对账只在启动时跑一次（不再周期扫描 settings.txt）。
 --------------------------------------------------------------------------------
 
@@ -18,7 +18,6 @@ local CONFIG           = require("shared.config")
 local constants        = require("shared.constants")
 local logs             = require("shared.logs")
 local state            = require("shared.state")
-local utils            = require("shared.utils")
 
 local device           = require("backend.hardware.device")
 local machines         = require("backend.hardware.machines")
@@ -34,6 +33,7 @@ local history          = require("backend.store.history")
 local log_file         = require("backend.store.log_file")
 local system           = require("backend.app.system")
 local produceApp       = require("backend.app.produce")
+local hostCycle        = require("backend.domain.host_cycle")
 
 local jobs             = {}
 
@@ -52,9 +52,6 @@ local last             = {
 -- 不用 computer.uptime() 当时长：那是机器开机时长，跨程序重启不清零。
 local startedAt        = computer.uptime()
 
--- 内存观测模块句柄（仅 --debug 装载）
-local memwatch         = nil
-
 --- 本次运行了多少秒（从 require 本模块算起）
 -- @return number
 function jobs.elapsed()
@@ -64,8 +61,6 @@ end
 --- 上次采集摘要
 -- @return table
 function jobs.last() return last end
-
--- 内存观测整套在 backend/debug/memwatch，仅 --debug 注册 T6。
 
 --------------------------------------------------------------------------------
 -- T1 硬件扫描（10 秒）：机器 + 能量仓 + ME 接口 + 拓扑清单
@@ -138,10 +133,6 @@ function jobs.scanHardware(skipProducePatrol)
     end
     last.powerBefore = totalPower
 
-    logs.debug(string.format("硬件扫描 #%d：主机 %d、单元 %d、能量仓 %s、网卡 %s、其它 %d、总功率 %s、缺失 %s",
-        last.scanCount, summary.host, summary.unitTotal, hatch and hatch.name or "无",
-        device.net() and "有" or "无", summary.other,
-        utils.formatNumber(totalPower), (#missing > 0 and table.concat(missing, "/") or "无")))
 end
 
 --------------------------------------------------------------------------------
@@ -192,7 +183,7 @@ end
 --------------------------------------------------------------------------------
 -- T3 开关与运行状态（5 秒）：T0-8
 -- 【只报事实】每级一行 `plant_observed`（开关/在跑台数 + **读这一刻该级的方案**）
---   + 在跑的每台一条 `parallel_sample`。
+--   + 周期开始后的首次观测，对在跑的每台采样一次并随 `host_cycle_started` 发布。
 --   "开关变了没有"（边沿）、"偏离方案没有"（判定）、"该不该警告"（后果）
 --   全部在 backend/app/watch.lua —— 这里只管读，不管判断。
 --   方案值必须随事实走：判断层不许自己另取（读数与判定之间可能刚下发过新方案）。
@@ -200,8 +191,6 @@ end
 
 
 function jobs.observePlants()
-    local samples, runningTotal = 0, 0
-
     -- 【主机停机 -> 不读机器配置】主机是总开关：它关着的时候单元的进度/传感器既无意义也不会变，
     --   跳过它们能省下一半以上的组件调用。开关（switch/active）照读：既要上屏，
     --   也是判断"主机重新开机"的唯一依据。值在 level 0 那一轮读完后填上（主机最先读）。
@@ -210,6 +199,8 @@ function jobs.observePlants()
     --   是每轮 2×机器数 次白费调用；主机自己报这个数，读一次够用。它只有两个去处：
     --   进主机快照（界面周期条）与交给 tracker 判周期边界 —— T1-8 不记进度。
     local hostProgress, hostProgressMax
+    local cycleStarted, cycleSeq, cycleRatio
+    local cycleSamples
     -- 【发布粒度】台数变了几级都只算"这一轮变过"：整轮观测结束后统一发一条事实，
     --   避免逐级发事件（循环中途 top 逐级增长，会连打出 T1-3→T1-8 那种一串）
     local deployedLevels = {}
@@ -234,8 +225,12 @@ function jobs.observePlants()
             -- 进度只在主机这一轮读；主机开关关着时不用读（进度不会变，读了也没意义）
             if level == constants.HOST_LEVEL and sw ~= false then
                 hostProgress, hostProgressMax = probes.progress(machine.address)
-                -- 制作自动化：周期边界检测（复用这次全局周期读数；只做边沿判定）
-                produceApp.onCycleProgress(hostProgress, hostProgressMax)
+                -- 中性主机周期边沿检测：后续统一发布 host_cycle_started。
+                local started, seq, ratio = hostCycle.observe(hostProgress, hostProgressMax)
+                if started then
+                    cycleStarted, cycleSeq, cycleRatio = true, seq, ratio
+                    cycleSamples = {}
+                end
             end
             -- 逐台原始读数（后面读传感器时还会往里补 success）
             local fact = { address = machine.address, switch = sw, active = act }
@@ -263,15 +258,14 @@ function jobs.observePlants()
                     fact.success  = success
                     if not minSample or value < minSample then minSample = value end
                     if success and (not minSuccess or success < minSuccess) then minSuccess = success end
-                    samples = samples + 1
-                    -- seq 一起带上：tracker 按 produce 周期钟确认并行（周期号变化 = 新周期）
-                    scheduler.emit("parallel_sample", {
-                        level    = level,
-                        address  = machine.address,
-                        parallel = value,
-                        success  = success,
-                        seq      = state.read.produce().cycle.seq
-                    })
+                    if cycleStarted then
+                        cycleSamples[#cycleSamples + 1] = {
+                            level    = level,
+                            address  = machine.address,
+                            parallel = value,
+                            success  = success
+                        }
+                    end
                 end
             end
         end
@@ -307,7 +301,6 @@ function jobs.observePlants()
             fields.progressMax = hostProgressMax
         end
         state.write.recordPlant(level, fields)
-        runningTotal = runningTotal + running
 
         if level == constants.HOST_LEVEL then
             -- 主机的总开关决定后面几级要不要读“机器配置”（见函数开头说明）
@@ -328,7 +321,13 @@ function jobs.observePlants()
         scheduler.emit("deployed_changed", { levels = deployedLevels })
     end
 
-    logs.debug(string.format("观测：单元在跑 %d 台，本轮采样 %d 条", runningTotal, samples))
+    if cycleStarted then
+        scheduler.emit("host_cycle_started", {
+            seq = cycleSeq,
+            ratio = cycleRatio,
+            samples = cycleSamples
+        })
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -350,15 +349,14 @@ end
 --------------------------------------------------------------------------------
 
 function jobs.persist()
-    if memwatch then memwatch.watch(jobs.elapsed()) end -- 退出/落盘前看一眼余量（仅 --debug）
     history.append()
 
     local ok, text = history.save()
-    if not ok then logs.debug("T5 写历史失败：" .. tostring(text)) end
+    if not ok then logs.warn("T5 写历史失败：" .. tostring(text)) end
 
     -- 日志：把内存里还没落盘的新行追加进 data/log.txt（没有新行就一次盘都不碰）
     local okLog, logNote = log_file.flush()
-    if not okLog then logs.debug("T5 写日志失败：" .. tostring(logNote)) end
+    if not okLog then logs.warn("T5 写日志失败：" .. tostring(logNote)) end
 end
 
 --------------------------------------------------------------------------------
@@ -381,11 +379,6 @@ function jobs.register()
     add("produce", CONFIG.INTERVAL.PRODUCE, produceApp.tick)          -- T8
     add("produce_runtime", CONFIG.INTERVAL.PRODUCE_RUNTIME,
         function() return require("backend.app.produce_runtime").tick() end) -- 制作自动化 operation 调度
-    -- T6 内存观测：仅 --debug 装模块、注册任务。
-    if logs.isDebug() then
-        memwatch = require("backend.debug.memwatch")
-        add("sampleMemory", CONFIG.INTERVAL.SAMPLE, memwatch.sample) -- T6
-    end
     -- T7 广播在 main.lua 注册（它需要 api 提供的快照来源，放这里会环依赖）
 
     -- 首次采集不必等 10 秒：注册后立刻各跑一次，屏幕马上有数据

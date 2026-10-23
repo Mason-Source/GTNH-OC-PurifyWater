@@ -198,9 +198,6 @@ function produceApp.read() return view.read() end
 
 --- 周期门控转发
 function produceApp.syncJobs() return jobsApp().sync() end
-function produceApp.onCycleProgress(progress, maxProgress)
-    return jobsApp().onCycleProgress(progress, maxProgress)
-end
 function produceApp.onCycleStarted(payload) return jobsApp().onCycleStarted(payload) end
 
 --- T8：绑定中转运器检测

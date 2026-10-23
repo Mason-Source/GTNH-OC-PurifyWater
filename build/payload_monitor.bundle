@@ -1,7 +1,6 @@
-PW1	role=monitor	version=v5.3	count=24
+PW1	role=monitor	version=v5.3.2	count=24
 core/bootstrap.lua
-1441
-local logs         = require("shared.logs")
+1288
 local constants    = require("shared.constants")
 local bootstrap    = {}
 local OWN_PREFIXES = { "core.", "shared.", "backend", "frontend" }
@@ -19,9 +18,6 @@ function bootstrap.clearModuleCache(prefixes)
     end
     return removed
 end
-function bootstrap.applyArgs(args)
-    logs.applyArgs(args or {})
-end
 function bootstrap.releaseConsole()
     local okComp, component = pcall(require, "component")
     if okComp and type(component) == "table" and component.gpu then
@@ -37,7 +33,7 @@ function bootstrap.releaseConsole()
     end
 end
 function bootstrap.version()
-    return constants.CODE_VERSION .. (logs.isDebug() and "-debug" or "")
+    return constants.CODE_VERSION
 end
 function bootstrap.versionLine()
     return "内核版本 " .. bootstrap.version()
@@ -498,9 +494,8 @@ end
 return M
 
 frontend/layout.lua
-4384
+3834
 local fstate         = require("frontend.state")
-local logs           = require("shared.logs")
 local layout         = {}
 layout.TAB_H         = 1
 layout.CONTROL_H     = 18
@@ -591,11 +586,6 @@ function layout.calculate()
     fstate.areas.config   = { x = configX, y = bodyY, w = configW, h = configH }
     fstate.areas.keypad   = { x = innerX, y = keypadY, w = innerW, h = keypadH }
     fstate.areas.settings = { x = configX, y = settingsY, w = configW, h = settingsH }
-    logs.debug(string.format("布局 控制 %dx%d@%d,%d 状态 %dx%d@%d,%d 图表 %dx%d@%d,%d 日志 %dx%d@%d,%d",
-        fstate.areas.control.w, fstate.areas.control.h, fstate.areas.control.x, fstate.areas.control.y,
-        fstate.areas.status.w, fstate.areas.status.h, fstate.areas.status.x, fstate.areas.status.y,
-        fstate.areas.chart.w, fstate.areas.chart.h, fstate.areas.chart.x, fstate.areas.chart.y,
-        fstate.areas.log.w, fstate.areas.log.h, fstate.areas.log.x, fstate.areas.log.y))
     fstate.clearHitboxes()
     fstate.invalidateAll()
 end
@@ -983,8 +973,7 @@ end
 return detail
 
 frontend/panels/log.lua
-2354
-local unicode = require("unicode")
+2059
 local fstate  = require("frontend.state")
 local theme   = require("frontend.theme")
 local widgets = require("frontend.widgets")
@@ -995,16 +984,11 @@ function log.draw(data)
     local rows       = widgets.textAreaRows(area, 1)
     local maxW       = area.w - 3
     local ro         = fstate.readOnly == true
-    local title      = ro and " 系统日志（只读） "
-        or string.format(" 系统日志（%s）点这里切换 ", logs.getLevel())
-    if not ro then
-        fstate.logTitle  = { x = area.x + 1, y = area.y + 1, w = unicode.wlen(title), h = 1 }
-    end
+    local title      = ro and " 系统日志（只读） " or " 系统日志 "
     local frameDirty = fstate.subDirty("log", "frame", table.concat({ area.x, area.y, area.w, area.h,
-        tostring(data.system.priority), logs.getLevel() }, ":"))
+        tostring(data.system.priority) }, ":"))
     if frameDirty then
-        widgets.drawPanelFrame(area, title,
-            logs.isDebug() and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_CYAN,
+        widgets.drawPanelFrame(area, title, theme.COLORS.TEXT_CYAN,
             theme.borderColor(data.system.priority == "high"))
     end
     local all       = data.logs or {}
@@ -1220,10 +1204,9 @@ end
 return tabbar
 
 frontend/render.lua
-5008
+4524
 local fstate        = require("frontend.state")
 local theme         = require("frontend.theme")
-local computer      = require("computer")
 local layout        = require("frontend.layout")
 local CONFIG        = require("shared.config")
 local logs          = require("shared.logs")
@@ -1236,7 +1219,6 @@ local logPanel      = require("frontend.panels.log")
 local render        = {}
 local inputModule   = nil
 local viewmodel     = nil
-local firstFrame    = true
 local PANELS        = {
     tabBar   = { draw = tabBarPanel.draw, fingerprint = tabBarPanel.fingerprint },
     control  = { draw = controlPanel.draw, fingerprint = controlPanel.fingerprint },
@@ -1292,14 +1274,10 @@ function render.restoreResolution()
     end
 end
 function render.setup()
-    local started = computer.uptime()
     fstate.gpu = require("component").gpu
     render.applyResolution()
     layout.calculate()
     fstate.invalidateAll()
-    if logs.isDebug() then
-        logs.debug(string.format("前端 setup：%.3f 秒", computer.uptime() - started))
-    end
 end
 function render.bindInput()
     local function dispatch(name, payload)
@@ -1340,22 +1318,15 @@ function render.renderAll(forceAll)
     fstate.render.forceAll = false
 end
 function render.frame()
-    local started = firstFrame and computer.uptime() or nil
     viewmodel = viewmodel or require("frontend.viewmodel")
     local data = viewmodel.build()
     fstate.lastData = data
     render.renderAll()
-    if started then
-        if logs.isDebug() then
-            logs.debug(string.format("前端首帧：%.3f 秒", computer.uptime() - started))
-        end
-        firstFrame = false
-    end
 end
 return render
 
 frontend/state.lua
-1751
+1699
 local fstate = {
     gpu            = nil,
     W              = 0,
@@ -1369,7 +1340,6 @@ local fstate = {
     detailLevel    = nil,
     chartLevel     = 0,
     chartChips     = {},
-    logTitle       = nil,
     autostartRow   = nil,
     cells          = {},
     keys           = {},
@@ -1403,7 +1373,6 @@ function fstate.clearHitboxes()
     fstate.buttons, fstate.tabs, fstate.chartChips = {}, {}, {}
     fstate.cells, fstate.keys, fstate.produceHits = {}, {}, {}
     fstate.levelRows = {}
-    fstate.logTitle = nil
     fstate.autostartRow = nil
     fstate.factorCell = nil
     fstate.strengthCell = nil
@@ -1421,7 +1390,7 @@ end
 return fstate
 
 frontend/theme.lua
-2228
+2203
 local theme      = {}
 theme.COLORS     = {
     BG                = 0x0d1117,
@@ -1449,7 +1418,6 @@ theme.LOG_COLORS = {
     schedule = 0x38bdf8,
     system   = 0xe2e8f0,
     ui       = 0x64748b,
-    debug    = 0x64748b,
     info     = 0xe2e8f0
 }
 function theme.logColor(kind)
@@ -1631,7 +1599,7 @@ end
 return widgets
 
 monitor.lua
-7195
+7083
 local selfPath   = (debug.getinfo(1, "S").source or ""):gsub("^@", "")
 local selfDir    = selfPath:match("^(.*)[/\\][^/\\]*$")
 local candidates = { "core/locate.lua", "./core/locate.lua", "PurifyWater/core/locate.lua" }
@@ -1660,7 +1628,6 @@ locate.injectPath(appDir)
 local bootstrap = require("core.bootstrap")
 bootstrap.clearModuleCache()
 local CONFIG     = require("shared.config")
-local logs       = require("shared.logs")
 local models     = require("shared.models")
 local computer   = require("computer")
 local event      = require("event")
@@ -1704,8 +1671,6 @@ local function onMessage(message)
         end
         snapshot, snapshotAt = payload, computer.uptime()
         dirty = true
-    else
-        logs.debug("快照解析失败：" .. tostring(err))
     end
     for key in pairs(frames) do
         if computer.uptime() - frames[key].at > 10 then frames[key] = nil end
@@ -1823,7 +1788,7 @@ bootstrap.releaseConsole()
 print("镜像端已退出")
 
 shared/config.lua
-1995
+1950
 local CONFIG                     = {}
 CONFIG.FILES                     = {
     SETTINGS = "data/settings.txt", 
@@ -1839,7 +1804,6 @@ CONFIG.INTERVAL                  = {
     OBSERVE   = 5,
     SCHEDULE  = 5,
     PERSIST   = 30,
-    SAMPLE    = 1,
     BROADCAST = 1,
     PRODUCE   = 1,
     PRODUCE_RUNTIME = 0.5
@@ -1895,17 +1859,16 @@ CONFIG.SYSTEM                    = {
     START_ON_BOOT           = false,
 }
 CONFIG.LOG                       = {
-    LEVEL      = "user", 
     MAX_LINES  = 10,
     FILE_LINES = 200
 }
 return CONFIG
 
 shared/constants.lua
-3262
+3264
 local resources                   = require("shared.resources")
 local constants                   = {}
-constants.CODE_VERSION            = "v5.3"
+constants.CODE_VERSION            = "v5.3.2"
 constants.LEVEL_COUNT             = 8
 constants.HOST_LEVEL              = 0
 constants.T3_LEVEL                = 3
@@ -1992,45 +1955,19 @@ end
 return constants
 
 shared/logs.lua
-3555
+1844
 local CONFIG       = require("shared.config")
 local logs         = {}
-local LEVEL_ORDER  = { user = 1, debug = 2 }
-local buffers      = { user = {}, debug = {} }
+local lines        = {}
 local pending      = {}
 local maxLines     = (CONFIG.LOG and CONFIG.LOG.MAX_LINES) or 10
 local maxPending   = (CONFIG.LOG and CONFIG.LOG.FILE_LINES) or 200
-local currentLevel = (CONFIG.LOG and CONFIG.LOG.LEVEL) or "user"
 local pushed       = 0
-function logs.setLevel(level)
-    if LEVEL_ORDER[level] == nil then return false end
-    local changed = (level ~= currentLevel)
-    currentLevel = level
-    if CONFIG.LOG then CONFIG.LOG.LEVEL = level end
-    if changed then
-        logs.system("日志级别 = " .. level)
-    end
-    return true
-end
-function logs.getLevel() return currentLevel end
-function logs.isDebug() return currentLevel == "debug" end
-function logs.applyArgs(args)
-    local wantDebug = false
-    for _, raw in ipairs(args or {}) do
-        local s = tostring(raw)
-        if s == "--debug" or s == "-d" or s == "--verbose" then wantDebug = true end
-        if s == "--log=debug" or s == "--log-level=debug" then wantDebug = true end
-        if s == "--log=user" or s == "--log-level=user" then wantDebug = false end
-    end
-    logs.setLevel(wantDebug and "debug" or "user")
-    return wantDebug
-end
 local KINDS = {
     { prefix = "[警告]", kind = "warn" },
     { prefix = "[调度]", kind = "schedule" },
     { prefix = "[系统]", kind = "system" },
-    { prefix = "[界面]", kind = "ui" },
-    { prefix = "[调试]", kind = "debug" }
+    { prefix = "[界面]", kind = "ui" }
 }
 function logs.kindOf(text)
     local s = tostring(text)
@@ -2039,7 +1976,7 @@ function logs.kindOf(text)
     end
     return "info"
 end
-local function note(kind, text, level)
+local function note(kind, text)
     local prefix = "[" .. tostring(kind) .. "]"
     for _, item in ipairs(KINDS) do
         if item.kind == kind then
@@ -2047,36 +1984,19 @@ local function note(kind, text, level)
             break
         end
     end
-    logs.append(prefix .. " " .. tostring(text), level)
+    logs.append(prefix .. " " .. tostring(text))
 end
 function logs.warn(text) return note("warn", text) end
 function logs.schedule(text) return note("schedule", text) end
 function logs.system(text) return note("system", text) end
 function logs.ui(text) return note("ui", text) end
-local function visible(level)
-    local need = LEVEL_ORDER[level or "user"] or LEVEL_ORDER.user
-    return need <= (LEVEL_ORDER[currentLevel] or LEVEL_ORDER.user)
-end
-function logs.append(text, level)
-    local lv   = level or "user"
+function logs.append(text)
     local line = tostring(text)
-    local buf  = buffers[lv]
-    if buf then
-        buf[#buf + 1] = line
-        while #buf > maxLines do table.remove(buf, 1) end
-    end
-    local cur = buffers[currentLevel]
-    if cur and cur ~= buf and visible(lv) then
-        cur[#cur + 1] = line
-        while #cur > maxLines do table.remove(cur, 1) end
-    end
-    if not visible(level) then return end
+    lines[#lines + 1] = line
+    while #lines > maxLines do table.remove(lines, 1) end
     pending[#pending + 1] = line
     pushed = pushed + 1
     while #pending > maxPending do table.remove(pending, 1) end
-end
-function logs.debug(text)
-    return note("debug", text, "debug")
 end
 function logs.pendingLines()
     local out = {}
@@ -2087,14 +2007,12 @@ function logs.markFlushed()
     pending = {}
 end
 function logs.list()
-    local buf = buffers[currentLevel] or {}
     local out = {}
-    for i, line in ipairs(buf) do out[i] = line end
+    for i, line in ipairs(lines) do out[i] = line end
     return out
 end
 function logs.fingerprint()
-    local buf = buffers[currentLevel] or {}
-    return table.concat({ #buf, pushed, (buf[#buf] or ""), currentLevel }, "")
+    return table.concat({ #lines, pushed, (lines[#lines] or "") }, "\x1f")
 end
 return logs
 

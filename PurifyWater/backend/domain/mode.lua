@@ -14,7 +14,7 @@
 --   publish() -> nil                     发布每级建议到 state（唯一写 suggest）
 --   evaluate(level) -> boolean           可开启性
 --   order() -> table                     贪心顺序
---   audit() -> texts, signature, warnText, debugTexts   一次性提示数据（哨兵在 app/system）
+--   audit() -> texts, signature, warnText   一次性提示数据（哨兵在 app/system）
 --------------------------------------------------------------------------------
 
 local state     = require("shared.state")
@@ -85,10 +85,9 @@ end
 -- @return table texts
 -- @return string signature
 -- @return string|nil warnText
--- @return table debugTexts
 function mode.audit()
-    local texts, signature, warnText, debugTexts = mode.current().audit()
-    return texts, signature, warnText, debugTexts
+    local texts, signature, warnText = mode.current().audit()
+    return texts, signature, warnText
 end
 
 return mode

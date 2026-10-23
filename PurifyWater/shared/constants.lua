@@ -12,8 +12,8 @@ local resources                   = require("shared.resources")
 local constants                   = {}
 
 -- ---- 版本戳 ----
--- 启动日志与痕迹写版本戳；改动需重启生效时抬号。debug 后缀在 core/bootstrap 拼。
-constants.CODE_VERSION            = "v5.3"
+-- 启动日志与痕迹写版本戳；改动需重启生效时抬号。
+constants.CODE_VERSION            = "v5.3.2"
 
 -- 等级：1~8 净水单元；0 = 净水主机
 constants.LEVEL_COUNT             = 8

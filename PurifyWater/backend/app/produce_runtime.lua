@@ -7,7 +7,6 @@
 
 local computer = require("computer")
 local logs     = require("shared.logs")
-local utils    = require("shared.utils")
 
 local runtime = {}
 local jobs    = {}
@@ -15,44 +14,25 @@ local jobs    = {}
 local function now() return computer.uptime() end
 
 local function fail(job, reason)
+    jobs[job.id] = nil
     local where = tostring(job.machineText or job.machine or job.id or "?")
     if job.levelLabel then where = tostring(job.levelLabel) .. " " .. where end
     logs.warn(string.format("制作自动化任务失败（%s）：%s", where, tostring(reason)))
-    jobs[job.id] = nil
 end
 
---- 本轮实际转移摘要（按首次转移顺序聚合数量）
--- @param job table
--- @return string
-local function transferSummary(job)
-    local trace = job.ctx and job.ctx.trace
-    if not trace or #trace.order == 0 then return "无" end
-    local parts = {}
-    for _, entry in ipairs(trace.order) do
-        local amount = utils.formatNumber(entry.amount)
-        if entry.kind == "fluid" then
-            parts[#parts + 1] = string.format("%s %s mB", tostring(entry.label), amount)
-        else
-            parts[#parts + 1] = string.format("%s×%s", tostring(entry.label), amount)
-        end
-    end
-    return table.concat(parts, "、")
-end
 
---- 制作任务正常完成：user 级提示谁完成，debug 级记录本轮转移内容。
+--- 制作任务正常完成：先释放 job，再写用户级提示。
 -- @param job table
 local function complete(job)
+    jobs[job.id] = nil
     local label = job.levelLabel or ("T" .. tostring(job.level))
     local who   = job.machineText or tostring(job.machine)
     logs.system(string.format("%s 制作自动化：本轮完成（机器 %s）", label, who))
-    logs.debug(string.format("%s 制作自动化：本轮转移 %s（机器 %s）",
-        label, transferSummary(job), who))
-    jobs[job.id] = nil
 end
 
 function runtime.add(job)
     assert(type(job) == "table" and type(job.operation) == "function", "无效的制作任务")
-    assert(type(job.executor) == "function", "invalid executor")
+    assert(type(job.executor) == "function", "无效的执行器")
     job.runAt    = tonumber(job.runAt) or now()
     job.priority = tonumber(job.priority) or 100
     job.ctx.action = function(action)
@@ -136,7 +116,7 @@ local function resume(job)
     if a.kind == "action" then
         local okExec, result = pcall(job.executor, a.action, job)
         if not okExec then fail(job, result) return end
-        if type(result) ~= "table" then fail(job, "executor 返回无效结果") return end
+        if type(result) ~= "table" then fail(job, "执行器返回无效结果") return end
         job.pending = result
         job.runAt = now() + 0.05
         return

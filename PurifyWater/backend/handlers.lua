@@ -10,7 +10,6 @@
 --           power_changed      -> system（发布建议 -> 清本轮学习 -> 在跑时重排）
 --           deployed_changed   -> system（发布建议，各状态恒发）
 --           plant_observed     -> watch（边沿 + 归因 + 并行不一致）
---           parallel_sample    -> watch（连续确认 -> parallel_write / discarded）
 --   配置类  level_rules_changed -> watch（审计提示 + 重排）
 --           rates_changed       -> rates（生效性门 -> 发布 -> 忘方案 -> 审计 -> 重排）
 --           mode_changed        -> rates（发布 -> 忘方案 -> 审计 -> 重排）
@@ -20,7 +19,7 @@
 --           主机开关             -> 不走事件：watch 每轮观测对一次（电平语义，见 app/system）
 --   制作自动化类 produce_changed -> system（开关 / 就绪性 / 缺料变化 -> 重判）+ produce（取消过期 operation）
 --                plant_observed  -> produce（active / 门控变化 -> 取消过期 operation）
---                produce_cycle   -> produce（周期边界登记 operation）
+--                host_cycle_started -> produce（登记制作任务）+ watch（周期并行样本）
 --   控制类  schedule_now       -> system（界面刷新触发一次立即调度）
 --------------------------------------------------------------------------------
 
@@ -53,7 +52,6 @@ function handlers.subscribe()
     scheduler.on("power_changed", system.onPowerChanged)
     scheduler.on("deployed_changed", system.onDeployedChanged)
     scheduler.on("plant_observed", function(...) return watchApp().onPlantObserved(...) end)
-    scheduler.on("parallel_sample", function(...) return watchApp().onParallelSample(...) end)
 
     -- 配置类
     scheduler.on("level_rules_changed", function(...) return watchApp().onLevelRulesChanged(...) end)
@@ -62,7 +60,6 @@ function handlers.subscribe()
     scheduler.on("enforce_changed", function(...) return ratesApp().onEnforceChanged(...) end)
 
     -- 派生类
-    scheduler.on("parallel_discarded", function(...) return watchApp().onParallelDiscarded(...) end)
     scheduler.on("parallel_write", system.onParallelWrite)
     scheduler.on("switch_mismatch", system.onSwitchMismatch)
     scheduler.on("rules_audit", system.auditThresholds)
@@ -71,12 +68,13 @@ function handlers.subscribe()
     scheduler.on("produce_changed", system.onProduceChanged)
     scheduler.on("produce_changed", produceApp.syncJobs)
     scheduler.on("plant_observed", produceApp.syncJobs)
-    scheduler.on("produce_cycle", produceApp.onCycleStarted)
+    scheduler.on("host_cycle_started", produceApp.onCycleStarted)
+    scheduler.on("host_cycle_started", function(...) return watchApp().onHostCycleStarted(...) end)
 
     -- 控制类
     scheduler.on("schedule_now", system.onScheduleRequest)
 
-    return 19
+    return 18
 end
 
 return handlers

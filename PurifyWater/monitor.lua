@@ -2,7 +2,7 @@
 -- monitor.lua —— 镜像端入口（**纯显示 / 只读**：收快照 -> 复用主端总览面板画出来）
 --------------------------------------------------------------------------------
 -- 【只读的结构性保证】
---   * 只 require shared/{config,models,logs} 与 frontend/*；render.setup 不加载 viewmodel/input
+--   * 只 require shared/{config,models} 与 frontend/*；render.setup 不加载 viewmodel/input
 --   * 不 require backend/*：本机组件除 GPU 与网卡外一概不碰
 --   * 不注册定时任务、不写盘；输入只认退出键（Q / Ctrl+C）
 --   * 只有【退出程序】按钮 + 本地视图动作（图表档位 / 状态详情）能点；其余按钮画禁用态
@@ -43,7 +43,6 @@ local bootstrap = require("core.bootstrap")
 bootstrap.clearModuleCache()
 
 local CONFIG     = require("shared.config")
-local logs       = require("shared.logs")
 local models     = require("shared.models")
 local computer   = require("computer")
 local event      = require("event")
@@ -104,8 +103,6 @@ local function onMessage(message)
         end
         snapshot, snapshotAt = payload, computer.uptime()
         dirty = true
-    else
-        logs.debug("快照解析失败：" .. tostring(err))
     end
 
     -- 清掉旧帧（避免内存里攒一堆）
