@@ -1,4 +1,4 @@
-PW1	role=main	version=v5.3.2	count=91
+PW1	role=main	version=v5.3.3	count=91
 backend/api.lua
 9034
 local CONFIG        = require("shared.config")
@@ -663,7 +663,7 @@ end
 return produceApp
 
 backend/app/produce/binding.lua
-8055
+7939
 local constants     = require("shared.constants")
 local logs          = require("shared.logs")
 local state         = require("shared.state")
@@ -788,8 +788,6 @@ function binding.rebuildSubs()
         sub.level       = b.level
         sub.sides       = sides
         sub.layout      = layout
-        sub.sideTarget  = sides and sides.target or nil
-        sub.itemTarget  = sides and sides.itemTarget or nil
         subs[b.machine] = sub
     end
     state.write.produceSetSubs(subs)
@@ -1381,17 +1379,26 @@ end
 return readiness
 
 backend/app/produce/sides.lua
-7200
+7801
 local state      = require("shared.state")
 local utils      = require("shared.utils")
 local transposer = require("backend.hardware.transposer")
 local binding    = require("backend.app.produce.binding")
 local sides = {}
 local MAX_MISSING_WIDTH = 52
+local SAME_FLUID_ITEM_TARGET = true
 local function sameItem(a, b)
     return a ~= nil and b ~= nil
         and a.name == b.name
         and (tonumber(a.damage) or 0) == (tonumber(b.damage) or 0)
+end
+local function faceHasRequiredItem(items, requiredItems)
+    for _, item in ipairs(items or {}) do
+        for _, req in ipairs(requiredItems or {}) do
+            if sameItem(item, req) then return true end
+        end
+    end
+    return false
 end
 local function signatureOf(side, face)
     local itemNames = {}
@@ -1454,65 +1461,57 @@ local function missingFluids(required, found)
     end
     return miss
 end
-function sides.classify(info, requiredFluids, requiredItems, preferredFluid, preferredItem)
-    local faces = info.faces
-    local target, emptyCount, emptySide, sources, found = nil, 0, nil, {}, {}
-    local itemTarget, itemSources, itemEmptyCount, itemEmptySide = nil, {}, 0, nil
+local function chooseTarget(candidates, label)
+    local picked, count = nil, 0
     for side = 0, 5 do
-        local face = faces[side]
-        if face then
-            if face.fluids then
-                if preferredFluid ~= nil and side == preferredFluid then
-                    target = side
-                elseif face.hasFluid then
-                    sources[#sources + 1] = side
-                    for _, name in ipairs(face.fluidNames) do found[name] = true end
-                else
-                    emptyCount = emptyCount + 1
-                    emptySide = emptySide or side
-                end
-            end
-            if requiredItems and #requiredItems > 0 and face.itemSize > 0 then
-                local contains = false
-                for _, item in ipairs(face.items) do
-                    for _, req in ipairs(requiredItems) do
-                        if sameItem(item, req) then contains = true; break end
-                    end
-                    if contains then break end
-                end
-                if preferredItem ~= nil and side == preferredItem then
-                    itemTarget = side
-                elseif contains then
-                    itemSources[#itemSources + 1] = side
-                else
-                    itemEmptyCount = itemEmptyCount + 1
-                    itemEmptySide = itemEmptySide or side
-                end
+        if candidates[side] then
+            picked, count = side, count + 1
+            if count > 1 then
+                return nil, "有多个" .. label .. "目标侧，无法确定"
             end
         end
     end
-    if requiredFluids and #requiredFluids > 0 then
-        if target == nil then
-            if emptyCount == 0 then return nil, "找不到空容器（流体输出侧）" end
-            if emptyCount > 1 then return nil, "有多个空容器，无法确定流体输出侧" end
-            target = emptySide
+    if picked == nil then
+        return nil, "找不到" .. label .. "目标侧（非来源方向）"
+    end
+    return picked, nil
+end
+function sides.classify(info, requiredFluids, requiredItems)
+    local faces = info.faces
+    local needFluids = requiredFluids ~= nil and #requiredFluids > 0
+    local needItems  = requiredItems ~= nil and #requiredItems > 0
+    local sourceSides = {}
+    local sources, itemSources, found = {}, {}, {}
+    for side = 0, 5 do
+        local face = faces[side]
+        if face then
+            if needFluids and face.hasFluid then
+                sources[#sources + 1] = side
+                sourceSides[side] = true
+                for _, name in ipairs(face.fluidNames or {}) do
+                    found[name] = true
+                end
+            end
+            if needItems and face.itemSize > 0
+                and faceHasRequiredItem(face.items, requiredItems) then
+                itemSources[#itemSources + 1] = side
+                sourceSides[side] = true
+            end
         end
+    end
+    if needFluids then
         local miss = missingFluids(requiredFluids, found)
         if #miss > 0 then
             return nil, "输入侧缺流体：" .. utils.joinLimited(miss, MAX_MISSING_WIDTH)
         end
     end
-    if requiredItems and #requiredItems > 0 then
-        if itemTarget == nil then
-            if itemEmptyCount == 0 then return nil, "找不到物品输出侧（需要物品存储空间）" end
-            if itemEmptyCount > 1 then return nil, "有多个物品输出侧，无法确定" end
-            itemTarget = itemEmptySide
-        end
+    if needItems then
         local missItems = {}
         for _, req in ipairs(requiredItems) do
             local hit = false
             for _, side in ipairs(itemSources) do
-                for _, item in ipairs(faces[side] and faces[side].items or {}) do
+                local face = faces[side]
+                for _, item in ipairs(face and face.items or {}) do
                     if sameItem(item, req) then hit = true; break end
                 end
                 if hit then break end
@@ -1521,6 +1520,41 @@ function sides.classify(info, requiredFluids, requiredItems, preferredFluid, pre
         end
         if #missItems > 0 then
             return nil, "输入侧缺物品：" .. utils.joinLimited(missItems, MAX_MISSING_WIDTH)
+        end
+    end
+    local fluidTargets, itemTargets = {}, {}
+    for side = 0, 5 do
+        local face = faces[side]
+        if face and not sourceSides[side] then
+            if needFluids and face.fluids and not face.hasFluid then
+                fluidTargets[side] = true
+            end
+            if needItems and face.itemSize > 0
+                and not faceHasRequiredItem(face.items, requiredItems) then
+                itemTargets[side] = true
+            end
+        end
+    end
+    local target, itemTarget
+    if needFluids and needItems and SAME_FLUID_ITEM_TARGET then
+        local common = {}
+        for side = 0, 5 do
+            if fluidTargets[side] and itemTargets[side] then common[side] = true end
+        end
+        local reason
+        target, reason = chooseTarget(common, "流体/物品共同")
+        if target == nil then return nil, reason end
+        itemTarget = target
+    else
+        if needFluids then
+            local reason
+            target, reason = chooseTarget(fluidTargets, "流体")
+            if target == nil then return nil, reason end
+        end
+        if needItems then
+            local reason
+            itemTarget, reason = chooseTarget(itemTargets, "物品")
+            if itemTarget == nil then return nil, reason end
         end
     end
     return {
@@ -1533,17 +1567,14 @@ end
 function sides.configure(machine, sub, requiredFluids, requiredItems)
     local info = sides.inspect(sub.transposer,
         requiredItems ~= nil and #requiredItems > 0)
-    local config, reason = sides.classify(info, requiredFluids, requiredItems,
-        sub.sideTarget, sub.itemTarget)
+    local config, reason = sides.classify(info, requiredFluids, requiredItems)
     if not config then return false, reason end
     local ok, err = binding.updateSide(machine, config, info.layout)
     if not ok then return false, "侧位落盘失败：" .. tostring(err) end
     state.write.produceSetSub(machine, {
-        sides      = config,
-        sideTarget = config.target,
-        itemTarget = config.itemTarget,
-        sideFail   = nil,
-        layout     = info.layout
+        sides    = config,
+        sideFail = nil,
+        layout   = info.layout
     })
     return true, nil, config
 end
@@ -8186,7 +8217,7 @@ shared/constants.lua
 3264
 local resources                   = require("shared.resources")
 local constants                   = {}
-constants.CODE_VERSION            = "v5.3.2"
+constants.CODE_VERSION            = "v5.3.3"
 constants.LEVEL_COUNT             = 8
 constants.HOST_LEVEL              = 0
 constants.T3_LEVEL                = 3

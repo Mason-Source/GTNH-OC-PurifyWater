@@ -258,7 +258,7 @@ function write.produceSetBinding(binding) F.produce.binding = binding end
 function write.produceSetOnlineAll(map) F.produce.online = map or {} end
 
 --- produce：清掉某台子系统的侧位配置（app/produce 触发"重新配置"时调用）
--- 输出面 sideTarget 不在这里清：粘住，重配置只重算输入侧
+-- 目标方向只保存在 sub.sides 中；清除后由下次自动配置重新计算
 function write.produceClearSides(machine)
     local sub = F.produce.subs[machine]
     if not sub then return end

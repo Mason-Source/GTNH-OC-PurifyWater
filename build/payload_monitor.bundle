@@ -1,4 +1,4 @@
-PW1	role=monitor	version=v5.3.2	count=24
+PW1	role=monitor	version=v5.3.3	count=24
 core/bootstrap.lua
 1288
 local constants    = require("shared.constants")
@@ -1868,7 +1868,7 @@ shared/constants.lua
 3264
 local resources                   = require("shared.resources")
 local constants                   = {}
-constants.CODE_VERSION            = "v5.3.2"
+constants.CODE_VERSION            = "v5.3.3"
 constants.LEVEL_COUNT             = 8
 constants.HOST_LEVEL              = 0
 constants.T3_LEVEL                = 3

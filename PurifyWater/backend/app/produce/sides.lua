@@ -15,11 +15,25 @@ local sides = {}
 
 local MAX_MISSING_WIDTH = 52
 
+-- true  = 流体目标和物品目标必须同方向
+-- false = 两者可以分别选择不同的非来源方向
+local SAME_FLUID_ITEM_TARGET = true
+
 --- 物品条目是否相同（name + damage）
 local function sameItem(a, b)
     return a ~= nil and b ~= nil
         and a.name == b.name
         and (tonumber(a.damage) or 0) == (tonumber(b.damage) or 0)
+end
+
+--- 该面是否含有任一所需物品
+local function faceHasRequiredItem(items, requiredItems)
+    for _, item in ipairs(items or {}) do
+        for _, req in ipairs(requiredItems or {}) do
+            if sameItem(item, req) then return true end
+        end
+    end
+    return false
 end
 
 --- 单面签名（流体名 + 物品 name:damage；不看量）
@@ -89,72 +103,72 @@ local function missingFluids(required, found)
     return miss
 end
 
---- 根据扫描结果分类流体/物品的 target 与 sources
+--- 目标候选必须唯一；0 个或多个都不猜
+-- @param candidates table<number, boolean>
+-- @param label string
+-- @return number|nil
+-- @return string|nil
+local function chooseTarget(candidates, label)
+    local picked, count = nil, 0
+    for side = 0, 5 do
+        if candidates[side] then
+            picked, count = side, count + 1
+            if count > 1 then
+                return nil, "有多个" .. label .. "目标侧，无法确定"
+            end
+        end
+    end
+    if picked == nil then
+        return nil, "找不到" .. label .. "目标侧（非来源方向）"
+    end
+    return picked, nil
+end
+
+--- 先求来源方向并集，再从非来源方向中分类 target
 ---@return table|nil config
 ---@return string|nil reason
-function sides.classify(info, requiredFluids, requiredItems, preferredFluid, preferredItem)
+function sides.classify(info, requiredFluids, requiredItems)
     local faces = info.faces
-    local target, emptyCount, emptySide, sources, found = nil, 0, nil, {}, {}
-    local itemTarget, itemSources, itemEmptyCount, itemEmptySide = nil, {}, 0, nil
+    local needFluids = requiredFluids ~= nil and #requiredFluids > 0
+    local needItems  = requiredItems ~= nil and #requiredItems > 0
 
+    local sourceSides = {}
+    local sources, itemSources, found = {}, {}, {}
+
+    -- 第一遍：来源方向 = 流体来源 ∪ 物品来源
     for side = 0, 5 do
         local face = faces[side]
         if face then
-            if face.fluids then
-                if preferredFluid ~= nil and side == preferredFluid then
-                    target = side
-                elseif face.hasFluid then
-                    sources[#sources + 1] = side
-                    for _, name in ipairs(face.fluidNames) do found[name] = true end
-                else
-                    emptyCount = emptyCount + 1
-                    emptySide = emptySide or side
+            if needFluids and face.hasFluid then
+                sources[#sources + 1] = side
+                sourceSides[side] = true
+                for _, name in ipairs(face.fluidNames or {}) do
+                    found[name] = true
                 end
             end
 
-            if requiredItems and #requiredItems > 0 and face.itemSize > 0 then
-                local contains = false
-                for _, item in ipairs(face.items) do
-                    for _, req in ipairs(requiredItems) do
-                        if sameItem(item, req) then contains = true; break end
-                    end
-                    if contains then break end
-                end
-                if preferredItem ~= nil and side == preferredItem then
-                    itemTarget = side
-                elseif contains then
-                    itemSources[#itemSources + 1] = side
-                else
-                    itemEmptyCount = itemEmptyCount + 1
-                    itemEmptySide = itemEmptySide or side
-                end
+            if needItems and face.itemSize > 0
+                and faceHasRequiredItem(face.items, requiredItems) then
+                itemSources[#itemSources + 1] = side
+                sourceSides[side] = true
             end
         end
     end
 
-    if requiredFluids and #requiredFluids > 0 then
-        if target == nil then
-            if emptyCount == 0 then return nil, "找不到空容器（流体输出侧）" end
-            if emptyCount > 1 then return nil, "有多个空容器，无法确定流体输出侧" end
-            target = emptySide
-        end
+    if needFluids then
         local miss = missingFluids(requiredFluids, found)
         if #miss > 0 then
             return nil, "输入侧缺流体：" .. utils.joinLimited(miss, MAX_MISSING_WIDTH)
         end
     end
 
-    if requiredItems and #requiredItems > 0 then
-        if itemTarget == nil then
-            if itemEmptyCount == 0 then return nil, "找不到物品输出侧（需要物品存储空间）" end
-            if itemEmptyCount > 1 then return nil, "有多个物品输出侧，无法确定" end
-            itemTarget = itemEmptySide
-        end
+    if needItems then
         local missItems = {}
         for _, req in ipairs(requiredItems) do
             local hit = false
             for _, side in ipairs(itemSources) do
-                for _, item in ipairs(faces[side] and faces[side].items or {}) do
+                local face = faces[side]
+                for _, item in ipairs(face and face.items or {}) do
                     if sameItem(item, req) then hit = true; break end
                 end
                 if hit then break end
@@ -163,6 +177,44 @@ function sides.classify(info, requiredFluids, requiredItems, preferredFluid, pre
         end
         if #missItems > 0 then
             return nil, "输入侧缺物品：" .. utils.joinLimited(missItems, MAX_MISSING_WIDTH)
+        end
+    end
+
+    -- 第二遍：目标只能来自非来源方向
+    local fluidTargets, itemTargets = {}, {}
+    for side = 0, 5 do
+        local face = faces[side]
+        if face and not sourceSides[side] then
+            if needFluids and face.fluids and not face.hasFluid then
+                fluidTargets[side] = true
+            end
+            if needItems and face.itemSize > 0
+                and not faceHasRequiredItem(face.items, requiredItems) then
+                itemTargets[side] = true
+            end
+        end
+    end
+
+    local target, itemTarget
+    if needFluids and needItems and SAME_FLUID_ITEM_TARGET then
+        local common = {}
+        for side = 0, 5 do
+            if fluidTargets[side] and itemTargets[side] then common[side] = true end
+        end
+        local reason
+        target, reason = chooseTarget(common, "流体/物品共同")
+        if target == nil then return nil, reason end
+        itemTarget = target
+    else
+        if needFluids then
+            local reason
+            target, reason = chooseTarget(fluidTargets, "流体")
+            if target == nil then return nil, reason end
+        end
+        if needItems then
+            local reason
+            itemTarget, reason = chooseTarget(itemTargets, "物品")
+            if itemTarget == nil then return nil, reason end
         end
     end
 
@@ -178,18 +230,15 @@ end
 function sides.configure(machine, sub, requiredFluids, requiredItems)
     local info = sides.inspect(sub.transposer,
         requiredItems ~= nil and #requiredItems > 0)
-    local config, reason = sides.classify(info, requiredFluids, requiredItems,
-        sub.sideTarget, sub.itemTarget)
+    local config, reason = sides.classify(info, requiredFluids, requiredItems)
     if not config then return false, reason end
 
     local ok, err = binding.updateSide(machine, config, info.layout)
     if not ok then return false, "侧位落盘失败：" .. tostring(err) end
     state.write.produceSetSub(machine, {
-        sides      = config,
-        sideTarget = config.target,
-        itemTarget = config.itemTarget,
-        sideFail   = nil,
-        layout     = info.layout
+        sides    = config,
+        sideFail = nil,
+        layout   = info.layout
     })
     return true, nil, config
 end

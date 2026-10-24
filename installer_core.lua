@@ -23,7 +23,7 @@ for _, a in ipairs(ARGS) do
     if a == "--monitor" then ROLE = "monitor" end
 end
 
-local BUNDLE_VERSION = "v5.3.2"
+local BUNDLE_VERSION = "v5.3.3"
 local REPO_URL       = "https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/build/"
 local MIRROR_PREFIX  = "https://github.xutongxin.me/"
 local RETRY_ROUNDS   = 3

@@ -154,8 +154,6 @@ function binding.rebuildSubs()
         sub.level       = b.level
         sub.sides       = sides
         sub.layout      = layout
-        sub.sideTarget  = sides and sides.target or nil
-        sub.itemTarget  = sides and sides.itemTarget or nil
         subs[b.machine] = sub
     end
     state.write.produceSetSubs(subs)
