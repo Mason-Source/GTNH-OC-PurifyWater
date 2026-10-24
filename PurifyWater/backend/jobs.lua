@@ -74,9 +74,11 @@ function jobs.scanHardware(skipProducePatrol)
     device.scanMachines()
 
     local summary = machines.classify()
-    -- 制作自动化：已绑件在线检查（只探测已绑地址）+ 重算各级就绪性；就绪性变了就通知调度。
+    -- 制作自动化：活跃绑定对账（缺失进候选 / 候选恢复或到期删除）+ 重算就绪性。
+    -- 本轮至少识别到一台净水机器才算可信；全空扫描不解冻候选，避免区块卸载误删。
     -- scanSettings() 里的 reload() 发生在 device.scanMachines() 之前，不能用它代替这一轮。
-    if produceApp.refresh() then
+    local scanTrusted = summary.host > 0 or summary.unitTotal > 0
+    if produceApp.refresh(scanTrusted) then
         scheduler.emit("produce_changed", { reason = "制作自动化就绪性变化" })
     end
     -- 原料巡检（侧位配置 / 原料检查 + 强制开关）；状态变了就通知调度。

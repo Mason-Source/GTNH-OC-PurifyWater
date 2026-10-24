@@ -18,6 +18,11 @@ local view = {}
 --- 制作自动化只读视图
 function view.read()
     local online = binding.onlineSet()
+    local candidates = binding.candidates()
+    local missingByLevel = {}
+    for _, c in ipairs(candidates) do
+        missingByLevel[c.level] = (missingByLevel[c.level] or 0) + 1
+    end
     local levels = {}
     for level = 1, constants.LEVEL_COUNT do
         local entry      = state.read.produceLevel(level)
@@ -58,6 +63,7 @@ function view.read()
             bound       = bound,
             online      = onlineCount,
             configured  = configured,
+            missing     = missingByLevel[level] or 0,
             machines    = list
         }
     end
@@ -71,7 +77,14 @@ function view.read()
             text = binding.machineTextOf(b.level, b.machine)
         }
     end
-    return { binding = bindingInfo, levels = levels }
+    return {
+        binding    = bindingInfo,
+        candidates = {
+            count = #candidates,
+            limit = constants.PRODUCE_MISSING_POOL_MAX
+        },
+        levels     = levels
+    }
 end
 
 return view

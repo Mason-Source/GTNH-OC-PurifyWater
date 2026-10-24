@@ -1,4 +1,4 @@
-PW1	role=main	version=v5.3.3	count=91
+PW1	role=main	version=v5.3.4	count=92
 backend/api.lua
 9034
 local CONFIG        = require("shared.config")
@@ -471,7 +471,7 @@ end
 return plan
 
 backend/app/produce.lua
-8428
+10771
 local constants      = require("shared.constants")
 local logs           = require("shared.logs")
 local state          = require("shared.state")
@@ -496,6 +496,18 @@ local function jobsApp()
     return produceJobs
 end
 local bindFailText = nil
+local scanHoldWarned = false
+local function sameRows(a, b)
+    if #a ~= #b then return false end
+    for i = 1, #a do
+        local x, y = a[i], b[i]
+        if x.level ~= y.level or x.machine ~= y.machine or x.transposer ~= y.transposer
+            or (tonumber(x.miss) or 0) ~= (tonumber(y.miss) or 0) then
+            return false
+        end
+    end
+    return true
+end
 local function notify(reason)
     scheduler.emit("produce_changed", { reason = reason })
 end
@@ -521,32 +533,55 @@ function produceApp.reload(snapshot)
         whySwitch = "已清除未实现等级的遗留开关：" .. table.concat(cleared, "/")
         logs.warn("制作自动化：" .. whySwitch)
     end
-    local entries, problems = produce_table.load()
+    local entries, candidates, problems = produce_table.load()
     if #problems > 0 then
         logs.warn(string.format("制作自动化绑定表：%s%s", tostring(problems[1]),
             (#problems > 1) and ("（共 " .. #problems .. " 条问题）") or ""))
     end
-    local changedBinds = false
-    local old = state.read.produce().binds
-    if #old ~= #entries then
-        changedBinds = true
-    else
-        for index = 1, #entries do
-            local a, b = old[index], entries[index]
-            if a.level ~= b.level or a.machine ~= b.machine or a.transposer ~= b.transposer then
-                changedBinds = true
-                break
-            end
-        end
-    end
-    binding.replaceAll(entries)
+    local changedBinds = not sameRows(state.read.produce().binds, entries)
+        or not sameRows(state.read.produce().candidates or {}, candidates)
+    binding.replaceAll(entries, candidates)
     local changedState = readiness.refreshAll()
     local changed = changedSwitch or changedBinds or changedState
     return changed, changed and "制作自动化配置已更新" or tostring(whySwitch or "制作自动化配置未变化")
 end
-function produceApp.refresh()
+function produceApp.refresh(scanTrusted)
+    local result, reconcileErr = binding.reconcileScan(scanTrusted == true)
+    if reconcileErr then
+        logs.warn("制作自动化：" .. tostring(reconcileErr))
+    end
+    if result then
+        if result.scanSkipped then
+            local hasRows = #state.read.produce().binds > 0
+                or #(state.read.produce().candidates or {}) > 0
+            if hasRows and not scanHoldWarned then
+                logs.warn("制作自动化：本轮未识别到可信机器，候选计数已冻结（疑似区块未加载/组件离线）")
+            end
+            scanHoldWarned = hasRows
+        else
+            scanHoldWarned = false
+        end
+        for _, action in ipairs(result.quarantined) do
+            local b = action.entry
+            logs.warn(string.format("%s 制作自动化：机器暂时扫不到，已移入删除候选（1/%d，机器 %s → 转运器 %s）",
+                constants.levelLabel(b.level), constants.PRODUCE_MISSING_SCANS,
+                tostring(b.machine), tostring(b.transposer)))
+        end
+        for _, action in ipairs(result.restored) do
+            local b = action.entry
+            logs.system(string.format("%s 制作自动化：候选机器重新扫到，已恢复身份（机器 %s → 转运器 %s）",
+                constants.levelLabel(b.level), tostring(b.machine), tostring(b.transposer)))
+        end
+        for _, action in ipairs(result.deleted) do
+            local b = action.entry
+            logs.warn(string.format("%s 制作自动化：删除候选机器（%s，机器 %s → 转运器 %s）",
+                constants.levelLabel(b.level), tostring(action.reason),
+                tostring(b.machine), tostring(b.transposer)))
+        end
+    end
     binding.refreshOnline()
-    return readiness.refreshAll()
+    local changed = readiness.refreshAll()
+    return changed or (result and result.changed) or false
 end
 function produceApp.patrol()
     return patrolApp().run()
@@ -569,15 +604,23 @@ function produceApp.beginBind(level, machine)
     end
     local label = constants.levelLabel(level)
     local text  = binding.machineTextOf(level, machine)
-    local snapshot, unboundCount = {}, 0
+    local snapshot, unbound = {}, {}
     for _, address in ipairs(device.scanTransposers()) do
         snapshot[address] = true
-        if not binding.transposerBound(address) then unboundCount = unboundCount + 1 end
+        if not binding.transposerBound(address) then unbound[#unbound + 1] = address end
+    end
+    if #unbound == 1 then
+        local transposer = unbound[1]
+        local ok, err = commitBind(level, machine, transposer, string.format(
+            "%s 制作自动化：已绑定 %s… → 机器 %s（复用现有空闲转运器）",
+            label, utils.shortAddress(transposer), text))
+        if not ok then return false, tostring(err) end
+        return true, ""
     end
     state.write.produceSetBinding({ level = level, machine = machine, snapshot = snapshot })
     logs.system(string.format("%s 制作自动化：开始绑定（机器 %s）——请放下转运器并接入网络", label, text))
-    if unboundCount > 0 then
-        logs.warn(string.format("%s 制作自动化：网络有 %d 个未绑定转运器", label, unboundCount))
+    if #unbound > 0 then
+        logs.warn(string.format("%s 制作自动化：网络有 %d 个未绑定转运器，无法判断对应关系", label, #unbound))
     end
     notify("开始绑定：" .. label)
     return true, ""
@@ -663,7 +706,7 @@ end
 return produceApp
 
 backend/app/produce/binding.lua
-7939
+9520
 local constants     = require("shared.constants")
 local logs          = require("shared.logs")
 local state         = require("shared.state")
@@ -672,6 +715,7 @@ local device        = require("backend.hardware.device")
 local machines      = require("backend.hardware.machines")
 local transposer    = require("backend.hardware.transposer")
 local produce_table = require("backend.store.produce")
+local reconcile     = require("backend.domain.produce.reconcile")
 local binding = {}
 local byMachine, byTransposer = {}, {}
 local function rebuildIndex()
@@ -703,8 +747,13 @@ function binding.bindOf(machine)
 end
 function binding.transposerBound(address)
     if #state.read.produce().binds > 0 and next(byTransposer) == nil then rebuildIndex() end
-    return byTransposer[address] ~= nil
+    if byTransposer[address] ~= nil then return true end
+    for _, candidate in ipairs(state.read.produce().candidates or {}) do
+        if candidate.transposer == address then return true end
+    end
+    return false
 end
+function binding.candidates() return state.read.produce().candidates or {} end
 function binding.onlineSet() return state.read.produce().online end
 function binding.refreshOnline(forceRate)
     local map = {}
@@ -736,6 +785,11 @@ end
 function binding.machineSet(level)
     local out = {}
     for _, m in ipairs(machines.of(level)) do out[m.address] = true end
+    return out
+end
+local function registryMap()
+    local out = {}
+    for level = 1, constants.LEVEL_COUNT do out[level] = binding.machineSet(level) end
     return out
 end
 function binding.observedMachine(level, machine)
@@ -798,7 +852,7 @@ function binding.updateSide(machine, sides, layout)
     if not b then return false, "该机器未绑定" end
     local oldSides, oldLayout = b.sides, b.layout
     b.sides, b.layout = sides, layout
-    local ok, err = produce_table.save(state.read.produce().binds)
+    local ok, err = produce_table.save(state.read.produce().binds, state.read.produce().candidates)
     if not ok then
         b.sides, b.layout = oldSides, oldLayout
         return false, tostring(err)
@@ -821,7 +875,7 @@ function binding.commit(level, machine, transposerAddress)
         binds[#binds + 1] = added
     end
     table.sort(binds, bindLess)
-    local ok, err = produce_table.save(binds)
+    local ok, err = produce_table.save(binds, state.read.produce().candidates)
     if not ok then
         if old then
             for _, b in ipairs(binds) do
@@ -854,7 +908,7 @@ function binding.remove(machine)
     end
     if not index then return false, nil, "该机器未绑定" end
     table.remove(binds, index)
-    local ok, err = produce_table.save(binds)
+    local ok, err = produce_table.save(binds, state.read.produce().candidates)
     if not ok then
         table.insert(binds, index, removed)
         return false, nil, "写绑定表失败（data/produce.txt）：" .. tostring(err)
@@ -867,8 +921,32 @@ function binding.remove(machine)
     binding.refreshOnline()
     return true, removed, nil
 end
-function binding.replaceAll(entries)
-    state.write.produceSetBinds(entries)
+function binding.reconcileScan(scanTrusted)
+    local current = state.read.produce()
+    local result = reconcile.run(
+        current.binds, current.candidates or {}, registryMap(), scanTrusted == true)
+    if result.scanSkipped or not result.dirty then return result, nil end
+    local ok, err = produce_table.save(result.active, result.candidates)
+    if not ok then
+        return nil, "写绑定表失败（data/produce.txt）：" .. tostring(err)
+    end
+    state.write.produceSetBinds(result.active)
+    state.write.produceSetCandidates(result.candidates)
+    local currentBinding = state.read.produce().binding
+    if currentBinding then
+        for _, action in ipairs(result.quarantined) do
+            if action.entry.machine == currentBinding.machine then
+                state.write.produceSetBinding(nil)
+                break
+            end
+        end
+    end
+    binding.rebuildSubs()
+    return result, nil
+end
+function binding.replaceAll(entries, candidates)
+    state.write.produceSetBinds(entries or {})
+    state.write.produceSetCandidates(candidates or {})
     binding.rebuildSubs()
     binding.refreshOnline()
 end
@@ -1592,7 +1670,7 @@ end
 return sides
 
 backend/app/produce/view.lua
-2574
+2966
 local constants = require("shared.constants")
 local state     = require("shared.state")
 local machines  = require("backend.hardware.machines")
@@ -1603,6 +1681,11 @@ local readiness = require("backend.app.produce.readiness")
 local view = {}
 function view.read()
     local online = binding.onlineSet()
+    local candidates = binding.candidates()
+    local missingByLevel = {}
+    for _, c in ipairs(candidates) do
+        missingByLevel[c.level] = (missingByLevel[c.level] or 0) + 1
+    end
     local levels = {}
     for level = 1, constants.LEVEL_COUNT do
         local entry      = state.read.produceLevel(level)
@@ -1641,6 +1724,7 @@ function view.read()
             bound       = bound,
             online      = onlineCount,
             configured  = configured,
+            missing     = missingByLevel[level] or 0,
             machines    = list
         }
     end
@@ -1653,7 +1737,14 @@ function view.read()
             text = binding.machineTextOf(b.level, b.machine)
         }
     end
-    return { binding = bindingInfo, levels = levels }
+    return {
+        binding    = bindingInfo,
+        candidates = {
+            count = #candidates,
+            limit = constants.PRODUCE_MISSING_POOL_MAX
+        },
+        levels     = levels
+    }
 end
 return view
 
@@ -2789,6 +2880,117 @@ function interface.applicable(method)
     return interface.requiredFluids(method) ~= nil or interface.requiredItems(method) ~= nil
 end
 return interface
+
+backend/domain/produce/reconcile.lua
+3950
+local constants = require("shared.constants")
+local reconcile = {}
+local function copyActive(entry)
+    return {
+        level      = entry.level,
+        machine    = entry.machine,
+        transposer = entry.transposer,
+        sides      = entry.sides,
+        layout     = entry.layout
+    }
+end
+local function copyCandidate(entry, miss, observedLevel)
+    return {
+        level         = entry.level,
+        machine       = entry.machine,
+        transposer    = entry.transposer,
+        sides         = entry.sides,
+        layout        = entry.layout,
+        miss          = miss,
+        observedLevel = observedLevel
+    }
+end
+local function observedLevel(registry, machine)
+    for level = 1, constants.LEVEL_COUNT do
+        if registry[level] and registry[level][machine] then return level end
+    end
+    return nil
+end
+local function evictOldest(list, actions)
+    local index
+    local oldest = -1
+    for i, entry in ipairs(list) do
+        local miss = tonumber(entry.miss) or 1
+        if miss > oldest then
+            index, oldest = i, miss
+        end
+    end
+    local removed = table.remove(list, index)
+    actions.deleted[#actions.deleted + 1] = {
+        entry  = removed,
+        reason = string.format("候选池超过 %d 条，淘汰最旧记录", constants.PRODUCE_MISSING_POOL_MAX)
+    }
+end
+function reconcile.run(binds, candidates, registry, scanTrusted)
+    local result = {
+        active      = binds or {},
+        candidates  = candidates or {},
+        quarantined = {},
+        restored    = {},
+        deleted     = {},
+        scanSkipped = not scanTrusted,
+        changed     = false,
+        dirty       = false
+    }
+    if not scanTrusted then return result end
+    local active, nextCandidates = {}, {}
+    for _, entry in ipairs(binds or {}) do
+        local seenLevel = registry[entry.level] and registry[entry.level][entry.machine]
+        if seenLevel then
+            active[#active + 1] = entry
+        else
+            local candidate = copyCandidate(entry, 1, observedLevel(registry, entry.machine))
+            nextCandidates[#nextCandidates + 1] = candidate
+            result.quarantined[#result.quarantined + 1] = { entry = candidate }
+            result.dirty = true
+        end
+    end
+    for _, entry in ipairs(candidates or {}) do
+        local seenLevel = registry[entry.level] and registry[entry.level][entry.machine]
+        if seenLevel then
+            local restored = copyActive(entry)
+            active[#active + 1] = restored
+            result.restored[#result.restored + 1] = { entry = restored }
+            result.dirty = true
+        else
+            local miss = (tonumber(entry.miss) or 1) + 1
+            local observed = observedLevel(registry, entry.machine)
+            local candidate = copyCandidate(entry, miss, observed)
+            if miss >= constants.PRODUCE_MISSING_SCANS then
+                result.deleted[#result.deleted + 1] = {
+                    entry  = candidate,
+                    reason = string.format("连续 %d 轮未命中", constants.PRODUCE_MISSING_SCANS)
+                }
+                result.dirty = true
+            else
+                nextCandidates[#nextCandidates + 1] = candidate
+                result.dirty = true
+            end
+        end
+    end
+    while #nextCandidates > constants.PRODUCE_MISSING_POOL_MAX do
+        evictOldest(nextCandidates, result)
+    end
+    table.sort(active, function(a, b)
+        if a.level ~= b.level then return a.level < b.level end
+        return tostring(a.machine) < tostring(b.machine)
+    end)
+    table.sort(nextCandidates, function(a, b)
+        if a.level ~= b.level then return a.level < b.level end
+        return tostring(a.machine) < tostring(b.machine)
+    end)
+    result.active = active
+    result.candidates = nextCandidates
+    result.changed = #result.quarantined > 0 or #result.restored > 0
+        or #result.deleted > 0
+    return result
+end
+return reconcile
 
 backend/domain/produce/t3.lua
 634
@@ -4317,7 +4519,7 @@ end
 return transposer
 
 backend/jobs.lua
-9747
+9824
 local computer         = require("computer")
 local scheduler        = require("core.scheduler")
 local CONFIG           = require("shared.config")
@@ -4359,7 +4561,8 @@ function jobs.scanHardware(skipProducePatrol)
     device.scanNet()
     device.scanMachines()
     local summary = machines.classify()
-    if produceApp.refresh() then
+    local scanTrusted = summary.host > 0 or summary.unitTotal > 0
+    if produceApp.refresh(scanTrusted) then
         scheduler.emit("produce_changed", { reason = "制作自动化就绪性变化" })
     end
     if skipProducePatrol ~= true and produceApp.patrol() then
@@ -4999,7 +5202,7 @@ end
 return log_file
 
 backend/store/produce.lua
-3337
+5481
 local CONFIG    = require("shared.config")
 local constants = require("shared.constants")
 local files     = require("backend.store.files")
@@ -5008,8 +5211,12 @@ local produce_table = {}
 local function path()
     return files.path(CONFIG.FILES.PRODUCE)
 end
+local function validLevel(level)
+    return type(level) == "number" and level >= 1 and level <= constants.LEVEL_COUNT
+end
 function produce_table.load()
-    local entries, problems = {}, {}
+    local entries, candidates = {}, {}
+    local problems = {}
     local seenMachine, seenTransposer = {}, {}
     for _, line in ipairs(files.readLines(path())) do
         local raw = tostring(line)
@@ -5017,7 +5224,7 @@ function produce_table.load()
             local level, machine, transposer, rest =
                 raw:match("^%s*(%d+)%s+(%S+)%s+(%S+)%s*(.*)$")
             level = tonumber(level)
-            if not level or level < 1 or level > constants.LEVEL_COUNT then
+            if not validLevel(level) then
                 problems[#problems + 1] = "行格式不对（已跳过）：" .. raw
             elseif seenMachine[machine] then
                 problems[#problems + 1] = "机器重复绑定（已跳过）：" .. machine
@@ -5025,28 +5232,64 @@ function produce_table.load()
                 problems[#problems + 1] = "转运器重复绑定（已跳过）：" .. transposer
             else
                 local fields = format.parseFields(rest)
-                local sides, sideErr = format.parseSides(fields)
-                if sideErr then
-                    problems[#problems + 1] = string.format("%s（已忽略侧位）：%s", sideErr, raw)
+                local status = fields.state or "active"
+                if status ~= "active" and status ~= "missing" then
+                    problems[#problems + 1] = "绑定状态非法（已跳过）：" .. raw
                 else
-                    seenMachine[machine], seenTransposer[transposer] = true, true
-                    entries[#entries + 1] = {
-                        level      = level,
-                        machine    = machine,
-                        transposer = transposer,
-                        sides      = sides,
-                        layout     = (fields.layout and fields.layout ~= "-") and fields.layout or nil
-                    }
+                    local sides, sideErr = format.parseSides(fields)
+                    if sideErr then
+                        problems[#problems + 1] = string.format("%s（已忽略侧位）：%s", sideErr, raw)
+                    else
+                        seenMachine[machine], seenTransposer[transposer] = true, true
+                        local entry = {
+                            level      = level,
+                            machine    = machine,
+                            transposer = transposer,
+                            sides      = sides,
+                            layout     = (fields.layout and fields.layout ~= "-") and fields.layout or nil
+                        }
+                        if status == "missing" then
+                            local miss = tonumber(fields.miss)
+                            if not miss or miss < 1 or miss % 1 ~= 0 then
+                                miss = 1
+                                problems[#problems + 1] =
+                                    "候选 miss 字段非法（按 1 处理）：" .. raw
+                            end
+                            local observed = tonumber(fields.observed)
+                            entry.miss = miss
+                            entry.observedLevel = validLevel(observed) and observed or nil
+                            candidates[#candidates + 1] = entry
+                        else
+                            entries[#entries + 1] = entry
+                        end
+                    end
                 end
             end
         end
     end
     table.sort(entries, format.less)
-    return entries, problems
+    table.sort(candidates, format.less)
+    return entries, candidates, problems
 end
-function produce_table.save(entries)
+local function appendFields(parts, entry)
+    local s = entry.sides
+    if type(s) == "table"
+        and (s.target ~= nil or s.itemTarget ~= nil
+            or (type(s.sources) == "table" and #s.sources > 0)
+            or (type(s.itemSources) == "table" and #s.itemSources > 0)) then
+        parts[#parts + 1] = "fluid_target=" .. format.sideText(s.target)
+        parts[#parts + 1] = "fluid_sources=" .. format.listText(s.sources)
+        parts[#parts + 1] = "item_target=" .. format.sideText(s.itemTarget)
+        parts[#parts + 1] = "item_sources=" .. format.listText(s.itemSources)
+    end
+    if entry.layout and tostring(entry.layout) ~= "" then
+        parts[#parts + 1] = "layout=" .. tostring(entry.layout)
+    end
+end
+function produce_table.save(entries, candidates)
     local lines = {
         "# 制作自动化绑定表（程序写入；一行一台机器：级 机器地址 转运器地址）",
+        "# 删除候选：字段 state=missing miss=N；旧行无 state 时视为活跃绑定",
         "# 可选侧位：fluid_target=... fluid_sources=... item_target=... item_sources=... layout=..."
     }
     for _, entry in ipairs(entries or {}) do
@@ -5054,20 +5297,24 @@ function produce_table.save(entries)
             string.format("%d %s %s",
                 entry.level, tostring(entry.machine), tostring(entry.transposer))
         }
-        local s = entry.sides
-        if type(s) == "table"
-            and (s.target ~= nil or s.itemTarget ~= nil
-                or (type(s.sources) == "table" and #s.sources > 0)
-                or (type(s.itemSources) == "table" and #s.itemSources > 0)) then
-            parts[#parts + 1] = "fluid_target=" .. format.sideText(s.target)
-            parts[#parts + 1] = "fluid_sources=" .. format.listText(s.sources)
-            parts[#parts + 1] = "item_target=" .. format.sideText(s.itemTarget)
-            parts[#parts + 1] = "item_sources=" .. format.listText(s.itemSources)
-        end
-        if entry.layout and tostring(entry.layout) ~= "" then
-            parts[#parts + 1] = "layout=" .. tostring(entry.layout)
-        end
+        appendFields(parts, entry)
         lines[#lines + 1] = table.concat(parts, " ")
+    end
+    if candidates and #candidates > 0 then
+        lines[#lines + 1] = ""
+        lines[#lines + 1] = "# --- 删除候选（重新扫到会自动恢复） ---"
+        for _, entry in ipairs(candidates) do
+            local miss = math.max(1, math.floor(tonumber(entry.miss) or 1))
+            local parts = {
+                string.format("%d %s %s state=missing miss=%d",
+                    entry.level, tostring(entry.machine), tostring(entry.transposer), miss)
+            }
+            if validLevel(entry.observedLevel) then
+                parts[#parts + 1] = "observed=" .. tostring(entry.observedLevel)
+            end
+            appendFields(parts, entry)
+            lines[#lines + 1] = table.concat(parts, " ")
+        end
     end
     return files.writeLines(path(), lines)
 end
@@ -6898,7 +7145,7 @@ end
 return detail
 
 frontend/panels/keypad.lua
-16223
+16431
 local unicode = require("unicode")
 local fstate  = require("frontend.state")
 local theme   = require("frontend.theme")
@@ -7061,6 +7308,11 @@ local function drawProduce(area, data)
     put(string.format("制作自动化 · %s", constants.levelLabel(level)), theme.COLORS.TEXT_CYAN)
     cx = cx + 3
     put(string.format("%d/%d 就绪", info.configured or 0, info.count or 0), theme.COLORS.TEXT)
+    if (tonumber(info.missing) or 0) > 0 then
+        cx = cx + 2
+        put(string.format("待恢复 %d/%d", info.missing, constants.PRODUCE_MISSING_POOL_MAX),
+            theme.COLORS.TEXT_YELLOW)
+    end
     if pages > 1 then
         cx = cx + 2
         if fstate.producePage > 1 then put("‹ ", theme.COLORS.TEXT_CYAN, "page", -1) end
@@ -8214,21 +8466,21 @@ CONFIG.LOG                       = {
 return CONFIG
 
 shared/constants.lua
-3264
-local resources                   = require("shared.resources")
-local constants                   = {}
-constants.CODE_VERSION            = "v5.3.3"
-constants.LEVEL_COUNT             = 8
-constants.HOST_LEVEL              = 0
-constants.T3_LEVEL                = 3
-constants.T4_LEVEL                = 4
-constants.T5_LEVEL                = 5
-constants.T6_LEVEL                = 6
-constants.T7_LEVEL                = 7
-constants.T8_LEVEL                = 8
-constants.STOCK_PER_PARALLEL      = 1000
-constants.OPEN_RESERVE_MULTIPLIER = 5
-constants.POWER_LEVELS            = {
+3394
+local resources                     = require("shared.resources")
+local constants                     = {}
+constants.CODE_VERSION              = "v5.3.4"
+constants.LEVEL_COUNT               = 8
+constants.HOST_LEVEL                = 0
+constants.T3_LEVEL                  = 3
+constants.T4_LEVEL                  = 4
+constants.T5_LEVEL                  = 5
+constants.T6_LEVEL                  = 6
+constants.T7_LEVEL                  = 7
+constants.T8_LEVEL                  = 8
+constants.STOCK_PER_PARALLEL        = 1000
+constants.OPEN_RESERVE_MULTIPLIER   = 5
+constants.POWER_LEVELS              = {
     [1] = 30720,
     [2] = 30720,
     [3] = 122880,
@@ -8238,20 +8490,20 @@ constants.POWER_LEVELS            = {
     [7] = 1966080,
     [8] = 7864320
 }
-constants.RATE_PRODUCE            = 900
-constants.RATE_CONSUME            = 1000
-constants.RATE_REFLUX             = 90
-constants.RATE_REFLUX_BONUS       = 0.15
-constants.RATE_SUCCESS            = { 0.7, 0.8, 1, 1, 0.99, 0.8, 1, 1 }
+constants.RATE_PRODUCE              = 900
+constants.RATE_CONSUME              = 1000
+constants.RATE_REFLUX               = 90
+constants.RATE_REFLUX_BONUS         = 0.15
+constants.RATE_SUCCESS              = { 0.7, 0.8, 1, 1, 0.99, 0.8, 1, 1 }
 constants.RATE_SUCCESS_DUAL_LITHIUM = 0.9
-constants.RATE_REFLUX_LEVELS      = { [1] = true, [2] = true, [6] = true }
-constants.T7_BOOST_OPTIONS        = { 1, 1.25, 1.5, 1.75, 2 }
-constants.PARALLEL_CAP_T1         = 2386092
-constants.PARALLEL_CAP_OTHER      = 2147483
+constants.RATE_REFLUX_LEVELS        = { [1] = true, [2] = true, [6] = true }
+constants.T7_BOOST_OPTIONS          = { 1, 1.25, 1.5, 1.75, 2 }
+constants.PARALLEL_CAP_T1           = 2386092
+constants.PARALLEL_CAP_OTHER        = 2147483
 function constants.parallelCap(level)
     return (level == 1) and constants.PARALLEL_CAP_T1 or constants.PARALLEL_CAP_OTHER
 end
-constants.FLUID_NAMES             = {
+constants.FLUID_NAMES              = {
     [1] = resources.FLUIDS.PURIFIED_WATER_1.id,
     [2] = resources.FLUIDS.PURIFIED_WATER_2.id,
     [3] = resources.FLUIDS.PURIFIED_WATER_3.id,
@@ -8261,7 +8513,7 @@ constants.FLUID_NAMES             = {
     [7] = resources.FLUIDS.PURIFIED_WATER_7.id,
     [8] = resources.FLUIDS.PURIFIED_WATER_8.id
 }
-constants.MACHINE_NAMES           = {
+constants.MACHINE_NAMES            = {
     ["multimachine.purificationplant"]            = 0,
     ["multimachine.purificationunitclarifier"]    = 1,
     ["multimachine.purificationunitozonation"]    = 2,
@@ -8272,7 +8524,7 @@ constants.MACHINE_NAMES           = {
     ["multimachine.purificationunitdegasifier"]   = 7,
     ["multimachine.purificationunitextractor"]    = 8
 }
-constants.LEVEL_NAMES             = {
+constants.LEVEL_NAMES              = {
     [0] = "主机",
     [1] = "T1澄清",
     [2] = "T2臭氧",
@@ -8283,7 +8535,9 @@ constants.LEVEL_NAMES             = {
     [7] = "T7脱气",
     [8] = "T8萃取"
 }
-constants.VOLTAGE_TIERS           = {
+constants.PRODUCE_MISSING_SCANS    = 3
+constants.PRODUCE_MISSING_POOL_MAX = 10
+constants.VOLTAGE_TIERS            = {
     { name = "ULV", eu = 8 }, { name = "LV", eu = 32 },
     { name = "MV",  eu = 128 }, { name = "HV", eu = 512 },
     { name = "EV",  eu = 2048 }, { name = "IV", eu = 8192 },
@@ -8293,7 +8547,7 @@ constants.VOLTAGE_TIERS           = {
     { name = "UMV", eu = 134217728 }, { name = "UXV", eu = 536870912 },
     { name = "MAX", eu = 2147483640 }
 }
-constants.KEY_CODES               = {
+constants.KEY_CODES                = {
     Q = 16,
     R = 19,
     X = 45
@@ -8679,7 +8933,7 @@ resources.ITEMS = {
 return resources
 
 shared/state.lua
-8031
+8128
 local constants = require("shared.constants")
 local F = {
     facts   = { plants = {}, fluids = {}, powerMax = 0 },
@@ -8694,7 +8948,7 @@ local F = {
     net     = { enabled = false, frame = 0, warned = nil },
     tracker = {},
     hostCycle = { lastProgress = nil, progressMax = nil, seq = 0 },
-    produce = { levels = {}, subs = {}, binds = {}, binding = nil, online = {} }
+    produce = { levels = {}, subs = {}, binds = {}, candidates = {}, binding = nil, online = {} }
 }
 local state = {}
 local read  = {}
@@ -8859,6 +9113,7 @@ function write.setHostCycle(fields)
     for key, value in pairs(fields or {}) do F.hostCycle[key] = value end
 end
 function write.produceSetBinds(list) F.produce.binds = list or {} end
+function write.produceSetCandidates(list) F.produce.candidates = list or {} end
 function write.produceSetBinding(binding) F.produce.binding = binding end
 function write.produceSetOnlineAll(map) F.produce.online = map or {} end
 function write.produceClearSides(machine)

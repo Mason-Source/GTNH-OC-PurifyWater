@@ -24,7 +24,7 @@ local F = {
     net     = { enabled = false, frame = 0, warned = nil },
     tracker = {},
     hostCycle = { lastProgress = nil, progressMax = nil, seq = 0 },
-    produce = { levels = {}, subs = {}, binds = {}, binding = nil, online = {} }
+    produce = { levels = {}, subs = {}, binds = {}, candidates = {}, binding = nil, online = {} }
 }
 
 local state = {}
@@ -248,8 +248,11 @@ function write.setHostCycle(fields)
     for key, value in pairs(fields or {}) do F.hostCycle[key] = value end
 end
 
---- produce：绑定表（数组；只由 app/produce 整表替换：{ {level=, machine=, transposer=}, ... }）
+--- produce：活跃绑定表（数组；只由 app/produce 整表替换：{ {level=, machine=, transposer=}, ... }）
 function write.produceSetBinds(list) F.produce.binds = list or {} end
+
+--- produce：删除候选池（扫描缺失但尚未永久删除的绑定）
+function write.produceSetCandidates(list) F.produce.candidates = list or {} end
 
 --- produce：正在进行的绑定（{ level, machine, snapshot } | nil）
 function write.produceSetBinding(binding) F.produce.binding = binding end

@@ -36,6 +36,19 @@ local function jobsApp()
 end
 
 local bindFailText = nil
+local scanHoldWarned = false
+
+local function sameRows(a, b)
+    if #a ~= #b then return false end
+    for i = 1, #a do
+        local x, y = a[i], b[i]
+        if x.level ~= y.level or x.machine ~= y.machine or x.transposer ~= y.transposer
+            or (tonumber(x.miss) or 0) ~= (tonumber(y.miss) or 0) then
+            return false
+        end
+    end
+    return true
+end
 
 local function notify(reason)
     scheduler.emit("produce_changed", { reason = reason })
@@ -68,36 +81,63 @@ function produceApp.reload(snapshot)
         logs.warn("制作自动化：" .. whySwitch)
     end
 
-    local entries, problems = produce_table.load()
+    local entries, candidates, problems = produce_table.load()
     if #problems > 0 then
         logs.warn(string.format("制作自动化绑定表：%s%s", tostring(problems[1]),
             (#problems > 1) and ("（共 " .. #problems .. " 条问题）") or ""))
     end
 
-    local changedBinds = false
-    local old = state.read.produce().binds
-    if #old ~= #entries then
-        changedBinds = true
-    else
-        for index = 1, #entries do
-            local a, b = old[index], entries[index]
-            if a.level ~= b.level or a.machine ~= b.machine or a.transposer ~= b.transposer then
-                changedBinds = true
-                break
-            end
-        end
-    end
+    local changedBinds = not sameRows(state.read.produce().binds, entries)
+        or not sameRows(state.read.produce().candidates or {}, candidates)
 
-    binding.replaceAll(entries)
+    binding.replaceAll(entries, candidates)
     local changedState = readiness.refreshAll()
     local changed = changedSwitch or changedBinds or changedState
     return changed, changed and "制作自动化配置已更新" or tostring(whySwitch or "制作自动化配置未变化")
 end
 
---- T1：在线状态与就绪性刷新
-function produceApp.refresh()
+--- T1：在线状态、候选池与就绪性刷新
+-- @param scanTrusted boolean 本轮至少识别到一台净水机器；false 时冻结候选计数
+function produceApp.refresh(scanTrusted)
+    local result, reconcileErr = binding.reconcileScan(scanTrusted == true)
+    if reconcileErr then
+        logs.warn("制作自动化：" .. tostring(reconcileErr))
+    end
+
+    if result then
+        if result.scanSkipped then
+            local hasRows = #state.read.produce().binds > 0
+                or #(state.read.produce().candidates or {}) > 0
+            if hasRows and not scanHoldWarned then
+                logs.warn("制作自动化：本轮未识别到可信机器，候选计数已冻结（疑似区块未加载/组件离线）")
+            end
+            scanHoldWarned = hasRows
+        else
+            scanHoldWarned = false
+        end
+
+        for _, action in ipairs(result.quarantined) do
+            local b = action.entry
+            logs.warn(string.format("%s 制作自动化：机器暂时扫不到，已移入删除候选（1/%d，机器 %s → 转运器 %s）",
+                constants.levelLabel(b.level), constants.PRODUCE_MISSING_SCANS,
+                tostring(b.machine), tostring(b.transposer)))
+        end
+        for _, action in ipairs(result.restored) do
+            local b = action.entry
+            logs.system(string.format("%s 制作自动化：候选机器重新扫到，已恢复身份（机器 %s → 转运器 %s）",
+                constants.levelLabel(b.level), tostring(b.machine), tostring(b.transposer)))
+        end
+        for _, action in ipairs(result.deleted) do
+            local b = action.entry
+            logs.warn(string.format("%s 制作自动化：删除候选机器（%s，机器 %s → 转运器 %s）",
+                constants.levelLabel(b.level), tostring(action.reason),
+                tostring(b.machine), tostring(b.transposer)))
+        end
+    end
+
     binding.refreshOnline()
-    return readiness.refreshAll()
+    local changed = readiness.refreshAll()
+    return changed or (result and result.changed) or false
 end
 
 --- T1：原料巡检
@@ -125,16 +165,27 @@ function produceApp.beginBind(level, machine)
 
     local label = constants.levelLabel(level)
     local text  = binding.machineTextOf(level, machine)
-    local snapshot, unboundCount = {}, 0
+    local snapshot, unbound = {}, {}
     for _, address in ipairs(device.scanTransposers()) do
         snapshot[address] = true
-        if not binding.transposerBound(address) then unboundCount = unboundCount + 1 end
+        if not binding.transposerBound(address) then unbound[#unbound + 1] = address end
+    end
+
+    -- 拆机后旧转运器通常还挂在网上。只有一个空闲转运器时可以直接复用，
+    -- 用户不必为了“让它重新出现”再拔插一次；多个空闲时无法判断对应关系，不自动猜。
+    if #unbound == 1 then
+        local transposer = unbound[1]
+        local ok, err = commitBind(level, machine, transposer, string.format(
+            "%s 制作自动化：已绑定 %s… → 机器 %s（复用现有空闲转运器）",
+            label, utils.shortAddress(transposer), text))
+        if not ok then return false, tostring(err) end
+        return true, ""
     end
 
     state.write.produceSetBinding({ level = level, machine = machine, snapshot = snapshot })
     logs.system(string.format("%s 制作自动化：开始绑定（机器 %s）——请放下转运器并接入网络", label, text))
-    if unboundCount > 0 then
-        logs.warn(string.format("%s 制作自动化：网络有 %d 个未绑定转运器", label, unboundCount))
+    if #unbound > 0 then
+        logs.warn(string.format("%s 制作自动化：网络有 %d 个未绑定转运器，无法判断对应关系", label, #unbound))
     end
     notify("开始绑定：" .. label)
     return true, ""

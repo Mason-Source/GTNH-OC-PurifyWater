@@ -23,7 +23,7 @@ for _, a in ipairs(ARGS) do
     if a == "--monitor" then ROLE = "monitor" end
 end
 
-local BUNDLE_VERSION = "v5.3.3"
+local BUNDLE_VERSION = "v5.3.4"
 local REPO_URL       = "https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/build/"
 local MIRROR_PREFIX  = "https://github.xutongxin.me/"
 local RETRY_ROUNDS   = 3
@@ -100,6 +100,7 @@ local FILE_LIST_MAIN = {
     "backend/domain/produce.lua",
     "backend/domain/produce/check.lua",
     "backend/domain/produce/interface.lua",
+    "backend/domain/produce/reconcile.lua",
     "backend/domain/produce/t3.lua",
     "backend/domain/produce/t4.lua",
     "backend/domain/produce/t5.lua",

@@ -1,4 +1,4 @@
-PW1	role=monitor	version=v5.3.3	count=24
+PW1	role=monitor	version=v5.3.4	count=24
 core/bootstrap.lua
 1288
 local constants    = require("shared.constants")
@@ -1865,21 +1865,21 @@ CONFIG.LOG                       = {
 return CONFIG
 
 shared/constants.lua
-3264
-local resources                   = require("shared.resources")
-local constants                   = {}
-constants.CODE_VERSION            = "v5.3.3"
-constants.LEVEL_COUNT             = 8
-constants.HOST_LEVEL              = 0
-constants.T3_LEVEL                = 3
-constants.T4_LEVEL                = 4
-constants.T5_LEVEL                = 5
-constants.T6_LEVEL                = 6
-constants.T7_LEVEL                = 7
-constants.T8_LEVEL                = 8
-constants.STOCK_PER_PARALLEL      = 1000
-constants.OPEN_RESERVE_MULTIPLIER = 5
-constants.POWER_LEVELS            = {
+3394
+local resources                     = require("shared.resources")
+local constants                     = {}
+constants.CODE_VERSION              = "v5.3.4"
+constants.LEVEL_COUNT               = 8
+constants.HOST_LEVEL                = 0
+constants.T3_LEVEL                  = 3
+constants.T4_LEVEL                  = 4
+constants.T5_LEVEL                  = 5
+constants.T6_LEVEL                  = 6
+constants.T7_LEVEL                  = 7
+constants.T8_LEVEL                  = 8
+constants.STOCK_PER_PARALLEL        = 1000
+constants.OPEN_RESERVE_MULTIPLIER   = 5
+constants.POWER_LEVELS              = {
     [1] = 30720,
     [2] = 30720,
     [3] = 122880,
@@ -1889,20 +1889,20 @@ constants.POWER_LEVELS            = {
     [7] = 1966080,
     [8] = 7864320
 }
-constants.RATE_PRODUCE            = 900
-constants.RATE_CONSUME            = 1000
-constants.RATE_REFLUX             = 90
-constants.RATE_REFLUX_BONUS       = 0.15
-constants.RATE_SUCCESS            = { 0.7, 0.8, 1, 1, 0.99, 0.8, 1, 1 }
+constants.RATE_PRODUCE              = 900
+constants.RATE_CONSUME              = 1000
+constants.RATE_REFLUX               = 90
+constants.RATE_REFLUX_BONUS         = 0.15
+constants.RATE_SUCCESS              = { 0.7, 0.8, 1, 1, 0.99, 0.8, 1, 1 }
 constants.RATE_SUCCESS_DUAL_LITHIUM = 0.9
-constants.RATE_REFLUX_LEVELS      = { [1] = true, [2] = true, [6] = true }
-constants.T7_BOOST_OPTIONS        = { 1, 1.25, 1.5, 1.75, 2 }
-constants.PARALLEL_CAP_T1         = 2386092
-constants.PARALLEL_CAP_OTHER      = 2147483
+constants.RATE_REFLUX_LEVELS        = { [1] = true, [2] = true, [6] = true }
+constants.T7_BOOST_OPTIONS          = { 1, 1.25, 1.5, 1.75, 2 }
+constants.PARALLEL_CAP_T1           = 2386092
+constants.PARALLEL_CAP_OTHER        = 2147483
 function constants.parallelCap(level)
     return (level == 1) and constants.PARALLEL_CAP_T1 or constants.PARALLEL_CAP_OTHER
 end
-constants.FLUID_NAMES             = {
+constants.FLUID_NAMES              = {
     [1] = resources.FLUIDS.PURIFIED_WATER_1.id,
     [2] = resources.FLUIDS.PURIFIED_WATER_2.id,
     [3] = resources.FLUIDS.PURIFIED_WATER_3.id,
@@ -1912,7 +1912,7 @@ constants.FLUID_NAMES             = {
     [7] = resources.FLUIDS.PURIFIED_WATER_7.id,
     [8] = resources.FLUIDS.PURIFIED_WATER_8.id
 }
-constants.MACHINE_NAMES           = {
+constants.MACHINE_NAMES            = {
     ["multimachine.purificationplant"]            = 0,
     ["multimachine.purificationunitclarifier"]    = 1,
     ["multimachine.purificationunitozonation"]    = 2,
@@ -1923,7 +1923,7 @@ constants.MACHINE_NAMES           = {
     ["multimachine.purificationunitdegasifier"]   = 7,
     ["multimachine.purificationunitextractor"]    = 8
 }
-constants.LEVEL_NAMES             = {
+constants.LEVEL_NAMES              = {
     [0] = "主机",
     [1] = "T1澄清",
     [2] = "T2臭氧",
@@ -1934,7 +1934,9 @@ constants.LEVEL_NAMES             = {
     [7] = "T7脱气",
     [8] = "T8萃取"
 }
-constants.VOLTAGE_TIERS           = {
+constants.PRODUCE_MISSING_SCANS    = 3
+constants.PRODUCE_MISSING_POOL_MAX = 10
+constants.VOLTAGE_TIERS            = {
     { name = "ULV", eu = 8 }, { name = "LV", eu = 32 },
     { name = "MV",  eu = 128 }, { name = "HV", eu = 512 },
     { name = "EV",  eu = 2048 }, { name = "IV", eu = 8192 },
@@ -1944,7 +1946,7 @@ constants.VOLTAGE_TIERS           = {
     { name = "UMV", eu = 134217728 }, { name = "UXV", eu = 536870912 },
     { name = "MAX", eu = 2147483640 }
 }
-constants.KEY_CODES               = {
+constants.KEY_CODES                = {
     Q = 16,
     R = 19,
     X = 45

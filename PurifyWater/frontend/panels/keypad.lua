@@ -236,6 +236,12 @@ local function drawProduce(area, data)
     -- 就绪 = 转运器已绑定 且 侧位自动配置完成 的机器数
     put(string.format("%d/%d 就绪", info.configured or 0, info.count or 0), theme.COLORS.TEXT)
 
+    if (tonumber(info.missing) or 0) > 0 then
+        cx = cx + 2
+        put(string.format("待恢复 %d/%d", info.missing, constants.PRODUCE_MISSING_POOL_MAX),
+            theme.COLORS.TEXT_YELLOW)
+    end
+
     if pages > 1 then
         cx = cx + 2
         if fstate.producePage > 1 then put("‹ ", theme.COLORS.TEXT_CYAN, "page", -1) end

@@ -14,6 +14,7 @@ local device        = require("backend.hardware.device")
 local machines      = require("backend.hardware.machines")
 local transposer    = require("backend.hardware.transposer")
 local produce_table = require("backend.store.produce")
+local reconcile     = require("backend.domain.produce.reconcile")
 
 local binding = {}
 
@@ -54,11 +55,19 @@ function binding.bindOf(machine)
     return byMachine[machine]
 end
 
---- 某转运器是否已绑给任何机器
+--- 某转运器是否已绑给活跃机器，或被删除候选保留
+-- 候选机器重新出现前，其转运器不能被别的机器抢走。
 function binding.transposerBound(address)
     if #state.read.produce().binds > 0 and next(byTransposer) == nil then rebuildIndex() end
-    return byTransposer[address] ~= nil
+    if byTransposer[address] ~= nil then return true end
+    for _, candidate in ipairs(state.read.produce().candidates or {}) do
+        if candidate.transposer == address then return true end
+    end
+    return false
 end
+
+--- 删除候选池（只读）
+function binding.candidates() return state.read.produce().candidates or {} end
 
 --- 已绑定转运器在线表
 function binding.onlineSet() return state.read.produce().online end
@@ -96,6 +105,13 @@ end
 function binding.machineSet(level)
     local out = {}
     for _, m in ipairs(machines.of(level)) do out[m.address] = true end
+    return out
+end
+
+--- 全等级注册表
+local function registryMap()
+    local out = {}
+    for level = 1, constants.LEVEL_COUNT do out[level] = binding.machineSet(level) end
     return out
 end
 
@@ -166,7 +182,7 @@ function binding.updateSide(machine, sides, layout)
     if not b then return false, "该机器未绑定" end
     local oldSides, oldLayout = b.sides, b.layout
     b.sides, b.layout = sides, layout
-    local ok, err = produce_table.save(state.read.produce().binds)
+    local ok, err = produce_table.save(state.read.produce().binds, state.read.produce().candidates)
     if not ok then
         b.sides, b.layout = oldSides, oldLayout
         return false, tostring(err)
@@ -192,7 +208,7 @@ function binding.commit(level, machine, transposerAddress)
     end
     table.sort(binds, bindLess)
 
-    local ok, err = produce_table.save(binds)
+    local ok, err = produce_table.save(binds, state.read.produce().candidates)
     if not ok then
         if old then
             for _, b in ipairs(binds) do
@@ -229,7 +245,7 @@ function binding.remove(machine)
     if not index then return false, nil, "该机器未绑定" end
 
     table.remove(binds, index)
-    local ok, err = produce_table.save(binds)
+    local ok, err = produce_table.save(binds, state.read.produce().candidates)
     if not ok then
         table.insert(binds, index, removed)
         return false, nil, "写绑定表失败（data/produce.txt）：" .. tostring(err)
@@ -243,9 +259,43 @@ function binding.remove(machine)
     return true, removed, nil
 end
 
+--- T1 扫描后对账：活跃绑定 -> 删除候选 -> 恢复 / 到期删除
+-- 纯判定在 domain/produce/reconcile；本函数只负责原子写盘和应用内存状态。
+-- @param scanTrusted boolean 本轮扫描是否可信；不可信时不推进 miss 计数
+-- @return table|nil 对账结果
+-- @return string|nil 写盘错误
+function binding.reconcileScan(scanTrusted)
+    local current = state.read.produce()
+    local result = reconcile.run(
+        current.binds, current.candidates or {}, registryMap(), scanTrusted == true)
+    if result.scanSkipped or not result.dirty then return result, nil end
+
+    local ok, err = produce_table.save(result.active, result.candidates)
+    if not ok then
+        return nil, "写绑定表失败（data/produce.txt）：" .. tostring(err)
+    end
+
+    state.write.produceSetBinds(result.active)
+    state.write.produceSetCandidates(result.candidates)
+
+    local currentBinding = state.read.produce().binding
+    if currentBinding then
+        for _, action in ipairs(result.quarantined) do
+            if action.entry.machine == currentBinding.machine then
+                state.write.produceSetBinding(nil)
+                break
+            end
+        end
+    end
+
+    binding.rebuildSubs()
+    return result, nil
+end
+
 --- 整表替换（启动读盘）
-function binding.replaceAll(entries)
-    state.write.produceSetBinds(entries)
+function binding.replaceAll(entries, candidates)
+    state.write.produceSetBinds(entries or {})
+    state.write.produceSetCandidates(candidates or {})
     binding.rebuildSubs()
     binding.refreshOnline()
 end
