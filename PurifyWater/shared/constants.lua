@@ -1,6 +1,6 @@
 -- 固定等级与机器映射；运行期可调项放 config。
 local constants = {
-    CODE_VERSION = "v2.6.0",
+    CODE_VERSION = "v6.0.0",
     LEVEL_COUNT = 8,
     HOST_LEVEL = 0,
     T3_LEVEL = 3,
@@ -25,10 +25,10 @@ constants.MACHINE_NAMES = {
 
 constants.VOLTAGE_TIERS = {
     { name = "ULV", eu = 8 }, { name = "LV", eu = 32 },
-    { name = "MV", eu = 128 }, { name = "HV", eu = 512 },
-    { name = "EV", eu = 2048 }, { name = "IV", eu = 8192 },
+    { name = "MV",  eu = 128 }, { name = "HV", eu = 512 },
+    { name = "EV",  eu = 2048 }, { name = "IV", eu = 8192 },
     { name = "LuV", eu = 32768 }, { name = "ZPM", eu = 131072 },
-    { name = "UV", eu = 524288 }, { name = "UHV", eu = 2097152 },
+    { name = "UV",  eu = 524288 }, { name = "UHV", eu = 2097152 },
     { name = "UEV", eu = 8388608 }, { name = "UIV", eu = 33554432 },
     { name = "UMV", eu = 134217728 }, { name = "UXV", eu = 536870912 },
     { name = "MAX", eu = 2147483640 },
