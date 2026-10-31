@@ -1,14 +1,16 @@
-PW1	role=monitor	version=v5.3.4	count=24
+PW1	role=monitor	version=v2.6.0	count=24
 core/bootstrap.lua
-1288
-local constants    = require("shared.constants")
-local bootstrap    = {}
-local OWN_PREFIXES = { "core.", "shared.", "backend", "frontend" }
+1308
+local constants = require("shared.constants")
+local bootstrap = {}
+local OWN_PREFIXES = {
+    "core.", "shared.", "services.", "business.", "hardware.",
+    "frontend.", "kernel", "main", "monitor"
+}
 function bootstrap.clearModuleCache(prefixes)
-    prefixes = prefixes or OWN_PREFIXES
     local removed = 0
     for name in pairs(package.loaded) do
-        for _, prefix in ipairs(prefixes) do
+        for _, prefix in ipairs(prefixes or OWN_PREFIXES) do
             if name == prefix or name:sub(1, #prefix) == prefix then
                 package.loaded[name] = nil
                 removed = removed + 1
@@ -18,25 +20,22 @@ function bootstrap.clearModuleCache(prefixes)
     end
     return removed
 end
-function bootstrap.releaseConsole()
-    local okComp, component = pcall(require, "component")
-    if okComp and type(component) == "table" and component.gpu then
+function bootstrap.releaseConsole(startRow)
+    local okComponent, component = pcall(require, "component")
+    if okComponent and type(component) == "table" and component.gpu then
         local gpu = component.gpu
         pcall(gpu.setBackground, 0x000000)
         pcall(gpu.setForeground, 0xFFFFFF)
-        local w, h = gpu.getResolution()
-        pcall(gpu.fill, 1, 1, w, h, " ")
+        local width, height = gpu.getResolution()
+        pcall(gpu.fill, 1, 1, width, height, " ")
     end
     local okTerm, term = pcall(require, "term")
     if okTerm and type(term) == "table" and type(term.setCursor) == "function" then
-        pcall(term.setCursor, 1, 1)
+        pcall(term.setCursor, 1, math.max(1, tonumber(startRow) or 1))
     end
 end
 function bootstrap.version()
     return constants.CODE_VERSION
-end
-function bootstrap.versionLine()
-    return "内核版本 " .. bootstrap.version()
 end
 return bootstrap
 
@@ -75,1660 +74,1817 @@ function locate.injectPath(appDir)
 end
 return locate
 
-core/scheduler.lua
-2532
-local computer  = require("computer")
-local CONFIG    = require("shared.config")
-local logs      = require("shared.logs")
-local scheduler = {}
-local tasks     = {}
-local byName    = {}
-local listeners = {}
-local queue     = {}
-local drainSeq  = 0
-local MAX_DRAIN = 200
-function scheduler.every(name, interval, fn, opts)
-    if byName[name] then return false end
-    local task = {
-        name     = name,
-        interval = interval,
-        fn       = fn,
-        enabled  = not (opts and opts.enabled == false),
-        lastRun  = computer.uptime()
-    }
-    tasks[#tasks + 1] = task
-    byName[name] = task
-    return true
-end
-function scheduler.setEnabled(name, on)
-    local task = byName[name]
-    if not task then return false end
-    task.enabled = (on == true)
-    return true
-end
-function scheduler.secondsUntilDue(now)
-    now = now or computer.uptime()
-    local nextWait = nil
-    for _, task in ipairs(tasks) do
-        if task.enabled then
-            local wait = task.lastRun + task.interval - now
-            if wait < 0 then wait = 0 end
-            if nextWait == nil or wait < nextWait then nextWait = wait end
-        end
-    end
-    if nextWait == nil then return CONFIG.LOOP_MAX_IDLE or 1.0 end
-    return nextWait
-end
-function scheduler.tick(now)
-    now = now or computer.uptime()
-    local executed = 0
-    for _, task in ipairs(tasks) do
-        if task.enabled then
-            local interval = task.interval
-            if now - task.lastRun >= interval then
-                task.lastRun = now
-                task.fn(now)
-                executed = executed + 1
-            end
-        end
-    end
-    return executed
-end
-function scheduler.on(event, fn)
-    if type(fn) ~= "function" then return end
-    local list = listeners[event]
-    if not list then
-        list = {}
-        listeners[event] = list
-    end
-    list[#list + 1] = fn
-end
-function scheduler.emit(event, payload)
-    queue[#queue + 1] = { name = event, payload = payload }
-end
-function scheduler.drain()
-    drainSeq = drainSeq + 1
-    local n = 0
-    while #queue > 0 do
-        if n >= MAX_DRAIN then
-            logs.warn("事件队列单帧超过 " .. MAX_DRAIN .. " 条，疑似处理器互相触发，已截断")
-            queue = {}
-            break
-        end
-        local item = table.remove(queue, 1)
-        n = n + 1
-        for _, fn in ipairs(listeners[item.name] or {}) do
-            fn(item.payload)
-        end
-    end
-    return n
-end
-function scheduler.drainSeq()
-    return drainSeq
-end
-return scheduler
-
-frontend/charts.lua
-9300
-local utils        = require("shared.utils")
-local unicode      = require("unicode")
-local logs         = require("shared.logs")
-local fstate       = require("frontend.state")
-local theme        = require("frontend.theme")
-local widgets      = require("frontend.widgets")
-local charts       = {}
-charts.PAD_X       = 2
-charts.PAD_Y       = 1
-charts.GUTTER      = 7
-local boundsWarned = false
-function charts.fitNumber(value, w)
-    w          = math.max(1, math.floor(w or 1))
-    local text = utils.formatShortNumber(value or 0)
-    if unicode.wlen(text) <= w then return text end
-    local short = (text:gsub("%.%d+", "")) 
-    if unicode.wlen(short) <= w then return short end
-    return unicode.sub(short, 1, math.max(0, w - 1)) .. "…"
-end
-local function gutterLabel(area, y, value, color)
-    widgets.drawTextRight(area.x + 1, charts.GUTTER, y,
-        charts.fitNumber(value, charts.GUTTER), color)
-end
-function charts.checkBounds(tag, x0, y0, w, h, minY, maxY, maxX)
-    if boundsWarned then return end
-    if maxX > x0 + w - 1 or maxY > y0 + h - 1 or minY < y0 then
-        boundsWarned = true
-        logs.warn(string.format(
-            "%s 绘制越界：画布 x=%d..%d y=%d..%d，实际用到 x..%d y=%d..%d",
-            tag, x0, x0 + w - 1, y0, y0 + h - 1, maxX, minY, maxY))
-    end
-end
-function charts.metrics(area, yOffset)
-    local x0 = area.x + charts.PAD_X + 1 + charts.GUTTER
-    local y0 = area.y + charts.PAD_Y + 2 + (yOffset or 0)
-    local w  = area.w - charts.PAD_X * 2 - 2 - charts.GUTTER
-    local h  = area.h - 5
-    return x0, y0, w, h
-end
-function charts.clear(x0, y0, w, h)
-    fstate.gpu.setBackground(theme.COLORS.BG)
-    fstate.gpu.fill(x0, y0, w, h, " ")
-end
-function charts.grid(x0, y0, w, h, rows)
-    if w < 8 or h < 4 then return end
-    rows = rows or 4
-    fstate.gpu.setForeground(theme.CHART_GRID)
-    for i = 1, rows - 1 do
-        local y = y0 + math.floor(h * i / rows)
-        for x = 0, w - 1 do fstate.gpu.set(x0 + x, y, "·") end
-    end
-    fstate.gpu.setForeground(theme.CHART_AXIS)
-    for x = 0, w - 1 do fstate.gpu.set(x0 + x, y0 + h - 1, "─") end
-    for y = 0, h - 1 do fstate.gpu.set(x0 - 1, y0 + y, "│") end
-    fstate.gpu.set(x0 - 1, y0 + h - 1, "└")
-end
-function charts.project(values, x0, y0, w, h, fixedMin, fixedMax)
-    local n = #values
-    local minVal, maxVal = fixedMin, fixedMax
-    if minVal == nil or maxVal == nil then
-        minVal, maxVal = values[1], values[1]
-        for i = 2, n do
-            local v = values[i]
-            if v < minVal then minVal = v end
-            if v > maxVal then maxVal = v end
-        end
-    end
-    if minVal == maxVal then maxVal = minVal + 1 end
-    local points = {}
-    for i = 1, n do
-        local px = x0 + math.floor((i - 1) / math.max(1, n - 1) * (w - 1))
-        local py = y0 + h - 1 - math.floor((values[i] - minVal) / (maxVal - minVal) * (h - 1))
-        points[i] = { x = px, y = py }
-    end
-    return points, minVal, maxVal
-end
-function charts.series(area, series, times, title)
-    local x0, y0, w, h = charts.metrics(area)
-    if w < 8 or h < 4 then return false end
-    charts.clear(x0, y0, w, h)
-    charts.grid(x0, y0, w, h)
-    local minVal, maxVal, drawable = nil, nil, 0
-    local valid = {}
-    for _, line in ipairs(series) do
-        local values = line.values or {}
-        if #values >= 2 then
-            drawable = drawable + 1
-            valid[#valid + 1] = line
-            for i = 1, #values do
-                local v = values[i]
-                if minVal == nil or v < minVal then minVal = v end
-                if maxVal == nil or v > maxVal then maxVal = v end
-            end
-        end
-    end
-    if drawable == 0 then
-        widgets.drawText(x0, y0 - 1, title, theme.COLORS.TEXT_CYAN)
-        widgets.drawCenteredTip({ x = x0, y = y0, w = w, h = h }, "数据采集中…")
-        return false
-    end
-    local minUsedY, maxUsedY, maxUsedX = y0, y0, x0
-    for _, line in ipairs(valid) do
-        local points = charts.project(line.values, x0, y0, w, h, minVal, maxVal)
-        fstate.gpu.setForeground(line.color or theme.CHART_WATER)
-        for i = 1, #points - 1 do
-            local p1, p2 = points[i], points[i + 1]
-            local steps = math.max(1, math.abs(p2.x - p1.x))
-            for s = 0, steps do
-                local x = p1.x + math.floor((p2.x - p1.x) * s / steps)
-                local y = p1.y + math.floor((p2.y - p1.y) * s / steps)
-                fstate.gpu.set(x, y, "█")
-                minUsedY = math.min(minUsedY, y)
-                maxUsedY = math.max(maxUsedY, y)
-                maxUsedX = math.max(maxUsedX, x)
-            end
-        end
-    end
-    charts.checkBounds("折线", x0, y0, w, h, minUsedY, maxUsedY, maxUsedX)
-    widgets.drawText(x0, y0 - 1, title, theme.COLORS.TEXT_CYAN)
-    gutterLabel(area, y0, maxVal, theme.COLORS.TEXT_YELLOW)
-    gutterLabel(area, y0 + h - 1, minVal, theme.COLORS.TEXT_YELLOW)
-    local now = os.time()
-    local n   = #times
-    if n >= 2 then
-        for _, index in ipairs({ 1, math.floor(n / 2) + 1, n }) do
-            local point = charts.pointAt(index, n, x0, w)
-            local diff  = now - (times[index] or now)
-            local text
-            if index == n then
-                text = "现在"
-            elseif diff < 60 then
-                text = "刚刚"
-            elseif diff < 3600 then
-                text = string.format("-%d 分", math.floor(diff / 60))
-            else
-                text = string.format("-%d 时", math.floor(diff / 3600))
-            end
-            local labelX = point - math.floor(unicode.wlen(text) / 2)
-            labelX = math.max(x0, math.min(labelX, x0 + w - unicode.wlen(text)))
-            widgets.drawText(labelX, y0 + h, text, theme.COLORS.TEXT)
-        end
-    end
-    return true
-end
-local function niceCeil(v)
-    if v <= 0 then return 1 end
-    local pow = 1
-    while pow * 10 <= v do pow = pow * 10 end
-    local frac = v / pow
-    local step = (frac <= 1) and 1 or (frac <= 2) and 2 or (frac <= 5) and 5 or 10
-    return step * pow
-end
-function charts.bars(area, values, labels, title)
-    local x0, y0, w, h = charts.metrics(area)
-    if w < 8 or h < 4 then return false end
-    charts.clear(x0, y0, w, h)
-    charts.grid(x0, y0, w, h)
-    local n = #values
-    if n == 0 then return false end
-    local extreme = 0
-    for i = 1, n do
-        local v = values[i] or 0
-        if math.abs(v) > extreme then extreme = math.abs(v) end
-    end
-    local bound = niceCeil(extreme * 1.05)
-    local minVal, maxVal = -bound, bound
-    local span = maxVal - minVal
-    local function yOf(v)
-        return y0 + h - 2 - math.floor((v - minVal) / span * (h - 2))
-    end
-    local zeroY = yOf(0)
-    fstate.gpu.setForeground(theme.CHART_AXIS)
-    for x = 0, w - 1 do fstate.gpu.set(x0 + x, zeroY, "─") end
-    local cellW = math.floor(w / n)
-    if cellW < 3 then cellW = 3 end
-    local barW                         = math.max(1, math.min(cellW - 2, w))
-    local rooms                        = (cellW >= 6)
-    local minUsedY, maxUsedY, maxUsedX = y0, y0, x0
-    for i = 1, n do
-        local v      = values[i] or 0
-        local barX   = x0 + (i - 1) * cellW + math.floor((cellW - barW) / 2)
-        barX         = math.max(x0, math.min(barX, x0 + w - barW))
-        local valueY = yOf(v)
-        local top    = math.max(y0, math.min(zeroY, valueY))
-        local bottom = math.min(y0 + h - 1, math.max(zeroY, valueY))
-        local rowH   = math.max(1, bottom - top + 1)
-        local color  = (v >= 0) and theme.CHART_WATER or theme.COLORS.TEXT_RED
-        if v ~= 0 then
-            fstate.gpu.setBackground(color)
-            fstate.gpu.fill(barX, top, barW, rowH, " ")
-            fstate.gpu.setBackground(theme.COLORS.BG)
-            minUsedY = math.min(minUsedY, top)
-            maxUsedY = math.max(maxUsedY, top + rowH - 1)
-        end
-        maxUsedX     = math.max(maxUsedX, barX + barW - 1)
-        local label  = tostring(labels[i] or "")
-        local labelX = x0 + (i - 1) * cellW + math.floor((cellW - unicode.wlen(label)) / 2)
-        labelX       = math.max(x0, math.min(labelX, x0 + w - unicode.wlen(label)))
-        widgets.drawText(labelX, y0 + h, label, theme.COLORS.TEXT)
-        maxUsedX = math.max(maxUsedX, labelX + unicode.wlen(label) - 1)
-        if rooms then
-            local text = charts.fitNumber(v, cellW)
-            local ty   = (v >= 0) and (top - 1) or (top + rowH)
-            if ty > y0 + h - 2 then ty = top - 1 end
-            ty          = math.max(y0, math.min(y0 + h - 2, ty))
-            local textX = x0 + (i - 1) * cellW + math.floor((cellW - unicode.wlen(text)) / 2)
-            textX       = math.max(x0, math.min(textX, x0 + w - unicode.wlen(text)))
-            widgets.drawText(textX, ty, text, color)
-            maxUsedX = math.max(maxUsedX, textX + unicode.wlen(text) - 1)
-        end
-    end
-    charts.checkBounds("柱状图", x0, y0, w, h, minUsedY, maxUsedY, maxUsedX)
-    gutterLabel(area, y0, bound, theme.COLORS.TEXT_YELLOW)
-    gutterLabel(area, zeroY, 0, theme.COLORS.CHART_AXIS)
-    gutterLabel(area, y0 + h - 2, -bound, theme.COLORS.TEXT_YELLOW)
-    return true
-end
-function charts.pointAt(index, n, x0, w)
-    if n <= 1 then return x0 end
-    return x0 + math.floor((index - 1) / (n - 1) * (w - 1))
-end
-return charts
-
-frontend/decorate.lua
-5392
-local utils     = require("shared.utils")
-local constants = require("shared.constants")
-local theme     = require("frontend.theme")
-local M         = {}
-local function hostText(sw)
-    if sw == nil then return "读取失败", theme.COLORS.TEXT_RED end
-    if sw then return "已开启", theme.COLORS.TEXT_GREEN end
-    return "已关闭", theme.COLORS.TEXT_RED
-end
-local function kiloText(milli)
-    local kilo = (milli or 0) / 1000
-    if kilo == math.floor(kilo) then return utils.formatNumber(kilo) end
-    return (string.format("%.3f", kilo):gsub("0+$", ""):gsub("%.$", ""))
-end
-function M.apply(data)
-    local modeId     = data.system.mode or "threshold"
-    data.runModeText = (modeId == "rate") and "速率调度" or "阈值调度"
-    local machineTotal = 0
-    for level = 1, constants.LEVEL_COUNT do
-        local row = data.levels[level]
-        if not row then
-            row = { level = level, label = constants.levelLabel(level), deployed = 0,
-                rule = { threshold = 0, effectiveThreshold = 0, enabled = false } }
-            data.levels[level] = row
-        end
-        local pr = (data.produce and data.produce.levels and data.produce.levels[level]) or {}
-        row.produceEnabled = pr.enabled == true
-        if pr.implemented ~= true then
-            row.produceText      = "-"
-            row.produceColor     = theme.COLORS.TEXT_DISABLED
-            row.produceClickable = false
-        elseif pr.state == "off" then
-            row.produceText      = "[ ]"
-            row.produceColor     = theme.COLORS.TEXT_DISABLED
-            row.produceClickable = true
-        elseif pr.state == "ok" then
-            row.produceText      = "[√]"
-            row.produceColor     = theme.COLORS.TEXT_GREEN
-            row.produceClickable = true
-        elseif pr.state == "blocked" then
-            row.produceText      = "[!]"
-            row.produceColor     = theme.COLORS.TEXT_YELLOW
-            row.produceClickable = true
-        else
-            row.produceText      = "[×]"
-            row.produceColor     = theme.COLORS.TEXT_RED
-            row.produceClickable = true
-        end
-        row.produceReason = pr.reason
-        row.label = row.label or constants.levelLabel(level)
-        row.rule  = row.rule or { threshold = 0, effectiveThreshold = 0, enabled = false }
-        row.running        = (row.deployed > 0) and ((row.active or 0) > 0) or false
-        row.waterText      = utils.formatShortNumber(row.water or 0)
-        row.thresholdText  = utils.formatShortNumber(row.rule.effectiveThreshold)
-        row.thresholdKText = kiloText(row.rule.threshold)
-        row.userThresholdText = utils.formatShortNumber(row.rule.userThreshold)
-        row.thresholdOverridden = row.rule.thresholdOverridden == true
-        row.sampleText     = row.sample and utils.formatShortNumber(row.sample) or "-"
-        row.sampleStale    = (row.active or 0) == 0
-        local rateStale    = (row.sampleStale and row.success ~= nil) and "（上次）" or ""
-        row.rateText       = string.format("成功率 %s%s",
-            row.success and (tostring(row.success) .. "%") or "-", rateStale)
-        row.suggestText    = utils.formatShortNumber(row.suggest or 0)
-        row.switchText     = (row.deployed == 0) and "未部署"
-            or ((row.switch == nil) and "读取失败" or (row.switch and "开" or "关"))
-        row.deployText     = string.format("×%d", row.deployed or 0)
-        row.runText        = (row.deployed == 0) and "-"
-            or ((row.active == nil) and "?" or (tostring(row.active) .. "/" .. tostring(row.deployed)))
-        row.waterOfText    = string.format("%s / %s", row.waterText, row.thresholdText)
-        machineTotal       = machineTotal + (row.deployed or 0)
-        local base         = row.rule.effectiveThreshold
-        row.ratio          = (base and base > 0) and math.min(1, (row.water or 0) / base) or 0
-    end
-    data.systemText, data.systemColor = theme.systemStatus(data.system, data.hardware, data.host)
-    data.hostText, data.hostColor     = hostText(data.host.switch)
-    local usedText                    = utils.formatShortNumber(data.power.used or 0)
-    local allText                     = utils.formatShortNumber(data.power.all or 0)
-    data.powerText                    = string.format("%s / %s EU/t", usedText, allText)
-    data.meText                       = data.hardware.me and "已连接" or "未连接"
-    data.meColor                      = data.hardware.me
-        and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_RED
-    data.machineText                  = string.format("%d 台（T1–T8）", machineTotal)
-    local hp, hm                      = data.host.progress, data.host.progressMax
-    data.cycleRatio                   = (hp and hm and hm > 0) and math.max(0, math.min(1, hp / hm)) or 0
-    data.cycleText                    = (hp and hm and hm > 0)
-        and string.format("%d%%", math.floor(data.cycleRatio * 100 + 0.5)) or "未运行"
-    return data
-end
-function M.startBlockedReason(data)
-    if not data or not data.system then return "状态未知" end
-    if data.system.running then return nil end
-    local missing = (data.hardware or {}).missing or {}
-    if #missing > 0 then return "硬件缺失（" .. table.concat(missing, "/") .. "）" end
-    if (data.host or {}).switch == false then return "净水主机未开机" end
-    return nil
-end
-return M
-
-frontend/layout.lua
-3834
-local fstate         = require("frontend.state")
-local layout         = {}
-layout.TAB_H         = 1
-layout.CONTROL_H     = 18
-layout.MIN_CONTROL_H = 11
-layout.MIN_LOG_H     = 6
-layout.STATUS_TWO_H  = 19
-layout.STATUS_ONE_H  = 12
-layout.CONFIG_HEAD_H   = 13
-layout.CONFIG_SEP_H    = 2
-layout.KEYPAD_H        = 9
-layout.CONFIG_CARD_H   = 25
-layout.CARD_GAP        = 1
-layout.SETTINGS_CARD_H = 5
-layout.MIN_CHART_H   = 10
-layout.SIDE_PAD      = 1
-layout.COL_GAP       = 1
-function layout.cols(area, weights)
-    local out, total = {}, 0
-    for _, weight in ipairs(weights) do total = total + weight end
-    if total <= 0 then total = 1 end
-    local x, left = area.x, area.w
-    for index, weight in ipairs(weights) do
-        local w
-        if index == #weights then
-            w = left
-        else
-            w = math.floor(area.w * weight / total)
-            left = left - w
-        end
-        out[index] = { x = x, w = w }
-        x = x + w
-    end
-    return out
-end
-function layout.calculate()
-    fstate.W, fstate.H = fstate.gpu.getResolution()
-    local W, H         = fstate.W, fstate.H
-    local grid         = { rows = {}, cols = {} }
-    grid.rows.top      = { y = 1, h = layout.TAB_H }
-    grid.rows.body     = { y = layout.TAB_H + 1, h = H - layout.TAB_H }
-    local leftW        = math.floor(W * 0.30)
-    leftW              = math.max(26, math.min(leftW, 46, W - 40))
-    local rightW       = W - leftW - layout.SIDE_PAD * 2 - layout.COL_GAP
-    grid.cols.left     = { x = 1 + layout.SIDE_PAD, w = leftW }
-    grid.cols.right    = { x = 1 + layout.SIDE_PAD + leftW + layout.COL_GAP, w = rightW }
-    local bodyY        = grid.rows.body.y
-    local bodyH        = grid.rows.body.h
-    local statusH      = (bodyH >= layout.STATUS_TWO_H + layout.MIN_CHART_H + 1)
-        and layout.STATUS_TWO_H or layout.STATUS_ONE_H
-    local chartH       = bodyH - statusH - 1
-    if chartH < layout.MIN_CHART_H then
-        chartH  = math.min(layout.MIN_CHART_H, bodyH)
-        statusH = math.max(6, bodyH - chartH - 1)
-    end
-    local controlH = math.min(layout.CONTROL_H, bodyH - layout.MIN_LOG_H - 1)
-    controlH       = math.max(math.min(layout.MIN_CONTROL_H, bodyH), controlH)
-    local logH     = bodyH - controlH - 1
-    if logH < layout.MIN_LOG_H then
-        logH     = math.min(layout.MIN_LOG_H, bodyH)
-        controlH = math.max(6, bodyH - logH - 1)
-    end
-    fstate.areas.tabBar   = { x = 1, y = grid.rows.top.y, w = W, h = layout.TAB_H }
-    fstate.areas.control  = { x = grid.cols.left.x, y = bodyY, w = grid.cols.left.w, h = controlH }
-    fstate.areas.log      = {
-        x = grid.cols.left.x,
-        y = bodyY + controlH + 1,
-        w = grid.cols.left.w,
-        h = logH
-    }
-    fstate.areas.status   = { x = grid.cols.right.x, y = bodyY, w = grid.cols.right.w, h = statusH }
-    fstate.areas.chart    = {
-        x = grid.cols.right.x,
-        y = bodyY + statusH + 1,
-        w = grid.cols.right.w,
-        h = chartH
-    }
-    local configX   = 1 + layout.SIDE_PAD
-    local configW   = W - layout.SIDE_PAD * 2
-    local configH   = math.min(layout.CONFIG_CARD_H, bodyH)
-    local settingsY = bodyY + configH + layout.CARD_GAP
-    local settingsH = math.min(layout.SETTINGS_CARD_H,
-        math.max(0, bodyH - configH - layout.CARD_GAP))
-    local innerX    = configX + 2
-    local innerW    = math.max(0, configW - 4)
-    local keypadH   = math.min(layout.KEYPAD_H,
-        math.max(0, configH - layout.CONFIG_HEAD_H - 1))
-    local keypadY   = bodyY + configH - 1 - keypadH
-    fstate.areas.config   = { x = configX, y = bodyY, w = configW, h = configH }
-    fstate.areas.keypad   = { x = innerX, y = keypadY, w = innerW, h = keypadH }
-    fstate.areas.settings = { x = configX, y = settingsY, w = configW, h = settingsH }
-    fstate.clearHitboxes()
-    fstate.invalidateAll()
-end
-return layout
-
-frontend/panels/chart.lua
-2961
-local unicode   = require("unicode")
-local constants = require("shared.constants")
-local fstate    = require("frontend.state")
-local theme     = require("frontend.theme")
-local widgets   = require("frontend.widgets")
-local charts    = require("frontend.charts")
-local chart     = {}
-function chart.draw(data)
-    local area = fstate.areas.chart
-    widgets.drawPanelFrame(area, nil, nil, theme.borderColor(data.system.priority == "high"))
-    fstate.chartChips = {}
-    local x = area.x + 2
-    local function chip(level, text)
-        local width  = unicode.wlen(text) + 2
-        local active = (fstate.chartLevel == level)
-        widgets.drawText(x, area.y + 1, " " .. text .. " ",
-            active and theme.COLORS.BG or (level == 0 and theme.COLORS.TEXT_CYAN or theme.seriesColor(level)),
-            active and theme.COLORS.TEXT_CYAN or theme.COLORS.BTN_BG)
-        fstate.chartChips[level] = { x = x, y = area.y + 1, w = width, h = 1 }
-        x = x + width + 1
-    end
-    chip(0, "全部")
-    for level = 1, constants.LEVEL_COUNT do
-        chip(level, "T" .. level)
-    end
-    local days = data.historyDays or 0
-    if days > 0 then
-        widgets.drawTextRight(area.x, area.w - 3, area.y + 1,
-            string.format("近 %d 游戏日 ", days), theme.COLORS.TEXT_DISABLED)
-    end
-    local history = data.history
-    if not history or #(history.times or {}) < 2 then
-        widgets.drawCenteredTip({ x = area.x, y = area.y + 2, w = area.w, h = area.h - 3 },
-            "数据采集中…")
-        return
-    end
-    if fstate.chartLevel == 0 then
-        local values, labels = {}, {}
-        for level = 1, constants.LEVEL_COUNT do
-            local series        = history.values[level] or {}
-            values[#values + 1] = (#series >= 2) and (series[#series] - series[1]) or 0
-            labels[#labels + 1] = "T" .. level
-        end
-        charts.bars(area, values, labels,
-            string.format("近 %d 游戏日 各级水量变化", days))
-    else
-        local level = fstate.chartLevel
-        local row   = data.levels[level]
-        charts.series(area,
-            { { values = history.values[level] or {}, color = theme.seriesColor(level) } },
-            history.times,
-            string.format("近 %d 游戏日 %s 水量曲线", days,
-                row and row.label or ("T" .. level)))
-    end
-end
-function chart.fingerprint(data)
-    local history = data.history or { times = {}, values = {} }
-    local parts   = {
-        tostring(data.system.priority),
-        tostring(fstate.chartLevel),
-        tostring(#(history.times or {})),
-        tostring(data.historyDays or 0),
-        tostring(fstate.areas.chart and fstate.areas.chart.h or 0)
-    }
-    for level = 1, constants.LEVEL_COUNT do
-        local series      = history.values[level] or {}
-        parts[#parts + 1] = tostring(series[1] or 0) .. "," .. tostring(series[#series] or 0)
-    end
-    return table.concat(parts, "\x1f")
-end
-return chart
-
-frontend/panels/control.lua
-6713
-local unicode   = require("unicode")
-local fstate    = require("frontend.state")
-local theme     = require("frontend.theme")
-local widgets   = require("frontend.widgets")
-local layout    = require("frontend.layout")
-local decorate  = require("frontend.decorate")
-local control   = {}
-local function infoRows(data)
-    return {
-        { "系统状态：", data.systemText, data.systemColor },
-        { "净水主机：", data.hostText, data.hostColor },
-        { "运行模式：", tostring(data.runModeText or "-"),
-            data.system.priority == "high" and theme.COLORS.TEXT_RED or theme.COLORS.TEXT_CYAN, true },
-        { "功率概况：", data.powerText, theme.COLORS.TEXT_CYAN },
-        { "ME接口：", data.meText, data.meColor, true },
-        { "部署机器：", data.machineText, theme.COLORS.TEXT_CYAN }
-    }
-end
-function control.draw(data)
-    local area = fstate.areas.control
-    widgets.drawPanelFrame(area, "控制面板", theme.COLORS.TEXT_CYAN,
-        theme.borderColor(data.system.priority == "high"))
-    local avail    = math.max(1, area.h - 3)
-    local twoCol   = false
-    local rowsUsed = 5
-    local blockH   = (rowsUsed - 1) * 2 + 1
-    if avail - blockH < 3 then
-        twoCol   = true
-        rowsUsed = 3
-        blockH   = rowsUsed
-    end
-    local infoMax = math.max(1, avail - blockH)
-    local rows    = infoRows(data)
-    while #rows > infoMax do
-        local dropped = false
-        for index = #rows, 1, -1 do
-            if rows[index].optional then
-                table.remove(rows, index)
-                dropped = true
-                break
-            end
-        end
-        if not dropped then table.remove(rows) end
-    end
-    local cols = layout.cols({ x = area.x + 2, w = area.w - 4 }, { 0.34, 0.66 })
-    for index, row in ipairs(rows) do
-        local y     = area.y + 1 + index
-        local value = tostring(row[2])
-        if unicode.wlen(value) > cols[2].w - 1 then
-            value = unicode.sub(value, 1, math.max(1, cols[2].w - 2)) .. "…"
-        end
-        widgets.drawText(cols[1].x, y, row[1], theme.COLORS.TEXT)
-        widgets.drawText(cols[2].x, y, value, row[3])
-    end
-    control.drawButtons(area, data, twoCol)
-end
-function control.drawButtons(area, data, twoCol)
-    fstate.buttons = {}
-    local blocked  = decorate.startBlockedReason(data)
-    local cannotStart = blocked ~= nil
-    local rateMode = (data.system.mode == "rate")
-    local ro       = fstate.readOnly == true
-    local rows     = {
-        { {
-            name     = "system",
-            action   = "system_toggle",
-            label    = data.system.running and "停机" or "启动系统",
-            color    = data.system.running and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT,
-            bg       = data.system.running and theme.COLORS.BTN_BG_HOVER or theme.COLORS.BTN_BG,
-            disabled = ro or (cannotStart and not data.system.running)
-        } },
-        { {
-            name   = "mode",
-            action = "mode_toggle",
-            label  = rateMode and "切到阈值调度" or "切到速率调度",
-            color  = theme.COLORS.TEXT_CYAN,
-            bg     = theme.COLORS.BTN_BG,
-            disabled = ro
-        }, {
-            name   = "subparam",
-            action = rateMode and "threshold_enforce_toggle" or "priority_toggle",
-            label  = rateMode
-                and (data.system.enforceThreshold and "阈值约束：开" or "阈值约束：关")
-                or (data.system.priority == "high" and "切到低级水优先" or "切到高级水优先"),
-            color  = theme.COLORS.TEXT,
-            bg     = (not rateMode and data.system.priority == "high") and theme.COLORS.BTN_PRIORITY_HIGH
-                or ((rateMode and not data.system.enforceThreshold) and theme.COLORS.BTN_BG_HOVER
-                    or theme.COLORS.BTN_BG),
-            disabled = ro
-        } },
-        { {
-            name   = "refresh",
-            action = "refresh",
-            label  = "刷新扫描",
-            color  = theme.COLORS.TEXT,
-            bg     = theme.COLORS.BTN_BG,
-            disabled = ro
-        } },
-        { {
-            name     = "net",
-            action   = "net_toggle",
-            label    = data.net.enabled and "无线广播：开" or "无线广播：关",
-            color    = data.net.enabled and theme.COLORS.TEXT_CYAN or theme.COLORS.TEXT_YELLOW,
-            bg       = data.net.enabled and theme.COLORS.BTN_BG_HOVER or theme.COLORS.BTN_BG,
-            disabled = ro or not data.net.available
-        } },
-        { {
-            name   = "quit",
-            action = "quit",
-            label  = "退出程序",
-            color  = theme.COLORS.TEXT_RED,
-            bg     = theme.COLORS.BTN_BG,
-            disabled = false
-        } }
-    }
-    local margin = 3
-    local btnX   = area.x + margin
-    local fullW  = area.w - margin * 2
-    local function drawItem(item, x, y, w)
-        if not item.disabled then
-            fstate.buttons[item.name] = {
-                x = x, y = y, w = w, h = 1, action = item.action, label = item.label
-            }
-        end
-        widgets.drawButton(x, y, w, item.label, item.color, item.bg, item.disabled)
-    end
-    if twoCol then
-        local flat = {}
-        for _, row in ipairs(rows) do
-            for _, item in ipairs(row) do flat[#flat + 1] = item end
-        end
-        local btnW   = math.floor((fullW - 1) / 2)
-        local lines  = math.ceil(#flat / 2)
-        local startY = area.y + area.h - 2 - (lines - 1)
-        for index, item in ipairs(flat) do
-            drawItem(item,
-                btnX + ((index - 1) % 2) * (btnW + 1),
-                startY + math.floor((index - 1) / 2),
-                btnW)
-        end
-        return
-    end
-    local step   = 2
-    local startY = area.y + area.h - 2 - ((#rows - 1) * step + 1) + 1
-    for index, row in ipairs(rows) do
-        local y = startY + (index - 1) * step
-        local w = (#row == 1) and fullW or math.floor((fullW - 1) / 2)
-        for slot, item in ipairs(row) do
-            drawItem(item, btnX + (slot - 1) * (w + 1), y, w)
-        end
-    end
-end
-function control.fingerprint(data)
-    return table.concat({
-        tostring(data.systemText), tostring(data.hostText), tostring(data.system.priority),
-        tostring(data.system.mode), tostring(data.system.enforceThreshold), tostring(data.runModeText),
-        tostring(data.powerText), tostring(data.meText), tostring(data.machineText),
-        tostring(data.net.enabled), tostring(data.net.available),
-        tostring(data.system.awaiting), tostring(#data.hardware.missing),
-        tostring(fstate.areas.control and fstate.areas.control.h or 0)
-    }, "\x1f")
-end
-return control
-
-frontend/panels/detail.lua
-6399
-local unicode   = require("unicode")
-local constants = require("shared.constants")
-local utils     = require("shared.utils")
-local fstate    = require("frontend.state")
-local theme     = require("frontend.theme")
-local widgets   = require("frontend.widgets")
-local layout    = require("frontend.layout")
-local detail    = {}
-local BULLET    = "· "
-local RULE      = "─"
-local function ruleLine(x, y, w, text)
-    local head = (text ~= "") and (" " .. text .. " ") or ""
-    widgets.drawText(x, y, RULE .. head .. string.rep(RULE, math.max(0, w - unicode.wlen(head) - 1)),
-        theme.COLORS.TEXT_DISABLED)
-end
-local function machineRows(machines, record)
-    local num                      = utils.formatNumber
-    local list, curW, realW, rateW = {}, 0, 0, 0
-    for index, m in ipairs(machines or {}) do
-        local running      = (m.active == true)
-        local cur          = running and (m.current and num(m.current) or "-") or "停"
-        local realVal      = m.confirmed or record
-        local real         = realVal and num(realVal) or "-"
-        local rate         = m.success and (tostring(m.success) .. "%") or "-"
-        list[#list + 1]    = { index, cur, real, rate, running }
-        curW, realW, rateW = math.max(curW, unicode.wlen(cur)),
-            math.max(realW, unicode.wlen(real)), math.max(rateW, unicode.wlen(rate))
-    end
-    local function cell(prefix, value, width)
-        return prefix .. string.rep(" ", math.max(0, width - unicode.wlen(value))) .. value
-    end
-    local out = {}
-    for _, item in ipairs(list) do
-        out[#out + 1] = {
-            string.format("%s#%d", BULLET, item[1]),
-            table.concat({
-                cell("当前并行 ", item[2], curW),
-                cell("学习并行 ", item[3], realW),
-                cell("成功率 ", item[4], rateW)
-            }, "   "),
-            item[5] and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED
-        }
-    end
-    return out
-end
-local function lines(row, level)
-    local per      = constants.POWER_LEVELS[level] or 0
-    local deployed = row.deployed or 0
-    local suggest  = row.suggest or 0
-    local running  = (row.active or 0) > 0
-    local num      = utils.formatNumber
-    local stale    = running and "" or "（上次运行）"
-    local liveWatt = running and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT_DISABLED
-    local out      = {}
-    local function sep(text)
-        out[#out + 1] = { "rule", text, "", theme.COLORS.TEXT_DISABLED }
-    end
-    local function item(label, value, color)
-        out[#out + 1] = { "item", BULLET .. label, value, color }
-    end
-    sep("基础")
-    item("单并行功耗", num(per) .. " EU/t", theme.COLORS.TEXT)
-    item("已部署机器", tostring(deployed) .. " 台", theme.COLORS.TEXT)
-    local thresholdText = row.thresholdOverridden
-        and (row.userThresholdText .. " → " .. row.thresholdText)
-        or row.thresholdText
-    item("实际阈值", thresholdText,
-        row.thresholdOverridden and theme.COLORS.TEXT_YELLOW or theme.COLORS.TEXT)
-    sep("建议（公式推算）")
-    item("每台并行", num(suggest), theme.COLORS.TEXT_CYAN)
-    item("每台功耗", num(suggest * per) .. " EU/t", theme.COLORS.TEXT_CYAN)
-    item("全开总功耗", num(suggest * per * deployed) .. " EU/t", theme.COLORS.TEXT_CYAN)
-    sep("当前功耗")
-    local perPower = row.sample and (row.sample * per) or nil
-    item("当前等级总功耗", perPower and (num(perPower * deployed) .. " EU/t" .. stale) or "-", liveWatt)
-    sep("每台机器")
-    for _, machineRow in ipairs(machineRows(row.machines, row.parallel)) do
-        out[#out + 1] = { "item", machineRow[1], machineRow[2], machineRow[3] }
-    end
-    return out
-end
-function detail.draw(data, area)
-    local level = fstate.detailLevel
-    local row   = level and data.levels[level] or nil
-    widgets.drawPanelFrame(area, nil, nil, theme.borderColor(data.system.priority == "high"))
-    if not row then
-        widgets.drawText(area.x + 2, area.y + 1, "净水单元详情：没有选中等级（点某一行进来）",
-            theme.COLORS.TEXT_YELLOW)
-        return
-    end
-    widgets.drawText(area.x + 2, area.y + 1,
-        string.format("净水单元详情 · %s", row.label), theme.COLORS.TEXT_CYAN)
-    widgets.drawTextRight(area.x + 2, area.w - 4, area.y + 1, "← 点任意处返回", theme.COLORS.TEXT_DISABLED)
-    local cols  = layout.cols({ x = area.x + 2, w = area.w - 4 }, { 0.26, 0.74 })
-    local rows  = lines(row, level)
-    local top   = area.y + 2
-    local last  = area.y + area.h - 2
-    local drawn = 0
-    for _, item in ipairs(rows) do
-        local y = top + drawn
-        if y > last then break end
-        if item[1] == "rule" then
-            ruleLine(cols[1].x, y, cols[1].w + cols[2].w, item[2])
-        else
-            local value = tostring(item[3])
-            if unicode.wlen(value) > cols[2].w then
-                value = unicode.sub(value, 1, math.max(1, cols[2].w - 1)) .. "…"
-            end
-            widgets.drawText(cols[1].x, y, tostring(item[2]), theme.COLORS.TEXT_DISABLED)
-            widgets.drawText(cols[2].x, y, value, item[4])
-        end
-        drawn = drawn + 1
-    end
-    if drawn < #rows and top + drawn <= last then
-        widgets.drawText(cols[1].x, top + drawn,
-            string.format("…（屏高不够，还有 %d 行）", #rows - drawn), theme.COLORS.TEXT_YELLOW)
-    end
-end
-function detail.fingerprint(data)
-    local level = fstate.detailLevel or 0
-    local row   = data.levels[level] or {}
-    local parts = {
-        tostring(level), tostring(row.label), tostring(data.system.priority),
-        tostring(fstate.areas.status and fstate.areas.status.w or 0),
-        tostring(fstate.areas.status and fstate.areas.status.h or 0),
-        tostring(row.deployed), tostring(row.active), tostring(row.sample),
-        tostring(row.parallel), tostring(row.suggest),
-        tostring(row.rule and row.rule.userThreshold), tostring(row.rule and row.rule.effectiveThreshold),
-        tostring(row.thresholdOverridden)
-    }
-    for _, machine in ipairs(row.machines or {}) do
-        parts[#parts + 1] = tostring(machine.address) .. ":" .. tostring(machine.active)
-            .. ":" .. tostring(machine.current) .. ":" .. tostring(machine.confirmed)
-            .. ":" .. tostring(machine.success)
-    end
-    return table.concat(parts, "\x1f")
-end
-return detail
-
-frontend/panels/log.lua
-2059
-local fstate  = require("frontend.state")
-local theme   = require("frontend.theme")
-local widgets = require("frontend.widgets")
-local logs    = require("shared.logs")
-local log     = {}
-function log.draw(data)
-    local area       = fstate.areas.log
-    local rows       = widgets.textAreaRows(area, 1)
-    local maxW       = area.w - 3
-    local ro         = fstate.readOnly == true
-    local title      = ro and " 系统日志（只读） " or " 系统日志 "
-    local frameDirty = fstate.subDirty("log", "frame", table.concat({ area.x, area.y, area.w, area.h,
-        tostring(data.system.priority) }, ":"))
-    if frameDirty then
-        widgets.drawPanelFrame(area, title, theme.COLORS.TEXT_CYAN,
-            theme.borderColor(data.system.priority == "high"))
-    end
-    local all       = data.logs or {}
-    local bodyDirty = fstate.subDirty("log", "body", table.concat({ logs.fingerprint(),
-        #all, tostring(all[1] or ""), tostring(all[#all] or ""),
-        rows.top, rows.rows, maxW }, "\x1f"))
-    if not (frameDirty or bodyDirty) then return end
-    local lines = {}
-    for i = #all, 1, -1 do
-        local raw     = tostring(all[i])
-        local color   = theme.logColor(logs.kindOf(raw))
-        local wrapped = widgets.wrapText(raw, maxW)
-        for j = #wrapped, 1, -1 do
-            table.insert(lines, 1, { text = wrapped[j], color = color })
-        end
-        if #lines >= rows.rows then break end
-    end
-    widgets.clearArea(area.x + 1, rows.top, area.w - 2, rows.rows)
-    local start = math.max(1, #lines - rows.rows + 1)
-    local y = rows.top
-    for i = start, #lines do
-        widgets.drawText(area.x + 1, y, lines[i].text, lines[i].color)
-        y = y + 1
-    end
-end
-function log.fingerprint(data)
-    local area = fstate.areas.log
-    local all  = data.logs or {}
-    return table.concat({ tostring(data.system.priority), logs.fingerprint(),
-        tostring(#all), tostring(all[1] or ""), tostring(all[#all] or ""),
-        tostring(area and area.h or 0), tostring(area and area.w or 0) }, "\x1f")
-end
-return log
-
-frontend/panels/status.lua
-6745
-local unicode       = require("unicode")
-local constants     = require("shared.constants")
-local fstate        = require("frontend.state")
-local theme         = require("frontend.theme")
-local widgets       = require("frontend.widgets")
-local layout        = require("frontend.layout")
-local detail        = require("frontend.panels.detail")
-local status        = {}
-local lastWasDetail = false
-local function switchText(row)
-    if (row.deployed or 0) == 0 then return "未部署", theme.COLORS.TEXT_RED end
-    if row.switch == nil then return "读取失败", theme.COLORS.TEXT_RED end
-    if row.switch then
-        return string.format("开 %s", row.runText), theme.COLORS.TEXT_GREEN
-    end
-    return string.format("关 %s", row.runText), theme.COLORS.TEXT_YELLOW
-end
-function status.draw(data)
-    if fstate.detailLevel then
-        fstate.levelRows = {}
-        lastWasDetail    = true
-        return detail.draw(data, fstate.areas.status)
-    end
-    local area       = fstate.areas.status
-    local titleY     = area.y + 1
-    local hint       = "点某一级看详情 →"
-    local label      = "运行周期 "
-    local labelX     = area.x + 2 + 12 + 1
-    local barX       = labelX + unicode.wlen(label)
-    local pctW       = 6
-    local pctX       = area.x + 2 + (area.w - 4) - unicode.wlen(hint) - 2 - pctW
-    local barW       = pctX - barX - 1
-    local frameDirty = lastWasDetail or fstate.subDirty("status", "frame", table.concat({ area.x, area.y,
-        area.w, area.h, tostring(data.system.priority) }, ":"))
-    lastWasDetail    = false
-    if frameDirty then
-        widgets.drawPanelFrame(area, "各级净水状态", theme.COLORS.TEXT_CYAN,
-            theme.borderColor(data.system.priority == "high"))
-        if barW >= 8 then
-            widgets.drawText(labelX, titleY, label, theme.COLORS.TEXT_DISABLED)
-        end
-        widgets.drawTextRight(area.x + 2, area.w - 4, titleY, hint, theme.COLORS.TEXT_DISABLED)
-    end
-    local cycleFp = table.concat({ tostring(data.cycleText),
-        tostring(math.floor((data.cycleRatio or 0) * math.max(0, barW))), tostring(barX), tostring(barW) }, ":")
-    local cycleDirty = fstate.subDirty("status", "cycle", cycleFp)
-    if frameDirty or cycleDirty then
-        if barW >= 8 then
-            widgets.drawBar(barX, titleY, barW, data.cycleRatio,
-                theme.COLORS.CYCLE_FILL, theme.COLORS.CYCLE_BG)
-        end
-        widgets.clearArea(pctX, titleY, pctW, 1)
-        widgets.drawTextRight(pctX, pctW, titleY, tostring(data.cycleText), theme.COLORS.TEXT_CYAN)
-    end
-    local top    = area.y + 2
-    local bottom = area.y + area.h - 2
-    local avail  = bottom - top + 1
-    local rowH   = (avail >= constants.LEVEL_COUNT * 2) and 2 or 1
-    local inner  = { x = area.x + 2, w = area.w - 4 }
-    local cols   = layout.cols(inner, { 0.30, 0.24, 0.46 })
-    local barCol = layout.cols(inner, { 0.62, 0.38 })
-    for level = 1, constants.LEVEL_COUNT do
-        local row = data.levels[level]
-        local y   = top + (level - 1) * rowH
-        if y > bottom then break end
-        fstate.levelRows[level]  = { x = area.x, y = y, w = area.w, h = rowH }
-        local name                   = string.format("%s %s", row.label, row.deployText)
-        local switchTxt, switchColor = switchText(row)
-        local effective              = (data.system.effectiveConfig or {}).enabled == true
-        local mark                   = row.rule.enabled and "[√]" or "[ ]"
-        local markColor              = (row.rule.enabled and effective)
-            and theme.COLORS.TEXT_GREEN or theme.COLORS.TEXT_DISABLED
-        local rateW                  = math.max(4, unicode.wlen(row.rateText))
-        local waterW                 = math.max(8, cols[3].w - rateW - 1)
-        local waterText              = string.format("水量 %s", row.waterOfText)
-        if unicode.wlen(waterText) > waterW then
-            waterText = string.format("%s/%s", row.waterText, row.thresholdText)
-        end
-        if unicode.wlen(waterText) > waterW then
-            waterText = unicode.sub(waterText, 1, math.max(1, waterW - 1)) .. "…"
-        end
-        local barW2, pText
-        if rowH == 2 then
-            barW2 = math.max(4, barCol[1].w - 2)
-            local stale = row.sampleStale and row.sample ~= nil and "（上次）" or ""
-            pText = ((row.deployed or 0) == 0) and "并行 -"
-                or string.format("并行 %s%s / 建议 %s", row.sampleText, stale, row.suggestText)
-        end
-        local rowFp = table.concat({
-            y, rowH, name, switchTxt, mark, tostring(data.system.mode),
-            tostring(data.system.enforceThreshold), tostring(effective),
-            tostring(row.running), tostring(row.rule.enabled),
-            waterText, row.rateText,
-            tostring(barW2 or ""), tostring((rowH == 2) and math.floor((row.ratio or 0) * barW2) or ""),
-            pText or ""
-        }, ":")
-        local rowDirty = fstate.subDirty("status", "row" .. level, rowFp)
-        if frameDirty or rowDirty then
-            widgets.clearArea(inner.x, y, inner.w, rowH)
-            widgets.drawText(cols[1].x, y, name,
-                row.running and theme.COLORS.TEXT or theme.COLORS.TEXT_DISABLED)
-            widgets.drawText(cols[2].x, y, mark, markColor)
-            widgets.drawText(cols[2].x + 3, y, switchTxt, switchColor)
-            widgets.drawText(cols[3].x, y, waterText, theme.COLORS.TEXT)
-            widgets.drawTextRight(cols[3].x, cols[3].w, y, row.rateText, theme.COLORS.TEXT_CYAN)
-            if rowH == 2 then
-                widgets.drawBar(barCol[1].x, y + 1, barW2, row.ratio)
-                widgets.drawTextRight(barCol[2].x, barCol[2].w, y + 1, pText, theme.COLORS.TEXT_CYAN)
-            end
-        end
-    end
-end
-function status.fingerprint(data)
-    if fstate.detailLevel then
-        return "detail\x1f" .. detail.fingerprint(data)
-    end
-    local parts = { tostring(data.system.priority), tostring(data.system.mode),
-        tostring(data.system.enforceThreshold),
-        tostring(data.cycleText), tostring(math.floor((data.cycleRatio or 0) * 100)),
-        tostring(fstate.areas.status and fstate.areas.status.h or 0),
-        tostring(fstate.areas.status and fstate.areas.status.w or 0) }
-    for level = 1, constants.LEVEL_COUNT do
-        local row         = data.levels[level]
-        parts[#parts + 1] = table.concat({
-            row.deployed, row.switchText, row.runText, row.waterText, row.thresholdText,
-            row.sampleText, tostring(row.sampleStale), row.suggestText, row.rateText,
-            tostring(math.floor((row.ratio or 0) * 100)),
-            tostring(row.rule.enabled), tostring(row.running)
-        }, ":")
-    end
-    return table.concat(parts, "\x1f")
-end
-return status
-
-frontend/panels/tabbar.lua
-1573
-local unicode = require("unicode")
-local fstate  = require("frontend.state")
-local theme   = require("frontend.theme")
-local widgets = require("frontend.widgets")
-local tabbar  = {}
-local TABS    = {
-    { key = "overview", label = "总览" },
-    { key = "config", label = "配置" }
-}
-local HINT    = "X 启停 · R 刷新 · T 切页 · Q 退出"
-function tabbar.draw()
-    local area = fstate.areas.tabBar
-    local ro   = fstate.readOnly == true
-    widgets.clearArea(area.x, area.y, area.w, area.h, theme.COLORS.BTN_BG)
-    fstate.tabs = {}
-    local x = area.x + 2
-    for _, tab in ipairs(TABS) do
-        local text    = " " .. tab.label .. " "
-        local width   = unicode.wlen(text)
-        local current = (fstate.currentTab == tab.key)
-        local usable  = (not ro) or (tab.key == "overview")
-        widgets.drawText(x, area.y, text,
-            (current and usable) and theme.COLORS.TEXT_CYAN or theme.COLORS.TEXT_DISABLED,
-            (current and usable) and theme.COLORS.BTN_BG_HOVER or theme.COLORS.BTN_BG)
-        if usable then
-            fstate.tabs[tab.key] = { x = x, y = area.y, w = width, h = 1 }
-        end
-        x = x + width + 2
-    end
-    if ro then return end
-    local hint = HINT
-    if unicode.wlen(hint) > area.w - x - 2 then
-        hint = "X 启停 · T 切页 · Q 退出"
-    end
-    local startX = area.x + area.w - 2 - unicode.wlen(hint)
-    widgets.drawText(startX, area.y, hint, theme.COLORS.TEXT_DISABLED, theme.COLORS.BTN_BG)
-end
-function tabbar.fingerprint()
-    return tostring(fstate.currentTab)
-end
-return tabbar
-
-frontend/render.lua
-4524
-local fstate        = require("frontend.state")
-local theme         = require("frontend.theme")
-local layout        = require("frontend.layout")
-local CONFIG        = require("shared.config")
-local logs          = require("shared.logs")
-local scheduler     = require("core.scheduler")
-local tabBarPanel   = require("frontend.panels.tabbar")
-local controlPanel  = require("frontend.panels.control")
-local statusPanel   = require("frontend.panels.status")
-local chartPanel    = require("frontend.panels.chart")
-local logPanel      = require("frontend.panels.log")
-local render        = {}
-local inputModule   = nil
-local viewmodel     = nil
-local PANELS        = {
-    tabBar   = { draw = tabBarPanel.draw, fingerprint = tabBarPanel.fingerprint },
-    control  = { draw = controlPanel.draw, fingerprint = controlPanel.fingerprint },
-    status   = { draw = statusPanel.draw, fingerprint = statusPanel.fingerprint },
-    chart    = { draw = chartPanel.draw, fingerprint = chartPanel.fingerprint },
-    log      = { draw = logPanel.draw, fingerprint = logPanel.fingerprint }
-}
-local LAZY_PANELS   = {
-    config   = function() return require("frontend.panels.config") end,
-    keypad   = function() return require("frontend.panels.keypad") end,
-    settings = function() return require("frontend.panels.settings") end
-}
-local lazyPanels    = {}
-local function panelOf(name)
-    local panel = PANELS[name]
-    if panel then return panel end
-    panel = lazyPanels[name]
-    if panel then return panel end
-    local loader = LAZY_PANELS[name]
-    if not loader then return nil end
-    panel = loader()
-    lazyPanels[name] = panel
-    return panel
-end
-local TAB_PANELS    = {
-    overview = { "tabBar", "control", "status", "chart", "log" },
-    config   = { "tabBar", "config", "keypad", "settings" }
-}
-function render.applyResolution()
-    local gpu = fstate.gpu
-    if not gpu then return end
-    local w, h            = gpu.getResolution()
-    fstate.baseResolution = { width = w, height = h }
-    local targetW         = CONFIG.UI.RESOLUTION_WIDTH or 0
-    local targetH         = CONFIG.UI.RESOLUTION_HEIGHT or 0
-    if targetW > 0 or targetH > 0 then
-        local wantW = (targetW > 0) and targetW or w
-        local wantH = (targetH > 0) and targetH or h
-        if wantW ~= w or wantH ~= h then
-            local ok, err = pcall(gpu.setResolution, wantW, wantH)
-            if not ok then
-                logs.warn("改分辨率失败（屏幕/显卡不支持），保持原样：" .. tostring(err))
-            end
-        end
-    end
-end
-function render.restoreResolution()
-    local base = fstate.baseResolution
-    if not base or not fstate.gpu then return end
-    local w, h = fstate.gpu.getResolution()
-    if w ~= base.width or h ~= base.height then
-        pcall(fstate.gpu.setResolution, base.width, base.height)
-    end
-end
-function render.setup()
-    fstate.gpu = require("component").gpu
-    render.applyResolution()
-    layout.calculate()
-    fstate.invalidateAll()
-end
-function render.bindInput()
-    local function dispatch(name, payload)
-        if not fstate.lastData then return false end
-        inputModule = inputModule or require("frontend.input")
-        return inputModule.handle(name, payload)
-    end
-    scheduler.on("key_down", function(payload) dispatch("key_down", payload) end)
-    scheduler.on("touch", function(payload) dispatch("touch", payload) end)
-    scheduler.on("screen_resized", function() layout.calculate() end)
-end
-function render.boot()
-    render.setup()
-    render.bindInput()
-end
-function render.renderAll(forceAll)
-    local fps = fstate.render.fingerprints
-    forceAll  = forceAll or fstate.render.forceAll
-    if forceAll then
-        fstate.gpu.setBackground(theme.COLORS.BG)
-        fstate.gpu.fill(1, 1, fstate.W, fstate.H, " ")
-        for name in pairs(fps) do fps[name] = nil end
-        fstate.clearSubs()
-        fstate.clearHitboxes()
-    end
-    local data = fstate.lastData
-    local list = TAB_PANELS[fstate.currentTab] or TAB_PANELS.overview
-    for _, name in ipairs(list) do
-        local panel = panelOf(name)
-        if panel then
-            local fp = panel.fingerprint(data)
-            if forceAll or fps[name] ~= fp then
-                panel.draw(data)
-                fps[name] = fp
-            end
-        end
-    end
-    fstate.render.forceAll = false
-end
-function render.frame()
-    viewmodel = viewmodel or require("frontend.viewmodel")
-    local data = viewmodel.build()
-    fstate.lastData = data
-    render.renderAll()
-end
-return render
-
-frontend/state.lua
-1699
-local fstate = {
-    gpu            = nil,
-    W              = 0,
-    H              = 0,
-    areas          = {},
-    currentTab     = "overview",               
-    readOnly       = false,
-    tabs           = {},
-    buttons        = {},
-    levelRows      = {},
-    detailLevel    = nil,
-    chartLevel     = 0,
-    chartChips     = {},
-    autostartRow   = nil,
-    cells          = {},
-    keys           = {},
-    produceHits    = {},
-    producePage    = 1,
-    editLevel      = nil,
-    editField      = nil,
-    editBuf        = nil,
-    lastData       = nil,
+frontend/app.lua
+6298
+local component = require("component")
+local clock = require("services.clock")
+local config = require("shared.config")
+local overview_model = require("frontend.model.overview")
+local theme_registry = require("frontend.theme.registry")
+local Painter = require("frontend.ui.painter")
+local Renderer = require("frontend.ui.renderer")
+local OverviewPage = require("frontend.pages.overview")
+local input = require("frontend.input")
+local app = {
+    booted = false,
+    revision = nil,
+    pageName = "overview",
+    page = nil,
+    pages = nil,
+    views = {},
+    view = nil,
+    painter = nil,
+    renderer = nil,
+    theme = nil,
+    viewport = { width = 0, height = 0 },
     baseResolution = nil,
-    render         = { fingerprints = {}, forceAll = true, subs = {} }
+    readOnly = false,
+    snapshotReader = nil,
+    ui = {
+        detailLevel = nil,
+        chartLevel = 0,
+        editLevel = nil,
+        editField = nil,
+        editBuf = "",
+        producePage = 1,
+        produceCandidatePage = 1,
+    },
+    actionHandler = nil,
+    observer = nil,
+    lastInputAt = nil,
 }
-function fstate.subDirty(panel, sub, fp)
-    local subs = fstate.render.subs[panel]
-    if not subs then
-        subs = {}
-        fstate.render.subs[panel] = subs
+local function readViewport()
+    local width, height = component.gpu.getResolution()
+    app.viewport.width = width
+    app.viewport.height = height
+end
+local function applyResolution()
+    local gpu = component.gpu
+    local width, height = gpu.getResolution()
+    app.baseResolution = { width = width, height = height }
+    local targetW = config.UI.RESOLUTION_WIDTH or 0
+    local targetH = config.UI.RESOLUTION_HEIGHT or 0
+    if targetW <= 0 and targetH <= 0 then return end
+    local wantW = targetW > 0 and targetW or width
+    local wantH = targetH > 0 and targetH or height
+    if wantW ~= width or wantH ~= height then
+        pcall(gpu.setResolution, wantW, wantH)
     end
-    local key = tostring(fp)
-    if subs[sub] == key then return false end
-    subs[sub] = key
+end
+function app.restoreResolution()
+    local base = app.baseResolution
+    if not base or not component.gpu then return end
+    local width, height = component.gpu.getResolution()
+    if width ~= base.width or height ~= base.height then
+        pcall(component.gpu.setResolution, base.width, base.height)
+    end
+end
+function app.layout(width, height)
+    app.viewport.width = width
+    app.viewport.height = height
+    if app.page then app.page:layout(width, height) end
+    if app.renderer then app.renderer:invalidateAll() end
+end
+function app.setSnapshotReader(reader)
+    app.snapshotReader = reader
+end
+function app.boot(options)
+    options = options or {}
+    if options.readOnly then app.readOnly = true end
+    if not component.gpu then return false end
+    app.theme = theme_registry.set(options.theme or config.UI.DEFAULT_THEME or "dark")
+    app.painter = Painter.new(component.gpu, app.theme)
+    app.renderer = Renderer.new(app.painter)
+    app.pages = { overview = OverviewPage.new() }
+    if not app.readOnly then
+        local ConfigPage = require("frontend.pages.config")
+        app.pages.config = ConfigPage.new()
+    end
+    app.page = app.pages[app.pageName]
+    applyResolution()
+    readViewport()
+    app.page:layout(app.viewport.width, app.viewport.height)
+    app.renderer:invalidateAll()
+    app.booted = true
     return true
 end
-function fstate.clearSubs()
-    fstate.render.subs = {}
-end
-function fstate.invalidateAll()
-    fstate.render.forceAll = true
-end
-function fstate.clearHitboxes()
-    fstate.buttons, fstate.tabs, fstate.chartChips = {}, {}, {}
-    fstate.cells, fstate.keys, fstate.produceHits = {}, {}, {}
-    fstate.levelRows = {}
-    fstate.autostartRow = nil
-    fstate.factorCell = nil
-    fstate.strengthCell = nil
-end
-function fstate.hit(box, x, y)
-    if not box then return false end
-    return x >= box.x and x < box.x + box.w and y >= box.y and y < box.y + box.h
-end
-function fstate.buttonAt(x, y)
-    for name, box in pairs(fstate.buttons) do
-        if fstate.hit(box, x, y) then return name, box end
+function app.setPage(name)
+    if app.readOnly and name ~= "overview" then return false end
+    local target = app.pages and app.pages[name]
+    if not target then return false end
+    if app.pageName ~= name then
+        if app.actionHandler then app.actionHandler("produce_bind_cancel") end
+        app.ui.editLevel, app.ui.editField, app.ui.editBuf = nil, nil, ""
     end
-    return nil, nil
+    app.pageName = name
+    app.page = target
+    if app.views[name] then app.page:update(app.views[name]) end
+    app.page:layout(app.viewport.width, app.viewport.height)
+    app.renderer:invalidateAll()
+    return true
 end
-return fstate
-
-frontend/theme.lua
-2203
-local theme      = {}
-theme.COLORS     = {
-    BG                = 0x0d1117,
-    BORDER            = 0x1e3a8a,
-    BORDER_ALERT      = 0x991b1b,
-    TEXT              = 0xe2e8f0,
-    TEXT_CYAN         = 0x38bdf8,
-    TEXT_VIOLET       = 0xa78bfa,
-    TEXT_GREEN        = 0x22c55e,
-    TEXT_YELLOW       = 0xf59e0b,
-    TEXT_RED          = 0xef4444,
-    TEXT_DISABLED     = 0x64748b,
-    BTN_BG            = 0x1e293b,
-    BTN_BG_HOVER      = 0x334155,
-    BTN_BG_DISABLED   = 0x111827,
-    BTN_PRIORITY_HIGH = 0x7f1d1d,
-    BAR_BG            = 0x86efac,
-    BAR_FILL          = 0x22c55e,
-    BAR_BG_EMPTY      = 0x450a0a,
-    CYCLE_BG          = 0x1e293b,
-    CYCLE_FILL        = 0x38bdf8
-}
-theme.LOG_COLORS = {
-    warn     = 0xef4444,
-    schedule = 0x38bdf8,
-    system   = 0xe2e8f0,
-    ui       = 0x64748b,
-    info     = 0xe2e8f0
-}
-function theme.logColor(kind)
-    return theme.LOG_COLORS[kind] or theme.COLORS.TEXT
+function app.togglePage()
+    if app.readOnly then return false end
+    return app.setPage(app.pageName == "overview" and "config" or "overview")
 end
-theme.CHART_GRID  = 0x2a3a5a
-theme.CHART_AXIS  = 0x64748b
-theme.CHART_WATER = 0x0ea5e9
-theme.SERIES      = {
-    0x38bdf8,
-    0x22c55e,
-    0xf59e0b,
-    0xa855f7,
-    0xef4444,
-    0x14b8a6,
-    0xeab308,
-    0xf472b6
-}
-function theme.seriesColor(level)
-    return theme.SERIES[level] or theme.CHART_WATER
+function app.setTheme(id)
+    if not theme_registry.has(id) then return false end
+    app.theme = theme_registry.set(id)
+    app.renderer:setTheme(app.theme)
+    app.renderer:invalidateAll()
+    return true
 end
-function theme.keyColor(kind)
-    if kind == "commit" then return theme.COLORS.TEXT_GREEN end
-    if kind == "cancel" then return theme.COLORS.TEXT_DISABLED end
-    if kind == "copy" or kind == "mul" or kind == "div" then return theme.COLORS.TEXT_YELLOW end
-    if kind == "set" then return theme.COLORS.TEXT_CYAN end
-    return theme.COLORS.TEXT
+function app.setActionHandler(handler)
+    app.actionHandler = handler
 end
-function theme.borderColor(highFirst)
-    return highFirst and theme.COLORS.BORDER_ALERT or theme.COLORS.BORDER
+function app.setObserver(observer)
+    app.observer = observer
 end
-function theme.systemStatus(system, hardware, host)
-    if system.running then
-        return "自动调度中", theme.COLORS.TEXT_GREEN
+function app.frameInput()
+    return app.frame("input")
+end
+function app.frameData()
+    return app.frame("data")
+end
+function app.frame(reason)
+    if not app.booted then return 0 end
+    local startedCpu = clock.cpuTime()
+    local startedReal = clock.realTime()
+    local snapshot
+    if app.snapshotReader then
+        snapshot = app.snapshotReader()
+    else
+        snapshot = require("services.read_model").snapshot()
     end
-    local missing = (hardware and hardware.missing) or {}
-    if #missing > 0 or ((host or {}).switch == false) then
-        return "硬件未就绪", theme.COLORS.TEXT_RED
+    if not snapshot then return 0 end
+    local themeId = snapshot.system and snapshot.system.theme
+    if themeId and theme_registry.has(themeId) and themeId ~= app.theme.id then
+        app.theme = theme_registry.set(themeId)
+        app.renderer:setTheme(app.theme)
+        app.renderer:invalidateAll()
     end
-    if system.awaiting then
-        return "等待用户处理", theme.COLORS.TEXT_YELLOW
-    end
-    return "停机待启动", theme.COLORS.TEXT_DISABLED
-end
-return theme
-
-frontend/viewinput.lua
-826
-local fstate = require("frontend.state")
-local view   = {}
-function view.chartChip(x, y)
-    for level, box in pairs(fstate.chartChips or {}) do
-        if fstate.hit(box, x, y) then
-            fstate.chartLevel = level
-            return true
+    if snapshot.revision ~= app.revision then
+        app.revision = snapshot.revision
+        app.views.overview = overview_model.build(snapshot)
+        if not app.readOnly then
+            app.views.config = require("frontend.model.config").build(snapshot)
         end
+        app.view = app.views[app.pageName]
+        app.page:update(app.view)
+    end
+    app.renderer:setTheme(app.theme)
+    local draws = app.renderer:render(app.page.components, app)
+    local latency = app.lastInputAt and ((startedReal - app.lastInputAt) * 1000) or nil
+    if reason == "input" then app.lastInputAt = nil end
+    if app.observer then
+        app.observer("frame", {
+            reason = reason or "manual",
+            draws = draws,
+            elapsedMs = (clock.cpuTime() - startedCpu) * 1000,
+            latencyMs = latency,
+            revision = app.revision,
+            page = app.pageName,
+        })
+    end
+    return draws
+end
+function app.handle(signal)
+    local startedCpu = clock.cpuTime()
+    local startedReal = clock.realTime()
+    app.lastInputAt = startedReal
+    local handled = input.handle(app, signal)
+    if app.observer then
+        app.observer("input", {
+            name = signal and signal[1] or "unknown",
+            handled = handled == true,
+            elapsedMs = (clock.cpuTime() - startedCpu) * 1000,
+        })
+    end
+    return handled
+end
+return app
+
+frontend/input.lua
+7306
+local CONFIG = require("shared.config")
+local input = {}
+local function configView(app)
+    return app.views and app.views.config or {}
+end
+local function clearEdit(app)
+    app.ui.editLevel = nil
+    app.ui.editField = nil
+    app.ui.editBuf = ""
+end
+local function currentBuffer(app, field, level)
+    local view = configView(app)
+    if field == "threshold" then
+        return tostring(tonumber(view.rows and view.rows[level] and view.rows[level].thresholdK) or 0)
+    elseif field == "weight" then
+        return tostring(tonumber(view.rows and view.rows[level] and view.rows[level].weight) or 0)
+    elseif field == "factor" then
+        return tostring(tonumber(view.system and view.system.energyFactor) or CONFIG.ENERGY.FACTOR_DEFAULT)
+    elseif field == "strength" then
+        return tostring(tonumber(view.net and view.net.strength) or 0)
+    end
+    return ""
+end
+local function limitFor(field)
+    if field == "threshold" then return 100000000000000 end
+    if field == "factor" then return CONFIG.ENERGY.FACTOR_MAX end
+    if field == "strength" then return CONFIG.NET.STRENGTH_MAX end
+    return CONFIG.RATES.MAX_WEIGHT
+end
+local function leaveProduceSelection(app)
+    if app.ui.editField == "produce" and app.actionHandler then
+        app.actionHandler("produce_bind_cancel")
+    end
+end
+local function selectCell(app, level, field)
+    leaveProduceSelection(app)
+    if app.ui.editLevel == level and app.ui.editField == field then
+        clearEdit(app)
+    else
+        app.ui.editLevel = level
+        app.ui.editField = field
+        app.ui.editBuf = currentBuffer(app, field, level)
+        if field == "produce" then
+            app.ui.producePage = 1
+            app.ui.produceCandidatePage = 1
+        end
+    end
+    app.renderer:invalidate("config_table")
+    return true
+end
+local function selectGlobal(app, field)
+    leaveProduceSelection(app)
+    if app.ui.editLevel == nil and app.ui.editField == field then
+        clearEdit(app)
+    else
+        app.ui.editLevel = nil
+        app.ui.editField = field
+        app.ui.editBuf = currentBuffer(app, field, nil)
+    end
+    app.renderer:invalidate("config_table")
+    return true
+end
+local function applyKeypad(app, action)
+    local field, level = app.ui.editField, app.ui.editLevel
+    if not field then return false end
+    local kind = action.kind
+    if kind == "cancel" then
+        clearEdit(app)
+        app.renderer:invalidate("config_table")
+        return true
+    end
+    if kind == "commit" then
+        local value = tonumber(app.ui.editBuf or "")
+        if value == nil then return false end
+        local ok = app.actionHandler and app.actionHandler("config_commit", {
+            field = field,
+            level = level,
+            value = value,
+        })
+        if ok ~= false then
+            clearEdit(app)
+            app.renderer:invalidate("config_table")
+        end
+        return true
+    end
+    local buf = app.ui.editBuf or ""
+    if kind == "digit" then
+        if buf == "0" then buf = "" end
+        buf = buf .. tostring(action.value or "")
+    elseif kind == "mul" or kind == "div" then
+        local number = tonumber(buf) or 0
+        local scale = tonumber(action.value) or 1
+        buf = tostring(kind == "mul" and number * scale or math.floor(number / scale))
+    elseif kind == "set" then
+        buf = tostring(action.value or "")
+    elseif kind == "back" then
+        buf = buf:sub(1, math.max(0, #buf - 1))
+    elseif kind == "clear" then
+        buf = ""
+    elseif kind == "copy" then
+        local previous = configView(app).rows and configView(app).rows[(level or 1) - 1]
+        if previous then buf = tostring(previous.thresholdK or 0) end
+    end
+    local value = tonumber(buf)
+    if value and value > limitFor(field) then return true end
+    app.ui.editBuf = buf
+    app.renderer:invalidate("config_table")
+    return true
+end
+local function dispatch(app, action)
+    if not action then return false end
+    if action.type == "page" then
+        return app.setPage(action.page)
+    elseif action.type == "detail_level" then
+        app.ui.detailLevel = action.level
+        app.renderer:invalidate("status")
+        return true
+    elseif action.type == "detail_back" then
+        app.ui.detailLevel = nil
+        app.renderer:invalidate("status")
+        return true
+    elseif action.type == "chart_level" then
+        app.ui.chartLevel = action.level
+        app.renderer:invalidate("chart")
+        return true
+    elseif action.type == "select_cell" then
+        return selectCell(app, action.level, action.field)
+    elseif action.type == "select_global" then
+        return selectGlobal(app, action.field)
+    elseif action.type == "keypad" then
+        return applyKeypad(app, action)
+    elseif action.type == "produce_page" then
+        app.ui.producePage = math.max(1, (app.ui.producePage or 1) + (tonumber(action.delta) or 0))
+        app.renderer:invalidate("config_table")
+        return true
+    elseif action.type == "produce_candidate_page" then
+        app.ui.produceCandidatePage = math.max(1,
+            (app.ui.produceCandidatePage or 1) + (tonumber(action.delta) or 0))
+        app.renderer:invalidate("config_table")
+        return true
+    elseif action.type == "theme" then
+        if app.readOnly then return false end
+        local changed = app.setTheme(action.value)
+        if changed and app.actionHandler then
+            app.actionHandler("theme_set", { value = action.value })
+        end
+        return changed
+    elseif action.type == "option" and app.actionHandler then
+        local ok = app.actionHandler(action.name, action)
+        if ok ~= false then
+            clearEdit(app)
+        end
+        app.renderer:invalidate("config_table")
+        return true
+    elseif action.type == "command" and app.actionHandler then
+        if app.readOnly and action.name ~= "quit" then return false end
+        local ok = app.actionHandler(action.name, action)
+        if ok ~= false and action.name == "produce_bind_begin" then
+            app.ui.produceCandidatePage = 1
+        elseif ok ~= false and action.name == "produce_bind_select" then
+            app.ui.produceCandidatePage = 1
+        end
+        app.renderer:invalidate("config_table")
+        return true
     end
     return false
 end
-function view.statusArea(x, y)
-    if fstate.currentTab ~= "overview" or not fstate.hit(fstate.areas.status, x, y) then
+function input.handle(app, signal)
+    if not signal then return false end
+    local name = signal[1]
+    if name == "screen_resized" then
+        local width, height = require("component").gpu.getResolution()
+        app.layout(width, height)
+        return true
+    end
+    if name == "key_down" then
+        local char = signal[3]
+        if char == 116 or char == 84 then
+            if app.readOnly then return false end
+            return app.togglePage()
+        elseif char == 120 or char == 88 then
+            if app.readOnly then return false end
+            if app.actionHandler then app.actionHandler("system_toggle") end
+            return true
+        elseif char == 114 or char == 82 then
+            if app.readOnly then return false end
+            if app.actionHandler then app.actionHandler("refresh") end
+            return true
+        end
         return false
     end
-    if fstate.detailLevel then
-        fstate.detailLevel = nil
-    else
-        for level, box in pairs(fstate.levelRows or {}) do
-            if fstate.hit(box, x, y) then
-                fstate.detailLevel = level
-                break
-            end
+    if name == "touch" then
+        return dispatch(app, app.renderer:hit(signal[3], signal[4]))
+    end
+    return false
+end
+return input
+
+frontend/model/logs.lua
+882
+local logs_model = {}
+local LEVELS = {
+    error = true,
+    warn = true,
+    system = true,
+    diag = true,
+}
+local PREFIX = {
+    error = "[错误] ",
+    warn = "[警告] ",
+    system = "[系统] ",
+}
+function logs_model.build(source)
+    local entries = {}
+    local revision = 0
+    for _, record in ipairs((source and source.entries) or {}) do
+        local level = LEVELS[record.kind] and record.kind or "system"
+        if level ~= "diag" then
+            revision = tonumber(record.seq) or revision
+            entries[#entries + 1] = {
+                seq = tonumber(record.seq) or 0,
+                at = tonumber(record.at) or 0,
+                kind = level,
+                text = (PREFIX[level] or "") .. tostring(record.text or ""),
+            }
         end
     end
-    return true
+    return {
+        revision = revision,
+        entries = entries,
+    }
 end
-function view.quitButton(x, y)
-    return fstate.hit(fstate.buttons.quit, x, y)
-end
-return view
+return logs_model
 
-frontend/widgets.lua
-3804
+frontend/model/overview.lua
+8560
+local constants = require("shared.constants")
+local util = require("shared.util")
+local logs_model = require("frontend.model.logs")
+local overview = {}
+local function numberText(value)
+    value = tonumber(value)
+    if value == nil then return "-" end
+    return util.formatShortNumber(value)
+end
+local function ageText(age)
+    if age == nil then return "-" end
+    return string.format("%.0fs", age)
+end
+local function hostText(switch)
+    if switch == nil then return "读取失败", "danger" end
+    if switch then return "已开启", "success" end
+    return "已关闭", "danger"
+end
+function overview.build(read)
+    local system = read.system or {}
+    local hardware = read.hardware or {}
+    local water = read.water or {}
+    local host = read.host or {}
+    local power = read.power or {}
+    local sourceLevels = read.levels or {}
+    local levels = {}
+    local observedLevels = 0
+    local machineTotal = 0
+    for level = 1, constants.LEVEL_COUNT do
+        local source = sourceLevels[level] or {}
+        local value = tonumber(source.water)
+        if value ~= nil then observedLevels = observedLevels + 1 end
+        local rule = source.rule or {}
+        local deployed = tonumber(source.deployed) or 0
+        local active = tonumber(source.active)
+        local base = tonumber(rule.effectiveThreshold) or 0
+        local runText = deployed == 0 and "-" or ((active == nil) and "-" or (active .. "/" .. deployed))
+        local switchText
+        local switchRole
+        if deployed == 0 then
+            switchText, switchRole = "未部署", "danger"
+        elseif source.switch == nil then
+            switchText, switchRole = "读取失败", "danger"
+        elseif source.switch then
+            switchText, switchRole = "开 " .. runText, "success"
+        else
+            switchText, switchRole = "关 " .. runText, "warning"
+        end
+        local waterText = numberText(value)
+        local thresholdText = numberText(rule.effectiveThreshold or 0)
+        local sample = tonumber(source.sample)
+        local learned = tonumber(source.learned)
+        local suggest = tonumber(source.suggest)
+        local sampleStale = (active or 0) == 0 and sample ~= nil
+        local sampleRole = "text"
+        if sampleStale then
+            sampleRole = "disabled"
+        elseif sample ~= nil and learned == sample then
+            sampleRole = "accent"
+        end
+        local suggestRole = "text"
+        if sample ~= nil and suggest ~= nil then
+            suggestRole = suggest == sample and "accent" or "danger"
+        end
+        levels[level] = {
+            level = level,
+            label = constants.levelLabel(level),
+            value = value,
+            valueText = numberText(value),
+            thresholdText = thresholdText,
+            waterText = waterText,
+            waterOfText = waterText .. "/" .. thresholdText,
+            ratio = (value and base > 0) and math.min(1, value / base) or 0,
+            role = value == nil and "disabled" or (value > 0 and "success" or "warning"),
+            deployed = deployed,
+            deployText = "×" .. tostring(deployed),
+            active = active,
+            running = deployed > 0 and (active or 0) > 0,
+            runText = runText,
+            switch = source.switch,
+            switchText = switchText,
+            switchRole = switchRole,
+            sample = sample,
+            sampleText = sample and numberText(sample) or "-",
+            sampleRole = sampleRole,
+            sampleStale = sampleStale,
+            learned = learned,
+            suggestText = suggest and numberText(suggest) or "-",
+            suggestRole = suggestRole,
+            machines = source.machines or {},
+            successText = source.success and (tostring(source.success) .. "%") or "-",
+            rateText = "成功率 " .. (source.success and (tostring(source.success) .. "%") or "-"),
+            mark = rule.enabled and "[√]" or "[ ]",
+            rule = rule,
+        }
+        machineTotal = machineTotal + deployed
+    end
+    local statusText = "等待采集"
+    local statusRole = "disabled"
+    if hardware.observed and water.observed then
+        if system.awaiting then
+            statusText, statusRole = "等待用户处理", "warning"
+        else
+            statusText = system.running and "自动调度中" or "停机待启动"
+            statusRole = system.running and "success" or "disabled"
+        end
+    elseif hardware.observed or water.observed then
+        statusText = "部分数据"
+        statusRole = "warning"
+    end
+    local hostValue, hostRole = hostText(host.switch)
+    local progress, progressMax = tonumber(host.progress), tonumber(host.progressMax)
+    local cycleRatio = (progress and progressMax and progressMax > 0)
+        and math.max(0, math.min(1, progress / progressMax)) or 0
+    local cycleText = (progress and progressMax and progressMax > 0)
+        and string.format("%d%%", math.floor(cycleRatio * 100 + 0.5)) or "未运行"
+    local rateMode = system.mode == "rate"
+    local controlRows = {
+        { label = "系统状态：", value = statusText, role = statusRole },
+        { label = "净水主机：", value = hostValue, role = hostRole },
+        { label = "运行模式：", value = rateMode and "速率调度" or "阈值调度", role = "accent" },
+        { label = "功率概况：", value = numberText(power.used or 0) .. " / " .. numberText(power.all or 0) .. " EU/t", role = "accent" },
+        { label = "ME接口：", value = hardware.me and "已连接" or "未连接", role = hardware.me and "success" or "danger", optional = true },
+        { label = "部署机器：", value = machineTotal .. " 台（T1–T8）", role = "accent" },
+    }
+    local net = read.net or {}
+    return {
+        revision = read.revision,
+        title = "PurifyWater V2",
+        version = constants.CODE_VERSION,
+        status = { text = statusText, role = statusRole },
+        summary = {
+            hardwareText = hardware.observed
+                and string.format("%d 个组件 · %s", hardware.count or 0, ageText(hardware.age))
+                or "等待硬件",
+            waterText = water.observed
+                and string.format("%d/%d 级 · %s", observedLevels, constants.LEVEL_COUNT, ageText(water.age))
+                or "等待水位",
+            logText = string.format("%d 条", #(read.logs and read.logs.entries or {})),
+        },
+        control = {
+            rows = controlRows,
+            buttons = {
+                system = {
+                    label = system.running and "停机" or "启动系统",
+                    action = "system_toggle",
+                    role = system.running and "success" or "text",
+                    active = system.running,
+                },
+                mode = {
+                    label = rateMode and "切到阈值调度" or "切到速率调度",
+                    action = "mode_toggle",
+                    role = "accent",
+                },
+                subparam = {
+                    label = rateMode
+                        and (system.enforceThreshold and "阈值约束：开" or "阈值约束：关")
+                        or (system.priority == "high" and "切到低级水优先" or "切到高级水优先"),
+                    action = rateMode and "threshold_enforce_toggle" or "priority_toggle",
+                    role = (not rateMode and system.priority == "high") and "danger" or "text",
+                    background = (not rateMode and system.priority == "high") and "chipDanger" or nil,
+                },
+                refresh = { label = "刷新扫描", action = "refresh", role = "accent" },
+                net = {
+                    label = net.enabled and "无线广播：开" or "无线广播：关",
+                    action = "net_toggle",
+                    role = net.enabled and "accent" or "warning",
+                    active = net.enabled,
+                    disabled = net.available ~= true,
+                },
+                quit = { label = "退出程序", action = "quit", role = "danger" },
+            },
+        },
+        cycle = { ratio = cycleRatio, text = cycleText },
+        levels = levels,
+        chart = {
+            history = read.history or { times = {}, values = {} },
+        },
+        settings = {
+            autostart = system.autostart == true,
+            autostartStale = system.autostartStale == true,
+            autostartPath = system.autostartPath,
+        },
+        logs = logs_model.build(read.logs),
+    }
+end
+return overview
+
+frontend/pages/overview.lua
+1896
+local TabBar = require("frontend.ui.components.tabbar")
+local Control = require("frontend.ui.components.control")
+local Status = require("frontend.ui.components.status")
+local Chart = require("frontend.ui.components.chart")
+local LogPanel = require("frontend.ui.components.log")
+local Page = {}
+Page.__index = Page
+function Page.new()
+    local self = setmetatable({}, Page)
+    self.tabbar = TabBar.new()
+    self.control = Control.new()
+    self.status = Status.new()
+    self.chart = Chart.new()
+    self.log = LogPanel.new()
+    self.components = { self.tabbar, self.control, self.status, self.chart, self.log }
+    return self
+end
+function Page:update(view)
+    self.view = view
+    self.tabbar:setProps({ page = "overview" })
+    self.control:setProps(view.control or {})
+    self.status:setProps({ levels = view.levels or {}, cycle = view.cycle or {} })
+    self.chart:setProps({ history = view.chart and view.chart.history or { times = {}, values = {} } })
+    self.log:setProps({ log = view.logs })
+end
+function Page:layout(width, height)
+    local bodyY = 2
+    local bodyH = math.max(3, height - 1)
+    local leftW = math.max(26, math.min(math.floor(width * 0.30), 46, width - 40))
+    local gap = 1
+    local rightX = leftW + 2
+    local rightW = math.max(1, width - rightX + 1)
+    self.tabbar:setRect({ x = 1, y = 1, w = width, h = 1 })
+    local controlH = math.min(18, math.max(6, bodyH - 7))
+    local logH = math.max(3, bodyH - controlH - gap)
+    self.control:setRect({ x = 1, y = bodyY, w = leftW, h = controlH })
+    self.log:setRect({ x = 1, y = bodyY + controlH + gap, w = leftW, h = logH })
+    local statusH = bodyH >= 30 and 19 or 12
+    local chartH = math.max(4, bodyH - statusH - gap)
+    self.status:setRect({ x = rightX, y = bodyY, w = rightW, h = statusH })
+    self.chart:setRect({ x = rightX, y = bodyY + statusH + gap, w = rightW, h = chartH })
+end
+return Page
+
+frontend/theme/dark.lua
+1406
+return {
+    id = "dark",
+    label = "深色",
+    color = {
+        canvas = 0x0d1117,
+        surface = { base = "canvas" },
+        surfaceAlt = { base = "canvas", color = 0x64748b, alpha = 0.14 },
+        text = 0xe5e7eb,
+        muted = 0x94a3b8,
+        accent = 0x38bdf8,
+        success = 0x22c55e,
+        warning = 0xf59e0b,
+        danger = 0xef4444,
+        disabled = 0x64748b,
+        border = 0x1e3a8a,
+        borderFocus = 0x38bdf8,
+        chartGrid = 0x2a3a5a,
+        chartAxis = 0x64748b,
+        barTrack = 0x86efac,
+        barFill = 0x22c55e,
+        barEmpty = 0x450a0a,
+        cycleTrack = 0x1e293b,
+        cycleFill = 0x38bdf8,
+        chip = { base = "surface", color = 0x64748b, alpha = 0.22 },
+        chipActive = { base = "surface", color = 0x475569, alpha = 0.72 },
+        chipDisabled = { base = "surface", color = 0x000000, alpha = 0.32 },
+        cellSelected = { base = "surface", color = 0x475569, alpha = 0.72 },
+        chipWarm = { base = "surface", color = 0xf59e0b, alpha = 0.12 },
+        chipCool = { base = "surface", color = 0x38bdf8, alpha = 0.14 },
+        chipDanger = { base = "surface", color = 0xef4444, alpha = 0.16 },
+    },
+    log = {
+        error = "danger",
+        warn = "warning",
+        system = "text",
+        diag = "disabled",
+    },
+    series = { 0x38bdf8, 0x22c55e, 0xf59e0b, 0xa855f7, 0xef4444, 0x14b8a6, 0xeab308, 0xf472b6 },
+}
+
+frontend/theme/light.lua
+1440
+return {
+    id = "light",
+    label = "浅色",
+    color = {
+        canvas = 0xe8edf3,
+        surface = { base = "canvas", color = 0xffffff, alpha = 0.28 },
+        surfaceAlt = { base = "surface", color = 0x64748b, alpha = 0.10 },
+        text = 0x3b3b3b,
+        muted = 0x616161,
+        accent = 0x005fb8,
+        success = 0x2ea043,
+        warning = 0xbf8803,
+        danger = 0xc72e0f,
+        disabled = 0x8b949e,
+        border = 0xd0d7de,
+        borderFocus = 0x005fb8,
+        chartGrid = 0xd0d7de,
+        chartAxis = 0x6e7681,
+        barTrack = 0xcfe8d5,
+        barFill = 0x2ea043,
+        barEmpty = 0xf4d7d7,
+        cycleTrack = 0xd8e2ef,
+        cycleFill = 0x005fb8,
+        chip = { base = "surface", color = 0x475569, alpha = 0.10 },
+        chipActive = { base = "surface", color = 0x475569, alpha = 0.20 },
+        chipDisabled = { base = "surface", color = 0x475569, alpha = 0.05 },
+        cellSelected = { base = "surface", color = 0x475569, alpha = 0.18 },
+        chipWarm = { base = "surface", color = 0xbf8803, alpha = 0.10 },
+        chipCool = { base = "surface", color = 0x005fb8, alpha = 0.11 },
+        chipDanger = { base = "surface", color = 0xc72e0f, alpha = 0.10 },
+    },
+    log = {
+        error = "danger",
+        warn = "warning",
+        system = "text",
+        diag = "disabled",
+    },
+    series = { 0x005fb8, 0x2ea043, 0xbf8803, 0x7e22ce, 0xc72e0f, 0x0f766e, 0xa16207, 0xbe185d },
+}
+
+frontend/theme/registry.lua
+1105
+local CONFIG = require("shared.config")
+local dark = require("frontend.theme.dark")
+local light = require("frontend.theme.light")
+local themes = {
+    dark = dark,
+    light = light,
+}
+local order = CONFIG.UI.THEMES or { "dark", "light" }
+local currentId = CONFIG.UI.DEFAULT_THEME or "dark"
+local registry = {}
+function registry.has(id)
+    return themes[id] ~= nil
+end
+function registry.get(id)
+    return themes[id] or themes[currentId]
+end
+function registry.list()
+    local out = {}
+    for _, id in ipairs(order) do
+        if themes[id] then out[#out + 1] = themes[id] end
+    end
+    return out
+end
+function registry.current()
+    return themes[currentId]
+end
+function registry.currentId()
+    return currentId
+end
+function registry.set(id)
+    if themes[id] then currentId = id end
+    return themes[currentId]
+end
+function registry.cycle()
+    local nextId = currentId
+    for index, id in ipairs(order) do
+        if id == currentId then
+            nextId = order[index % #order + 1]
+            break
+        end
+    end
+    currentId = nextId
+    return themes[currentId]
+end
+return registry
+
+frontend/ui/base.lua
+418
+local Component = {}
+function Component.setProps(self, props)
+    self.props = props or {}
+end
+function Component.setRect(self, rect)
+    self.rect = rect or self.rect
+end
+function Component.new(key, props)
+    return {
+        key = key,
+        props = props or {},
+        rect = { x = 1, y = 1, w = 0, h = 0 },
+        setProps = Component.setProps,
+        setRect = Component.setRect,
+    }
+end
+return Component
+
+frontend/ui/components/chart.lua
+9851
+local Component = require("frontend.ui.base")
+local constants = require("shared.constants")
+local util = require("shared.util")
+local Chart = {}
+local GUTTER = 7
+local function gameHoursText(realMinutes)
+    local hours = math.floor(util.realSecondsToGameHours((tonumber(realMinutes) or 0) * 60) + 0.5)
+    return math.max(1, hours)
+end
+function Chart.new()
+    local self = Component.new("chart", { history = { count = 0, values = {} } })
+    self.fingerprint = Chart.fingerprint
+    self.render = Chart.render
+    return self
+end
+function Chart:fingerprint(context)
+    local history = self.props.history or {}
+    local values = history.values or {}
+    local parts = {
+        self.key, self.rect.x, self.rect.y, self.rect.w, self.rect.h,
+        context.themeId, tostring(context.ui.chartLevel or 0),
+        tostring(history.count or 0), tostring(history.windowMinutes or 40),
+    }
+    for level = 1, constants.LEVEL_COUNT do
+        local series = values[level] or {}
+        parts[#parts + 1] = tostring(#series) .. ":" .. tostring(series[1] or "")
+            .. ":" .. tostring(series[#series] or "")
+    end
+    return table.concat(parts, "\x1f")
+end
+local function chips(_, context, r, windowMinutes)
+    local p = context.painter
+    local selected = context.ui.chartLevel or 0
+    local x = r.x + 2
+    local labels = { "全部", "T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8" }
+    for level = 0, 8 do
+        local text = " " .. labels[level + 1] .. " "
+        local width = p:measure(text)
+        local rect = { x = x, y = r.y + 1, w = width, h = 1 }
+        local active = selected == level
+        local bg = active and "chipActive" or "chip"
+        local fg = active and "canvas" or (level == 0 and "accent" or context.theme.series[level])
+        p:fill(rect, bg)
+        p:text(rect.x + 1, rect.y, labels[level + 1], fg, bg, width - 1)
+        context:hit({ type = "chart_level", level = level }, rect)
+        x = x + width + 1
+    end
+    local windowText = string.format("近 %d 游戏时", gameHoursText(windowMinutes))
+    p:textRight(r.x, r.y + 1, r.w - 2, windowText, "disabled", "surface")
+end
+local function metrics(r)
+    local x0 = r.x + 2 + 1 + GUTTER
+    local y0 = r.y + 3
+    local w = r.w - 2 * 2 - 2 - GUTTER
+    local h = r.h - 5
+    return x0, y0, w, h
+end
+local function shortNumber(value, width)
+    local text = util.formatVolume(tonumber(value) or 0)
+    width = math.max(1, math.floor(width or 1))
+    if #text <= width then return text end
+    local short = text:gsub("%.%d+", "")
+    return #short <= width and short or (short:sub(1, math.max(1, width - 1)) .. "…")
+end
+local function gutter(_, context, r, y, value, role)
+    local p = context.painter
+    p:textRight(r.x + 1, y, GUTTER, shortNumber(value, GUTTER), role or "warning", "surface")
+end
+local function grid(_, context, x0, y0, w, h)
+    local p = context.painter
+    p:setBackground("surface")
+    p:setForeground("chartGrid")
+    for row = 1, 3 do
+        local y = y0 + math.floor(h * row / 4)
+        p.gpu.fill(x0, y, w, 1, "·")
+    end
+    p:setForeground("chartAxis")
+    p.gpu.fill(x0 - 1, y0, 1, h, "│")
+    p.gpu.fill(x0, y0 + h - 1, w, 1, "─")
+    p.gpu.set(x0 - 1, y0 + h - 1, "└")
+end
+local function labels(_, context, x0, y0, w, h, count, interval)
+    local p = context.painter
+    if count < 2 then return end
+    local points = { 1, math.floor(count / 2) + 1, count }
+    for _, index in ipairs(points) do
+        local x = x0 + math.floor((index - 1) / (count - 1) * (w - 1))
+        local text
+        if index == count then
+            text = "现在"
+        else
+            local hours = math.floor(util.realSecondsToGameHours((count - index) * interval) + 0.5)
+            text = hours < 1 and "刚刚" or string.format("-%d 游戏时", hours)
+        end
+        local tx = x - math.floor(p:measure(text) / 2)
+        tx = math.max(x0, math.min(tx, x0 + w - p:measure(text)))
+        p:text(tx, y0 + h, text, "muted", "surface", w)
+    end
+end
+local function drawSeries(self, context, r, history, level)
+    local p = context.painter
+    local x0, y0, w, h = metrics(r)
+    if w < 8 or h < 4 then return end
+    local values = (history.values or {})[level] or {}
+    local count = #values
+    local windowMinutes = tonumber(history.windowMinutes) or 40
+    local label = constants.levelLabel(level)
+    p:text(x0, y0 - 1, string.format("近 %d 游戏时 %s 水量曲线（L）", gameHoursText(windowMinutes), label),
+        "accent", "surface", w)
+    if count < 2 then
+        p:text(x0, y0 + math.floor(h / 2), "数据采集中…", "warning", "surface", w)
+        return
+    end
+    local minimum, maximum = values[1], values[1]
+    for index = 2, count do
+        local value = values[index]
+        if value < minimum then minimum = value end
+        if value > maximum then maximum = value end
+    end
+    if minimum == maximum then maximum = minimum + 1 end
+    grid(self, context, x0, y0, w, h)
+    local color = context.theme.series[level]
+    p:setForeground(color)
+    p:setBackground("surface")
+    local previous
+    for index = 1, count do
+        local x = x0 + math.floor((index - 1) / (count - 1) * (w - 1))
+        local y = y0 + h - 1 - math.floor((values[index] - minimum) / (maximum - minimum) * (h - 1))
+        if previous then
+            local steps = math.max(1, math.abs(x - previous.x))
+            for step = 0, steps do
+                local px = previous.x + math.floor((x - previous.x) * step / steps)
+                local py = previous.y + math.floor((y - previous.y) * step / steps)
+                p.gpu.set(px, py, "█")
+            end
+        else
+            p.gpu.set(x, y, "█")
+        end
+        previous = { x = x, y = y }
+    end
+    gutter(self, context, r, y0, maximum, "warning")
+    gutter(self, context, r, y0 + h - 1, minimum, "warning")
+    labels(self, context, x0, y0, w, h, count, history.interval or 30)
+end
+local function niceCeil(value)
+    if value <= 0 then return 1 end
+    local power = 1
+    while power * 10 <= value do power = power * 10 end
+    local fraction = value / power
+    local step = fraction <= 1 and 1 or fraction <= 2 and 2 or fraction <= 5 and 5 or 10
+    return step * power
+end
+local function drawBars(self, context, r, history)
+    local p = context.painter
+    local x0, y0, w, h = metrics(r)
+    if w < 8 or h < 4 then return end
+    local values, data = {}, {}
+    for level = 1, constants.LEVEL_COUNT do
+        local series = (history.values or {})[level] or {}
+        values[level] = #series >= 2 and (series[#series] - series[1]) or 0
+        data[level] = #series
+    end
+    if history.count < 2 then
+        p:text(x0, y0 + math.floor(h / 2), "数据采集中…", "warning", "surface", w)
+        return
+    end
+    grid(self, context, x0, y0, w, h)
+    local extreme = 0
+    for index = 1, #values do
+        if math.abs(values[index]) > extreme then extreme = math.abs(values[index]) end
+    end
+    local bound = niceCeil(extreme * 1.05)
+    local minValue, maxValue = -bound, bound
+    local span = maxValue - minValue
+    local function yOf(value)
+        return y0 + h - 2 - math.floor((value - minValue) / span * (h - 2))
+    end
+    local zeroY = yOf(0)
+    p:setForeground("muted")
+    p:setBackground("surface")
+    p.gpu.fill(x0, zeroY, w, 1, "─")
+    local cellW = math.max(3, math.floor(w / constants.LEVEL_COUNT))
+    local barW = math.max(1, math.min(cellW - 2, w))
+    for level = 1, constants.LEVEL_COUNT do
+        local value = values[level]
+        local barX = x0 + (level - 1) * cellW + math.floor((cellW - barW) / 2)
+        barX = math.max(x0, math.min(barX, x0 + w - barW))
+        local valueY = yOf(value)
+        local top = math.max(y0, math.min(zeroY, valueY))
+        local bottom = math.min(y0 + h - 1, math.max(zeroY, valueY))
+        if value ~= 0 then
+            local color = value >= 0 and context.theme.color.accent or context.theme.color.danger
+            p:fill({ x = barX, y = top, w = barW, h = math.max(1, bottom - top + 1) }, color)
+        end
+        local text = "T" .. level
+        local labelX = x0 + (level - 1) * cellW
+            + math.floor((cellW - p:measure(text)) / 2)
+        p:text(labelX, y0 + h, text, "muted", "surface", cellW)
+        if cellW >= 7 and data[level] >= 2 then
+            local valueText = shortNumber(value, cellW)
+            local textX = x0 + (level - 1) * cellW
+                + math.floor((cellW - p:measure(valueText)) / 2)
+            textX = math.max(x0, math.min(textX, x0 + w - p:measure(valueText)))
+            local textY = value >= 0 and (top - 1) or (bottom + 1)
+            textY = math.max(y0, math.min(y0 + h - 2, textY))
+            p:text(textX, textY, valueText, value >= 0 and "accent" or "danger", "surface", cellW)
+        end
+    end
+    gutter(self, context, r, y0, bound, "warning")
+    gutter(self, context, r, zeroY, 0, "muted")
+    gutter(self, context, r, y0 + h - 2, -bound, "warning")
+end
+function Chart:render(context)
+    local p = context.painter
+    local r = self.rect
+    p:panel(r)
+    if r.h < 7 or r.w < 24 then return end
+    local history = self.props.history or { count = 0, values = {} }
+    local windowMinutes = tonumber(history.windowMinutes) or 40
+    chips(self, context, r, windowMinutes)
+    local body = { x = r.x + 1, y = r.y + 2, w = math.max(1, r.w - 2), h = math.max(1, r.h - 3) }
+    p:fill(body, "surface")
+    if (history.count or 0) == 0 then
+        local tip = "数据采集中…"
+        p:text(r.x + math.max(1, math.floor((r.w - p:measure(tip)) / 2)),
+            r.y + math.floor(r.h / 2), tip, "warning", "surface", r.w - 6)
+        return
+    end
+    local level = context.ui.chartLevel or 0
+    if level == 0 then
+        drawBars(self, context, r, history)
+    else
+        drawSeries(self, context, r, history, level)
+    end
+end
+return Chart
+
+frontend/ui/components/control.lua
+3364
+local Component = require("frontend.ui.base")
+local Control = {}
+function Control.new()
+    local self = Component.new("control", { rows = {}, buttons = {} })
+    self.fingerprint = Control.fingerprint
+    self.render = Control.render
+    return self
+end
+function Control:fingerprint(context)
+    local parts = { self.key, self.rect.x, self.rect.y, self.rect.w, self.rect.h, context.themeId }
+    for _, row in ipairs(self.props.rows or {}) do
+        parts[#parts + 1] = table.concat({ row.label, row.value, row.role }, ":")
+    end
+    for _, key in ipairs({ "system", "mode", "subparam", "refresh", "net", "quit" }) do
+        local button = (self.props.buttons or {})[key] or {}
+        parts[#parts + 1] = table.concat({
+            key, tostring(button.label), tostring(button.disabled), tostring(button.role),
+            tostring(button.active), tostring(button.background),
+        }, ":")
+    end
+    return table.concat(parts, "\x1f")
+end
+local function drawButton(component, context, key, rect)
+    local button = (component.props.buttons or {})[key]
+    if not button or rect.w < 2 then return end
+    local p = context.painter
+    local disabled = button.disabled == true or (context.readOnly and key ~= "quit")
+    p:button(rect, button.label or key, button.active == true, disabled, button.role, button.background)
+    if not disabled then
+        context:hit({ type = "command", name = button.action }, rect)
+    end
+end
+local function columns(area, weights)
+    local out, total = {}, 0
+    for _, weight in ipairs(weights) do total = total + weight end
+    local x, left = area.x, area.w
+    for index, weight in ipairs(weights) do
+        local width = (index == #weights) and left or math.floor(area.w * weight / total)
+        out[index] = { x = x, w = width }
+        x = x + width
+        left = left - width
+    end
+    return out
+end
+function Control:render(context)
+    local p = context.painter
+    local r = self.rect
+    local rows = self.props.rows or {}
+    p:panel(r)
+    p:text(r.x + 2, r.y + 1, "控制面板", "accent", "surface", math.max(1, r.w - 4))
+    local cols = columns({ x = r.x + 2, w = math.max(1, r.w - 4) }, { 0.34, 0.66 })
+    local maxRows = math.max(0, r.h - 8)
+    for index = 1, math.min(#rows, maxRows) do
+        local row = rows[index]
+        local y = r.y + 1 + index
+        p:text(cols[1].x, y, row.label, "text", "surface", cols[1].w)
+        p:text(cols[2].x, y, row.value, row.role or "text", "surface", math.max(1, cols[2].w - 1))
+    end
+    local step = 2
+    local startY = r.y + r.h - 2 - 8
+    if startY <= r.y + 1 + math.min(#rows, maxRows) then
+        step = 1
+        startY = r.y + r.h - 2 - 4
+    end
+    local x = r.x + 3
+    local fullW = math.max(2, r.w - 6)
+    local halfW = math.floor((fullW - 1) / 2)
+    drawButton(self, context, "system", { x = x, y = startY, w = fullW, h = 1 })
+    drawButton(self, context, "mode", { x = x, y = startY + step, w = halfW, h = 1 })
+    drawButton(self, context, "subparam",
+        { x = x + halfW + 1, y = startY + step, w = fullW - halfW - 1, h = 1 })
+    drawButton(self, context, "refresh", { x = x, y = startY + step * 2, w = fullW, h = 1 })
+    drawButton(self, context, "net", { x = x, y = startY + step * 3, w = fullW, h = 1 })
+    drawButton(self, context, "quit", { x = x, y = startY + step * 4, w = fullW, h = 1 })
+end
+return Control
+
+frontend/ui/components/log.lua
+2594
 local unicode = require("unicode")
-local fstate  = require("frontend.state")
-local theme   = require("frontend.theme")
-local widgets = {}
-function widgets.clearArea(x, y, w, h, bgColor)
-    fstate.gpu.setBackground(bgColor or theme.COLORS.BG)
-    fstate.gpu.fill(x, y, w, h, " ")
+local Component = require("frontend.ui.base")
+local LogPanel = {}
+function LogPanel.new()
+    local self = Component.new("log", { entries = {} })
+    self.prepare = LogPanel.prepare
+    self.fingerprint = LogPanel.fingerprint
+    self.render = LogPanel.render
+    self._wrapKey = nil
+    self._wrapped = {}
+    return self
 end
-function widgets.drawText(x, y, text, color, bgColor)
-    fstate.gpu.setForeground(color or theme.COLORS.TEXT)
-    fstate.gpu.setBackground(bgColor or theme.COLORS.BG)
-    fstate.gpu.set(x, y, tostring(text))
-end
-function widgets.drawBorder(x, y, w, h, color, bgColor)
-    color   = color or theme.COLORS.BORDER
-    bgColor = bgColor or theme.COLORS.BG
-    fstate.gpu.setForeground(color)
-    fstate.gpu.setBackground(bgColor)
-    fstate.gpu.set(x, y, "┌" .. string.rep("─", w - 2) .. "┐")
-    for i = y + 1, y + h - 2 do
-        fstate.gpu.set(x, i, "│")
-        fstate.gpu.set(x + w - 1, i, "│")
-    end
-    fstate.gpu.set(x, y + h - 1, "└" .. string.rep("─", w - 2) .. "┘")
-end
-function widgets.drawPanelFrame(area, title, titleColor, borderColor)
-    if not area or area.w < 2 or area.h < 2 then return false end
-    widgets.clearArea(area.x, area.y, area.w, area.h)
-    widgets.drawBorder(area.x, area.y, area.w, area.h, borderColor)
-    if title and title ~= "" and area.h >= 3 then
-        widgets.drawText(area.x + 2, area.y + 1, title, titleColor or theme.COLORS.TEXT_CYAN)
-    end
-    return true
-end
-function widgets.drawButton(x, y, w, text, color, bgColor, disabled)
-    if disabled then
-        color   = theme.COLORS.TEXT_DISABLED
-        bgColor = theme.COLORS.BTN_BG_DISABLED
-    end
-    bgColor = bgColor or theme.COLORS.BTN_BG
-    color   = color or theme.COLORS.TEXT
-    fstate.gpu.setBackground(bgColor)
-    fstate.gpu.setForeground(color)
-    local textW   = unicode.wlen(text)
-    local padding = math.max(0, math.floor((w - textW) / 2))
-    local tail    = math.max(0, w - padding - textW)
-    fstate.gpu.set(x, y, string.rep(" ", padding) .. text .. string.rep(" ", tail))
-    fstate.gpu.setBackground(theme.COLORS.BG)
-end
-function widgets.drawBar(x, y, w, ratio, fillColor, bgColor)
-    ratio      = math.max(0, math.min(1, ratio or 0))
-    local fill = math.floor(w * ratio)
-    if not bgColor then
-        bgColor = (fill > 0) and theme.COLORS.BAR_BG or theme.COLORS.BAR_BG_EMPTY
-    end
-    fstate.gpu.setBackground(bgColor)
-    fstate.gpu.fill(x, y, w, 1, " ")
-    if fill > 0 then
-        fstate.gpu.setBackground(fillColor or theme.COLORS.BAR_FILL)
-        fstate.gpu.fill(x, y, fill, 1, " ")
-    end
-    fstate.gpu.setBackground(theme.COLORS.BG)
-end
-function widgets.textAreaRows(area, bottomMargin)
-    bottomMargin = bottomMargin or 2
-    local top    = area.y + 2
-    local bottom = area.y + area.h - 2 - bottomMargin
-    if bottom < top then bottom = top end
-    return { top = top, bottom = bottom, rows = bottom - top + 1 }
-end
-function widgets.wrapText(text, maxWidth)
+local function wrapLine(text, width)
     local lines, current = {}, ""
-    for i = 1, unicode.len(text) do
-        local char = unicode.sub(text, i, i)
-        if unicode.wlen(current .. char) > maxWidth then
+    for index = 1, unicode.len(text) do
+        local char = unicode.sub(text, index, index)
+        if unicode.wlen(current .. char) > width then
             lines[#lines + 1] = current
             current = char
         else
             current = current .. char
         end
     end
-    if unicode.wlen(current) > 0 then lines[#lines + 1] = current end
+    lines[#lines + 1] = current
     return lines
 end
-function widgets.centerX(x, w, text)
-    return x + math.floor((w - unicode.wlen(text)) / 2)
+function LogPanel:prepare()
+    local width = math.max(1, self.rect.w - 4)
+    local view = self.props.log or {}
+    local revision = tonumber(view.revision) or 0
+    local key = tostring(revision) .. ":" .. tostring(width)
+    if self._wrapKey == key then return end
+    local wrapped = {}
+    for _, entry in ipairs(view.entries or {}) do
+        local text = tostring(entry.text or "")
+        for line in (text .. "\n"):gmatch("(.-)\n") do
+            local pieces = wrapLine(line, width)
+            for _, piece in ipairs(pieces) do
+                wrapped[#wrapped + 1] = {
+                    text = piece,
+                    kind = entry.kind or "info",
+                    seq = entry.seq,
+                }
+            end
+        end
+    end
+    self._wrapKey = key
+    self._wrapped = wrapped
 end
-function widgets.drawCenteredTip(area, text, color)
-    widgets.drawText(widgets.centerX(area.x, area.w, text),
-        area.y + math.floor(area.h / 2), text, color or theme.COLORS.TEXT_YELLOW)
+function LogPanel:fingerprint(context)
+    self:prepare()
+    return table.concat({
+        self.key,
+        self.rect.x, self.rect.y, self.rect.w, self.rect.h,
+        context.themeId,
+        self._wrapKey,
+    }, "\x1f")
 end
-function widgets.drawTextRight(x, w, y, text, color, bgColor)
-    local startX = x + w - unicode.wlen(text)
-    widgets.drawText(startX, y, text, color, bgColor)
-    return startX
+function LogPanel:render(context)
+    local p = context.painter
+    local r = self.rect
+    self:prepare()
+    p:panel(r, "系统日志")
+    local rows = math.max(0, r.h - 2)
+    if rows == 0 then return end
+    p:fill({ x = r.x + 1, y = r.y + 1, w = r.w - 2, h = rows }, "surface")
+    local total = #self._wrapped
+    if total == 0 then
+        p:text(r.x + 2, r.y + 1, "暂无日志", "muted", "surface", r.w - 4)
+        return
+    end
+    local start = math.max(1, total - rows + 1)
+    local y = r.y + 1
+    for index = start, math.min(total, start + rows - 1) do
+        local line = self._wrapped[index]
+        local role = context.theme.log[line.kind] or "text"
+        p:text(r.x + 2, y, line.text, role, "surface", r.w - 4)
+        y = y + 1
+    end
 end
-return widgets
+return LogPanel
 
-monitor.lua
-7083
-local selfPath   = (debug.getinfo(1, "S").source or ""):gsub("^@", "")
-local selfDir    = selfPath:match("^(.*)[/\\][^/\\]*$")
-local candidates = { "core/locate.lua", "./core/locate.lua", "PurifyWater/core/locate.lua" }
-if selfDir then table.insert(candidates, selfDir .. "/core/locate.lua") end
-local locate = nil
-for _, path in ipairs(candidates) do
-    local chunk = loadfile(path)
-    if chunk then
-        local ok, mod = pcall(chunk)
-        if ok and type(mod) == "table" and type(mod.appDir) == "function" then
-            locate = mod
-            break
+frontend/ui/components/status.lua
+12324
+local Component = require("frontend.ui.base")
+local constants = require("shared.constants")
+local util = require("shared.util")
+local Status = {}
+function Status.new()
+    local self = Component.new("status", { levels = {}, cycle = {} })
+    self.fingerprint = Status.fingerprint
+    self.render = Status.render
+    return self
+end
+function Status:fingerprint(context)
+    local cycle = self.props.cycle or {}
+    local parts = {
+        self.key, self.rect.x, self.rect.y, self.rect.w, self.rect.h,
+        context.themeId,
+        tostring(context.ui.detailLevel or 0),
+        tostring(cycle.text), tostring(math.floor((cycle.ratio or 0) * 100)),
+    }
+    for level = 1, 8 do
+        local row = self.props.levels[level] or {}
+        parts[#parts + 1] = table.concat({
+            row.label, tostring(row.switchText), tostring(row.waterOfText),
+            tostring(math.floor((row.ratio or 0) * 100)), tostring(row.rateText),
+            tostring(row.sample), tostring(row.sampleText), tostring(row.learned),
+            tostring(row.suggestText), tostring(row.sampleRole), tostring(row.suggestRole),
+            tostring(row.deployText), tostring(row.mark), tostring(row.running),
+            tostring(row.active), tostring(row.deployed),
+            tostring(row.rule and row.rule.userThreshold),
+            tostring(row.rule and row.rule.effectiveThreshold),
+            tostring(row.rule and row.rule.overridden),
+        }, ":")
+        for _, machine in ipairs(row.machines or {}) do
+            parts[#parts + 1] = table.concat({
+                tostring(machine.address), tostring(machine.active),
+                tostring(machine.current), tostring(machine.confirmed),
+                tostring(machine.success),
+            }, ":")
+        end
+    end
+    return table.concat(parts, "\x1f")
+end
+local function columns(area, weights)
+    local out, total = {}, 0
+    for _, weight in ipairs(weights) do total = total + weight end
+    if total <= 0 then total = 1 end
+    local x, left = area.x, area.w
+    for index, weight in ipairs(weights) do
+        local width = (index == #weights) and left
+            or math.floor(area.w * weight / total)
+        out[index] = { x = x, w = width }
+        x = x + width
+        left = left - width
+    end
+    return out
+end
+local BULLET = "· "
+local RULE = "─"
+local function ruleLine(p, x, y, width, text)
+    local head = text ~= "" and (" " .. text .. " ") or ""
+    local line = RULE .. head .. string.rep(RULE, math.max(0, width - p:measure(head) - 1))
+    p:text(x, y, line, "disabled", "surface")
+end
+local function machineRows(p, row)
+    local list, currentW, learnedW, rateW = {}, 0, 0, 0
+    local learnedFallback = tonumber(row.learned)
+    for index, machine in ipairs(row.machines or {}) do
+        local current = machine.active
+            and (machine.current ~= nil and util.formatNumber(machine.current) or "-")
+            or "停"
+        local learnedValue = machine.confirmed or learnedFallback
+        local learned = learnedValue ~= nil and util.formatNumber(learnedValue) or "-"
+        local rate = machine.success ~= nil and (tostring(machine.success) .. "%") or "-"
+        list[#list + 1] = { index, current, learned, rate, machine.active == true }
+        currentW = math.max(currentW, p:measure(current))
+        learnedW = math.max(learnedW, p:measure(learned))
+        rateW = math.max(rateW, p:measure(rate))
+    end
+    local function cell(prefix, value, width)
+        return prefix .. string.rep(" ", math.max(0, width - p:measure(value))) .. value
+    end
+    local out = {}
+    for _, item in ipairs(list) do
+        out[#out + 1] = {
+            label = string.format("%s#%d", BULLET, item[1]),
+            value = table.concat({
+                cell("当前并行 ", item[2], currentW),
+                cell("学习并行 ", item[3], learnedW),
+                cell("成功率 ", item[4], rateW),
+            }, "   "),
+            role = item[5] and "success" or "disabled",
+        }
+    end
+    return out
+end
+local function detailRows(p, row, level)
+    local per = constants.POWER_LEVELS[level] or 0
+    local deployed = tonumber(row.deployed) or 0
+    local suggest = tonumber(row.suggest) or 0
+    local running = (tonumber(row.active) or 0) > 0
+    local stale = running and "" or "（上次运行）"
+    local num = util.formatNumber
+    local rows = {}
+    local function powerOf(parallel, perParallel, machines)
+        return (tonumber(parallel) or 0) * 1.0
+            * (tonumber(perParallel) or 0) * (tonumber(machines) or 0)
+    end
+    local function separator(text)
+        rows[#rows + 1] = { kind = "rule", text = text }
+    end
+    local function item(label, value, role)
+        rows[#rows + 1] = { kind = "item", label = BULLET .. label, value = value, role = role or "text" }
+    end
+    separator("基础")
+    item("单并行功耗", num(per) .. " EU/t")
+    item("已部署机器", tostring(deployed) .. " 台")
+    local rule = row.rule or {}
+    local userThreshold = tonumber(rule.userThreshold)
+    local actualThreshold = tonumber(rule.effectiveThreshold)
+    local thresholdText
+    if rule.overridden == true and userThreshold ~= nil and actualThreshold ~= nil then
+        thresholdText = util.formatNumber(math.floor(userThreshold / 1000)) .. " kL → " .. util.formatNumber(math.floor(actualThreshold / 1000)) .. " kL"
+    else
+        thresholdText = util.formatNumber(math.floor((actualThreshold or 0) / 1000)) .. " kL"
+    end
+    item("实际阈值", thresholdText, rule.overridden == true and "warning" or "text")
+    separator("建议")
+    item("每台并行", num(suggest), "accent")
+    item("每台功耗", num(powerOf(suggest, per, 1)) .. " EU/t", "accent")
+    item("全开总功耗", num(powerOf(suggest, per, deployed)) .. " EU/t", "accent")
+    separator("当前功耗")
+    local perPower = tonumber(row.sample)
+    local totalPower = perPower and powerOf(perPower, per, deployed) or nil
+    item("当前等级总功耗", totalPower and (num(totalPower) .. " EU/t" .. stale) or "-",
+        running and "warning" or "disabled")
+    separator("每台机器")
+    for _, machineRow in ipairs(machineRows(p, row)) do
+        rows[#rows + 1] = { kind = "item", label = machineRow.label,
+            value = machineRow.value, role = machineRow.role }
+    end
+    return rows
+end
+local function detail(self, context)
+    local p = context.painter
+    local r = self.rect
+    local level = context.ui.detailLevel
+    local row = self.props.levels[level]
+    p:panel(r)
+    if not row then
+        p:text(r.x + 2, r.y + 1, "净水单元详情：没有选中等级（点某一行进来）",
+            "warning", "surface", r.w - 4)
+        context:hit({ type = "detail_back" }, { x = r.x + 1, y = r.y + 1, w = r.w - 2, h = r.h - 2 })
+        return
+    end
+    local title = string.format("净水单元详情 · %s", row.label or ("T" .. level))
+    p:text(r.x + 2, r.y + 1, title, "accent", "surface", r.w - 4)
+    p:textRight(r.x + 2, r.y + 1, r.w - 4, "← 点任意处返回", "disabled", "surface")
+    local cols = columns({ x = r.x + 2, w = math.max(1, r.w - 4) }, { 0.26, 0.74 })
+    local rows = detailRows(p, row, level)
+    local top = r.y + 2
+    local last = r.y + r.h - 2
+    local drawn = 0
+    for _, item in ipairs(rows) do
+        local y = top + drawn
+        if y > last then break end
+        if item.kind == "rule" then
+            ruleLine(p, cols[1].x, y, cols[1].w + cols[2].w, item.text)
+        else
+            p:text(cols[1].x, y, item.label, "disabled", "surface", cols[1].w)
+            p:text(cols[2].x, y, tostring(item.value), item.role, "surface", cols[2].w)
+        end
+        drawn = drawn + 1
+    end
+    if drawn < #rows and top + drawn <= last then
+        p:text(cols[1].x, top + drawn,
+            string.format("…（屏高不够，还有 %d 行）", #rows - drawn), "warning", "surface")
+    end
+    context:hit({ type = "detail_back" }, { x = r.x + 1, y = r.y + 1, w = r.w - 2, h = r.h - 2 })
+end
+function Status:render(context)
+    local p = context.painter
+    local r = self.rect
+    local cycle = self.props.cycle or {}
+    if context.ui.detailLevel then
+        detail(self, context)
+        return
+    end
+    p:panel(r)
+    local titleY = r.y + 1
+    local title = "各级净水状态"
+    p:text(r.x + 2, titleY, title, "accent", "surface", p:measure(title) + 1)
+    local label = "运行周期 "
+    local labelX = r.x + 3 + p:measure(title)
+    local barX = labelX + p:measure(label)
+    local pctW = 7
+    local hint = "点某一级看详情 →"
+    local hintW = p:measure(hint)
+    local pctX = r.x + r.w - 2 - pctW
+    if pctX - barX > hintW + 2 then
+        p:textRight(r.x, titleY, r.w - 3, hint, "muted", "surface")
+        pctX = r.x + r.w - 3 - hintW - pctW - 1
+    end
+    local barW = pctX - barX - 1
+    if barW >= 8 then
+        p:text(labelX, titleY, label, "muted", "surface")
+        p:bar({ x = barX, y = titleY, w = barW, h = 1 }, cycle.ratio or 0,
+            "cycleFill", "cycleTrack", "cycleTrack")
+    end
+    p:textRight(pctX, titleY, pctW, tostring(cycle.text or "-"), "accent", "surface")
+    local top = r.y + 2
+    local bottom = r.y + r.h - 2
+    local available = math.max(0, bottom - top + 1)
+    local rowH = available >= 16 and 2 or 1
+    local inner = { x = r.x + 2, w = math.max(1, r.w - 4) }
+    local cols = columns(inner, { 0.30, 0.24, 0.46 })
+    local parallelLabel = "并行 "
+    local parallelLabelW = p:measure(parallelLabel)
+    local parallelIdealW = parallelLabelW + 7 + 1 + 7
+    local parallelW = math.min(parallelIdealW, cols[3].w)
+    local parallelValueSpace = math.max(2, parallelW - parallelLabelW - 1)
+    local parallelLeftW = math.max(1, math.floor(parallelValueSpace / 2))
+    local parallelRightW = math.max(1, parallelValueSpace - parallelLeftW)
+    local rightEdge = cols[3].x + cols[3].w
+    local rightX = rightEdge - parallelW
+    local barX = inner.x
+    local barW = math.max(0, rightX - barX - 1)
+    for level = 1, 8 do
+        local row = self.props.levels[level]
+        local y = top + (level - 1) * rowH
+        if not row or y > bottom then break end
+        context:hit({ type = "detail_level", level = level },
+            { x = r.x + 1, y = y, w = r.w - 2, h = rowH })
+        local name = row.label .. " " .. tostring(row.deployText or "-")
+        p:text(cols[1].x, y, name, row.running and "text" or "disabled", "surface", cols[1].w)
+        local markRole = row.rule and row.rule.enabled and "success" or "disabled"
+        local mark = tostring(row.mark or "[ ]")
+        local markW = p:measure(mark)
+        p:text(cols[2].x, y, mark, markRole, "surface")
+        p:text(cols[2].x + markW + 1, y, row.switchText, row.switchRole or "muted",
+            "surface", math.max(1, cols[2].w - markW - 1))
+        local waterRoom = math.max(1, rightX - cols[3].x - 1)
+        local waterText = "水量 " .. tostring(row.waterOfText or "- / -")
+        if p:measure(waterText) > waterRoom then
+            waterText = tostring(row.waterOfText or "- / -")
+        end
+        p:text(cols[3].x, y, p:truncate(waterText, waterRoom), "text", "surface", waterRoom)
+        local successLabel = "成功率"
+        local successValue = tostring(row.successText or "-")
+        local successRoom = math.max(1, parallelW - p:measure(successLabel) - 1)
+        p:text(rightX, y, successLabel, "accent", "surface")
+        p:textRight(rightX, y, parallelW, p:truncate(successValue, successRoom),
+            "accent", "surface")
+        if rowH == 2 then
+            if barW > 0 then
+                p:bar({ x = barX, y = y + 1, w = barW, h = 1 }, row.ratio or 0)
+            end
+            local leftX = rightX + parallelLabelW
+            local slashX = leftX + parallelLeftW
+            local suggestX = slashX + 1
+            p:text(rightX, y + 1, parallelLabel, "accent", "surface")
+            p:text(leftX, y + 1,
+                p:truncate(tostring(row.sampleText or "-"), parallelLeftW),
+                row.sampleRole or "text", "surface", parallelLeftW)
+            p:text(slashX, y + 1, "/", "muted", "surface")
+            p:textRight(suggestX, y + 1, parallelRightW,
+                p:truncate(tostring(row.suggestText or "-"), parallelRightW),
+                row.suggestRole or "text", "surface")
         end
     end
 end
-if not locate then
-    print("无法加载 core/locate.lua：cd 到应用根目录（含 core/ 的目录）后执行 lua monitor.lua")
-    return
+return Status
+
+frontend/ui/components/tabbar.lua
+1446
+local Component = require("frontend.ui.base")
+local TabBar = {}
+function TabBar.new()
+    local self = Component.new("tabbar", { page = "overview" })
+    self.fingerprint = TabBar.fingerprint
+    self.render = TabBar.render
+    return self
 end
+function TabBar:fingerprint(context)
+    return table.concat({
+        self.key, self.rect.x, self.rect.y, self.rect.w, self.rect.h,
+        context.themeId, tostring(self.props.page), tostring(context.readOnly),
+    }, "\x1f")
+end
+function TabBar:render(context)
+    local p = context.painter
+    local r = self.rect
+    local page = self.props.page or "overview"
+    p:fill(r, "surfaceAlt")
+    local x = r.x + 1
+    local tabs = { { key = "overview", label = "总览" } }
+    if not context.readOnly then tabs[#tabs + 1] = { key = "config", label = "配置" } end
+    for _, tab in ipairs(tabs) do
+        local text = " " .. tab.label .. " "
+        local width = p:measure(text)
+        local active = page == tab.key
+        local chip = { x = x, y = r.y, w = width, h = 1 }
+        p:button(chip, text, active)
+        context:hit({ type = "page", page = tab.key }, chip)
+        x = x + width + 1
+    end
+    local hint = context.readOnly and "镜像端 · 只读 · Q 退出" or "X 启停 · R 刷新 · T 切页 · Q 退出"
+    local hintW = p:measure(hint)
+    if x + 2 + hintW <= r.x + r.w then
+        p:textRight(r.x, r.y, r.w - 1, hint, "muted", "surfaceAlt")
+    end
+end
+return TabBar
+
+frontend/ui/painter.lua
+5250
+local unicode = require("unicode")
+local Painter = {}
+Painter.__index = Painter
+function Painter.new(gpu, theme)
+    return setmetatable({
+        gpu = gpu,
+        theme = theme,
+        fg = nil,
+        bg = nil,
+    }, Painter)
+end
+function Painter:setTheme(theme)
+    self.theme = theme
+end
+function Painter:begin()
+    self.fg = nil
+    self.bg = nil
+end
+local function blend(base, overlay, alpha)
+    alpha = math.max(0, math.min(1, alpha))
+    local br = math.floor(base / 0x10000) % 0x100
+    local bg = math.floor(base / 0x100) % 0x100
+    local bb = base % 0x100
+    local overlayR = math.floor(overlay / 0x10000) % 0x100
+    local og = math.floor(overlay / 0x100) % 0x100
+    local ob = overlay % 0x100
+    local r = math.floor(br * (1 - alpha) + overlayR * alpha + 0.5)
+    local g = math.floor(bg * (1 - alpha) + og * alpha + 0.5)
+    local b = math.floor(bb * (1 - alpha) + ob * alpha + 0.5)
+    return r * 0x10000 + g * 0x100 + b
+end
+local function resolve(painter, role, fallback, seen)
+    role = role or fallback or "text"
+    if type(role) == "number" then return role end
+    local colors = painter.theme.color
+    local spec = colors[role]
+    if spec == nil then return colors[fallback] or colors.text end
+    if type(spec) == "number" then return spec end
+    seen = seen or {}
+    if seen[role] then return colors[fallback] or colors.canvas end
+    seen[role] = true
+    if type(spec) == "string" then
+        return resolve(painter, spec, fallback, seen)
+    end
+    if type(spec) == "table" then
+        local base = resolve(painter, spec.base or spec.inherit or fallback, "canvas", seen)
+        if spec.color == nil then return base end
+        local alpha = tonumber(spec.alpha)
+        if alpha == nil then alpha = 1 end
+        if alpha <= 0 then return base end
+        if alpha >= 1 then return spec.color end
+        return blend(base, spec.color, alpha)
+    end
+    return colors[fallback] or colors.text
+end
+function Painter:color(role, fallback)
+    return resolve(self, role, fallback or "text")
+end
+function Painter:setForeground(role)
+    local color = self:color(role, "text")
+    if self.fg ~= color then
+        self.gpu.setForeground(color)
+        self.fg = color
+    end
+end
+function Painter:setBackground(role)
+    local color = self:color(role, "canvas")
+    if self.bg ~= color then
+        self.gpu.setBackground(color)
+        self.bg = color
+    end
+end
+function Painter:fill(rect, role)
+    self:setBackground(role or "canvas")
+    self.gpu.fill(rect.x, rect.y, rect.w, rect.h, " ")
+end
+function Painter:clear(rect)
+    self:fill(rect, "canvas")
+end
+function Painter:measure(text)
+    return unicode.wlen(tostring(text or ""))
+end
+function Painter:truncate(text, width)
+    text = tostring(text or "")
+    if width <= 0 then return "" end
+    if unicode.wlen(text) <= width then return text end
+    local out = ""
+    for index = 1, unicode.len(text) do
+        local char = unicode.sub(text, index, index)
+        if unicode.wlen(out .. char) > width - 1 then break end
+        out = out .. char
+    end
+    return out .. "…"
+end
+function Painter:text(x, y, text, foreground, background, width)
+    text = tostring(text or "")
+    if width then text = self:truncate(text, width) end
+    self:setForeground(foreground or "text")
+    self:setBackground(background or "canvas")
+    self.gpu.set(x, y, text)
+end
+function Painter:textRight(x, y, width, text, foreground, background)
+    local value = tostring(text or "")
+    return self:text(x + width - self:measure(value), y, value, foreground, background)
+end
+function Painter:panel(rect, title)
+    if rect.w < 2 or rect.h < 2 then return end
+    self:fill(rect, "surface")
+    self:setForeground("border")
+    self:setBackground("surface")
+    self.gpu.set(rect.x, rect.y, "┌" .. string.rep("─", rect.w - 2) .. "┐")
+    if rect.h > 2 then
+        self.gpu.fill(rect.x, rect.y + 1, 1, rect.h - 2, "│")
+        self.gpu.fill(rect.x + rect.w - 1, rect.y + 1, 1, rect.h - 2, "│")
+    end
+    self.gpu.set(rect.x, rect.y + rect.h - 1, "└" .. string.rep("─", rect.w - 2) .. "┘")
+    if title and rect.w > 6 and rect.h > 2 then
+        local value = " " .. title .. " "
+        self:text(rect.x + 2, rect.y, value, "accent", "surface", rect.w - 4)
+    end
+end
+function Painter:bar(rect, ratio, fillRole, trackRole, emptyRole)
+    ratio = math.max(0, math.min(1, tonumber(ratio) or 0))
+    local filled = math.floor(rect.w * ratio)
+    local role = filled > 0
+        and (trackRole or "barTrack")
+        or (emptyRole or "barEmpty")
+    self:fill(rect, role)
+    if filled > 0 then
+        self:fill({ x = rect.x, y = rect.y, w = filled, h = rect.h }, fillRole or "barFill")
+    end
+end
+function Painter:button(rect, text, active, disabled, foreground, background)
+    local bg = disabled and "chipDisabled"
+        or (active and "chipActive" or background or "chip")
+    local fg
+    if disabled then
+        fg = "disabled"
+    elseif active then
+        fg = foreground or "accent"
+    else
+        fg = foreground or "text"
+    end
+    self:fill(rect, bg)
+    local padding = math.max(0, math.floor((rect.w - self:measure(text)) / 2))
+    self:text(rect.x + padding, rect.y, text, fg, bg, rect.w - padding)
+end
+return Painter
+
+frontend/ui/renderer.lua
+2308
+local Renderer = {}
+Renderer.__index = Renderer
+function Renderer.new(painter)
+    return setmetatable({
+        painter = painter,
+        fingerprints = {},
+        hitboxesByKey = {},
+        hitboxes = {},
+        forceAll = true,
+    }, Renderer)
+end
+function Renderer:setTheme(theme)
+    self.painter:setTheme(theme)
+end
+function Renderer:invalidateAll()
+    self.forceAll = true
+end
+function Renderer:invalidate(key)
+    if key then self.fingerprints[key] = nil else self.forceAll = true end
+end
+local function makeContext(renderer, app)
+    local context = {
+        painter = renderer.painter,
+        theme = app.theme,
+        themeId = app.theme.id,
+        ui = app.ui,
+        viewport = app.viewport,
+        readOnly = app.readOnly == true,
+        hitboxes = {},
+    }
+    function context:hit(action, rect)
+        self.hitboxes[#self.hitboxes + 1] = {
+            action = action,
+            rect = rect,
+        }
+    end
+    return context
+end
+function Renderer:render(components, app)
+    local context = makeContext(self, app)
+    if self.forceAll then
+        self.painter:clear({
+            x = 1,
+            y = 1,
+            w = app.viewport.width,
+            h = app.viewport.height,
+        })
+        self.fingerprints = {}
+        self.hitboxesByKey = {}
+    end
+    local drawn = 0
+    for _, component in ipairs(components or {}) do
+        local key = component.key
+        local fingerprint = component:fingerprint(context)
+        if self.forceAll or self.fingerprints[key] ~= fingerprint then
+            context.hitboxes = {}
+            component:render(context)
+            self.hitboxesByKey[key] = context.hitboxes
+            self.fingerprints[key] = fingerprint
+            drawn = drawn + 1
+        end
+    end
+    self.hitboxes = {}
+    for _, component in ipairs(components or {}) do
+        for _, box in ipairs(self.hitboxesByKey[component.key] or {}) do
+            self.hitboxes[#self.hitboxes + 1] = box
+        end
+    end
+    self.forceAll = false
+    return drawn
+end
+function Renderer:hit(x, y)
+    for _, box in ipairs(self.hitboxes) do
+        local rect = box.rect
+        if x >= rect.x and x < rect.x + rect.w
+            and y >= rect.y and y < rect.y + rect.h then
+            return box.action, box
+        end
+    end
+end
+return Renderer
+
+monitor.lua
+5269
+local selfPath = (debug.getinfo(1, "S").source or ""):gsub("^@", "")
+local selfDir = selfPath:match("^(.*)[/\\][^/\\]*$")
+local locateChunk = assert(loadfile((selfDir or ".") .. "/core/locate.lua"), "cannot load core/locate.lua")
+local locate = locateChunk()
 local appDir = locate.appDir(arg and arg[1], selfPath)
 if appDir == "" then
-    print("无法定位应用目录：cd 到应用根目录（含 core/ 的目录）后执行 lua monitor.lua")
+    print("无法定位应用目录（需要 core/bootstrap.lua）")
     return
 end
 locate.injectPath(appDir)
 local bootstrap = require("core.bootstrap")
 bootstrap.clearModuleCache()
-local CONFIG     = require("shared.config")
-local models     = require("shared.models")
-local computer   = require("computer")
-local event      = require("event")
-local component  = require("component")
-local fstate     = require("frontend.state")
-local theme      = require("frontend.theme")
-local widgets    = require("frontend.widgets")
-local layout     = require("frontend.layout")
-local decorate   = require("frontend.decorate")
-local viewinput  = require("frontend.viewinput")
-local render     = require("frontend.render")
-local PORT       = tonumber(({ ... })[1]) or CONFIG.NET.PORT
-fstate.readOnly   = true
-fstate.currentTab = "overview"
-fstate.chartLevel = 0
-local frames     = {}
-local snapshot, snapshotAt = nil, 0
-local dirty      = true
-local function onMessage(message)
-    local frame, index, total, part = models.chunk(message)
-    if not frame or not index or not total then return end
-    if index > 64 or total > 64 or index > total then return end
-    local slot = frames[frame]
-    if not slot then
-        slot = { parts = {}, total = total, at = computer.uptime() }
-        frames[frame] = slot
+bootstrap = require("core.bootstrap")
+local CONFIG = require("shared.config")
+local clock = require("services.clock")
+local models = require("shared.models")
+local event = require("event")
+local component = require("component")
+local app = require("frontend.app")
+local PORT = tonumber(arg and arg[1]) or CONFIG.NET.PORT or 4096
+local frames = {}
+local snapshot = nil
+local snapshotAt = 0
+local dirty = true
+local lastLine = 0
+local lastError = nil
+local quitting = false
+app.setSnapshotReader(function() return snapshot end)
+app.setActionHandler(function(name)
+    if name == "quit" then
+        quitting = true
+        return true
     end
-    slot.parts[index] = part or ""
-    for i = 1, slot.total do
-        if slot.parts[i] == nil then return end
-    end
-    local text = {}
-    for i = 1, slot.total do text[#text + 1] = slot.parts[i] end
-    local payload, err = models.parseSnapshot(table.concat(text))
-    if payload then
-        if payload.version ~= models.SNAP_VERSION then
-            payload.badVersion = true
-        end
-        if not payload.history and snapshot and snapshot.history then
-            payload.history = snapshot.history
-        end
-        snapshot, snapshotAt = payload, computer.uptime()
-        dirty = true
-    end
-    for key in pairs(frames) do
-        if computer.uptime() - frames[key].at > 10 then frames[key] = nil end
+    return false
+end)
+assert(app.boot({ readOnly = true }), "frontend boot failed")
+local function findModem()
+    for address, kind in component.list() do
+        if kind == "modem" or kind == "tunnel" then return address end
     end
 end
-local function buildView()
-    if not snapshot then return nil end
-    local data = {
-        system   = snapshot.system or {},
-        hardware = snapshot.hardware or {},
-        power    = snapshot.power or {},
-        plan     = snapshot.plan or { opened = {} },
-        levels   = snapshot.levels or {},
-        host     = snapshot.host or { switch = nil },
-        logs     = snapshot.logs or {},
-        net      = snapshot.net or { enabled = false, available = false },
-        history  = snapshot.history
-    }
-    if data.history then data.historyDays = CONFIG.CHART.ALL_WINDOW_DAYS or 1 end
-    decorate.apply(data)
-    return data
-end
-local function drawMirrorLine()
-    local W   = fstate.W
-    local age = snapshot and (computer.uptime() - snapshotAt) or nil
-    local text, color
-    if snapshot and snapshot.badVersion then
-        text  = string.format("镜像端 · 只读 ｜ 版本不一致（主机 v%s / 本机 v%s） ",
-            tostring(snapshot.version), tostring(models.SNAP_VERSION))
-        color = theme.COLORS.TEXT_RED
-    elseif not snapshot then
-        text, color = string.format("镜像端 · 只读 ｜ 端口 %d ｜ 等待数据… ", PORT), theme.COLORS.TEXT_RED
-    elseif age > (CONFIG.NET.REFRESH or 2) * 3 then
-        text, color = string.format("镜像端 · 只读 ｜ 端口 %d ｜ %.0f 秒前收到 ", PORT, age), theme.COLORS.TEXT_YELLOW
-    else
-        text, color = string.format("镜像端 · 只读 ｜ 端口 %d ｜ %.0f 秒前收到 ", PORT, age), theme.COLORS.TEXT_GREEN
-    end
-    local lineX = math.max(1, W - 40)
-    widgets.clearArea(lineX, 1, W - lineX + 1, 1, theme.COLORS.BTN_BG)
-    widgets.drawTextRight(1, W - 1, 1, text, color, theme.COLORS.BTN_BG)
-end
-local function drawWaiting()
-    fstate.gpu.setBackground(theme.COLORS.BG)
-    fstate.gpu.fill(1, 1, fstate.W, fstate.H, " ")
-    widgets.drawCenteredTip({ x = 1, y = 1, w = fstate.W, h = fstate.H },
-        "还没收到数据：确认主机端【无线广播：开】，且两台机器的网卡在同一网络（按 Q 退出）",
-        theme.COLORS.TEXT_YELLOW)
-    widgets.clearArea(1, 1, fstate.W, 1, theme.COLORS.BTN_BG)
-    drawMirrorLine()
-end
-local gpu = component.gpu
-if not gpu then
-    print("这台机器没有屏幕/GPU：镜像端必须有屏幕")
-    return
-end
-local modemAddress = component.list("modem")() or component.list("tunnel")()
+local modemAddress = findModem()
 if not modemAddress then
-    print("这台机器没有网卡/隧道组件：镜像端需要 Network Card / Wireless Network Card / Linked Card")
+    print("这台机器没有网卡/隧道组件")
     return
 end
 local openOk, openErr = pcall(component.invoke, modemAddress, "open", PORT)
@@ -1736,150 +1892,216 @@ if not openOk then
     print("监听端口失败：" .. tostring(openErr))
     return
 end
-render.setup()
-local lastLine = 0
-while true do
-    local ev   = { event.pull(0.5) }
+local function drawMirrorLine()
+    local p = assert(app.painter, "painter missing")
+    local width = app.viewport.width
+    local age = snapshot and (clock.uptime() - snapshotAt) or nil
+    local text, role
+    if not snapshot then
+        text, role = string.format("镜像端 · 只读 | 端口 %d | 等待数据", PORT), "warning"
+    elseif age > (CONFIG.NET.STALE or 30) then
+        text, role = string.format("镜像端 · 只读 | 端口 %d | %.0f秒前收到", PORT, age), "warning"
+    else
+        text, role = string.format("镜像端 · 只读 | 端口 %d | %.0f秒前收到 | %s",
+            PORT, age, tostring(snapshot.version or "-")), "success"
+    end
+    local lineX = math.max(1, width - 45)
+    local room = width - lineX + 1
+    p:fill({ x = lineX, y = 1, w = room, h = 1 }, "surfaceAlt")
+    p:textRight(lineX, 1, room, p:truncate(text, room), role, "surfaceAlt")
+end
+local function drawWaiting()
+    local p = assert(app.painter, "painter missing")
+    local width, height = app.viewport.width, app.viewport.height
+    p:clear({ x = 1, y = 1, w = width, h = height })
+    local message = lastError
+        or "等待主控广播：确认无线广播已开启，且两台机器处于同一网络（Q 退出）"
+    message = p:truncate(message, width - 2)
+    p:text(math.max(2, math.floor((width - p:measure(message)) / 2)),
+        math.floor(height / 2), message, lastError and "danger" or "warning", "canvas", width - 2)
+    drawMirrorLine()
+end
+local function accept(message)
+    local frame, index, total, part = models.parseChunk(message)
+    if not frame or not index or not total then return false end
+    if total < 1 or total > 64 or index < 1 or index > total then return false end
+    local now = clock.uptime()
+    for key, slot in pairs(frames) do
+        if now - slot.at > 60 then frames[key] = nil end
+    end
+    local slot = frames[frame]
+    if not slot then
+        slot = { parts = {}, total = total, at = now }
+        frames[frame] = slot
+    end
+    slot.parts[index] = part or ""
+    for i = 1, total do if slot.parts[i] == nil then return false end end
+    local parts = {}
+    for i = 1, total do parts[#parts + 1] = slot.parts[i] end
+    frames[frame] = nil
+    local payload, err = models.decodeSnapshot(table.concat(parts))
+    if not payload then
+        lastError = tostring(err or "快照解析失败")
+        dirty = true
+        return false
+    end
+    snapshot, snapshotAt, lastError, dirty = payload, now, nil, true
+    return true
+end
+while not quitting do
+    local ev = { event.pull(0.5) }
     local name = ev[1]
     if name == "interrupted" then
         break
-    elseif name == "modem_message" then
-        local port, message = ev[4], ev[6]
-        if port == PORT and type(message) == "string" then
-            onMessage(message)
-        end
-    elseif name == "screen_resized" then
-        layout.calculate()
-        fstate.invalidateAll()
-        dirty = true
     elseif name == "key_down" then
         local char, code = ev[3], ev[4]
         if char == 113 or code == 16 then break end
-    elseif name == "touch" then
-        local x, y = ev[3], ev[4]
-        if type(x) == "number" and type(y) == "number" then
-            if viewinput.quitButton(x, y) then
-                break
-            elseif viewinput.statusArea(x, y) or viewinput.chartChip(x, y) then
-                dirty = true
-            end
-        end
+        if app.handle(ev) then app.frameInput() end
+    elseif name == "modem_message" then
+        if ev[4] == PORT and type(ev[6]) == "string" then accept(ev[6]) end
+    elseif name == "screen_resized" or name == "touch" then
+        if name == "screen_resized" then dirty = true end
+        if app.handle(ev) then app.frameInput() end
     end
-    local now = computer.uptime()
-    if not snapshot then
+    local now = clock.uptime()
+    if snapshot then
         if dirty then
-            dirty    = false
+            dirty, lastLine = false, now
+            app.frameData()
+            drawMirrorLine()
+        elseif now - lastLine >= (CONFIG.NET.REFRESH or 2) then
             lastLine = now
-            drawWaiting()
+            drawMirrorLine()
         end
     elseif dirty then
-        dirty           = false
-        lastLine        = now
-        fstate.lastData = buildView()
-        render.renderAll()
-        drawMirrorLine()
-    elseif (now - lastLine) > (CONFIG.NET.REFRESH or 2) then
-        lastLine = now
-        drawMirrorLine()
+        dirty, lastLine = false, now
+        drawWaiting()
     end
 end
-render.restoreResolution()
+app.restoreResolution()
 bootstrap.releaseConsole()
 print("镜像端已退出")
 
+services/clock.lua
+236
+local computer = require("computer")
+local clock = {}
+function clock.uptime()
+    return computer.uptime()
+end
+function clock.realTime()
+    return computer.realTime()
+end
+function clock.cpuTime()
+    return os.clock()
+end
+return clock
+
 shared/config.lua
-1950
-local CONFIG                     = {}
-CONFIG.FILES                     = {
-    SETTINGS = "data/settings.txt", 
-    HARDWARE = "data/hardware.txt", 
-    HISTORY  = "data/history.dat",  
-    LOG      = "data/log.txt",      
-    TRACE    = "data/last_run.txt", 
-    PRODUCE  = "data/produce.txt"   
-}
-CONFIG.INTERVAL                  = {
-    HARDWARE  = 10,
-    FLUID     = 5,
-    OBSERVE   = 5,
-    SCHEDULE  = 5,
-    PERSIST   = 30,
-    BROADCAST = 1,
-    PRODUCE   = 1,
-    PRODUCE_RUNTIME = 0.5
-}
-CONFIG.UI                        = {
-    MAX_THRESHOLD_KILO   = 100000000000000,
-    VIEW_REFRESH_SECONDS = 0.25,
-    RESOLUTION_WIDTH     = 128,
-    RESOLUTION_HEIGHT    = 40
-}
-CONFIG.CHART                     = {
-    POINTS               = 80,
-    SECONDS_PER_GAME_DAY = 86400,
-    ALL_WINDOW_DAYS      = 1,
-    LEVEL_WINDOW_DAYS    = 2
-}
-CONFIG.NET                       = {
-    ENABLED        = false,
-    ENABLED_KEY    = "net_enabled",       
-    PORT           = 4096,
-    CHUNK          = 4000,
-    REFRESH        = 2,
-    STRENGTH       = 20,
-    STRENGTH_KEY   = "net_strength",      
-    STRENGTH_MAX   = 400
-}
-CONFIG.LOOP_MIN_IDLE             = 0.05
-CONFIG.LOOP_MAX_IDLE             = 1.0
-CONFIG.PARALLEL_CONFIRM_CYCLES   = 3
-CONFIG.LEVELS_DEFAULT            = {
-    threshold = 0,
-    enabled   = true
-}
-CONFIG.RATES                     = {
-    DEFAULT_WEIGHT   = 0,
-    MAX_WEIGHT       = 100,
-    DEFAULT_T7_BOOST = 1,
-    DEFAULT_T6_DUAL_LITHIUM = false,
-    ZERO_MARGIN      = 0.05
-}
-CONFIG.PRODUCE                   = {
-    CHUNK_RATIO  = 0.05,
-    CYCLE_CUTOFF = 0.9,
-}
-CONFIG.ENERGY                    = {
-    FACTOR_KEY     = "energy_factor", 
-    FACTOR_MIN     = 1,
-    FACTOR_MAX     = 100,
-    FACTOR_DEFAULT = 100
-}
-CONFIG.SYSTEM                    = {
-    PRIORITY_DEFAULT        = "low", 
-    START_ON_BOOT           = false,
-}
-CONFIG.LOG                       = {
-    MAX_LINES  = 10,
-    FILE_LINES = 200
+1367
+local CONFIG = {
+    LOOP_MIN_IDLE = 0.05,
+    LOOP_MAX_IDLE = 1.0,
+    INTERVAL = {
+        HARDWARE = 10,
+        HOST_PROGRESS = 3,
+        WATER = 5,
+    },
+    PRODUCE = {
+        SCAN = 10,
+        CHUNK_RATIO = 0.05,
+        CYCLE_CUTOFF = 0.9,
+    },
+    HISTORY = {
+        INTERVAL = 30,
+        POINTS = 80,
+        SAVE_INTERVAL = 1000,
+        PATH = "data/history.dat",
+        WINDOW_MINUTES = 40,
+    },
+    UI = {
+        DEFAULT_THEME = "dark",
+        THEMES = { "dark", "light" },
+        THEME_LABELS = { dark = "深色", light = "浅色" },
+        RESOLUTION_WIDTH = 128,
+        RESOLUTION_HEIGHT = 40,
+        EXIT_LOG_ROW = 3,
+    },
+    RATES = {
+        DEFAULT_WEIGHT = 0,
+        MAX_WEIGHT = 100,
+        DEFAULT_T7_BOOST = 1,
+        PARALLEL_CONFIRM_CYCLES = 3,
+        ZERO_MARGIN = 0.05,
+    },
+    ENERGY = {
+        FACTOR_MIN = 1,
+        FACTOR_MAX = 100,
+        FACTOR_DEFAULT = 100,
+    },
+    NET = {
+        PORT = 4096,
+        CHUNK = 4000,
+        INTERVAL = 10,
+        REFRESH = 2,
+        STALE = 30,
+        STRENGTH_MAX = 400,
+        STRENGTH_DEFAULT = 20,
+    },
+    LEVELS = {
+        DEFAULT_THRESHOLD = 0,
+        DEFAULT_ENABLED = true,
+    },
+    LOG = {
+        FLUSH_INTERVAL = 5,
+        CHUNK_LINES = 20,
+        FILE_LINES = 200,
+        FILE_COUNT = 10,
+        VIEW_LINES = 80,
+    },
 }
 return CONFIG
 
 shared/constants.lua
-3394
-local resources                     = require("shared.resources")
-local constants                     = {}
-constants.CODE_VERSION              = "v5.3.4"
-constants.LEVEL_COUNT               = 8
-constants.HOST_LEVEL                = 0
-constants.T3_LEVEL                  = 3
-constants.T4_LEVEL                  = 4
-constants.T5_LEVEL                  = 5
-constants.T6_LEVEL                  = 6
-constants.T7_LEVEL                  = 7
-constants.T8_LEVEL                  = 8
-constants.STOCK_PER_PARALLEL        = 1000
-constants.OPEN_RESERVE_MULTIPLIER   = 5
-constants.POWER_LEVELS              = {
+2490
+local constants = {
+    CODE_VERSION = "v2.6.0",
+    LEVEL_COUNT = 8,
+    HOST_LEVEL = 0,
+    T3_LEVEL = 3,
+    T4_LEVEL = 4,
+    T5_LEVEL = 5,
+    T6_LEVEL = 6,
+    T7_LEVEL = 7,
+    T8_LEVEL = 8,
+}
+constants.MACHINE_NAMES = {
+    ["multimachine.purificationplant"] = 0,
+    ["multimachine.purificationunitclarifier"] = 1,
+    ["multimachine.purificationunitozonation"] = 2,
+    ["multimachine.purificationunitflocculator"] = 3,
+    ["multimachine.purificationunitphadjustment"] = 4,
+    ["multimachine.purificationunitplasmaheater"] = 5,
+    ["multimachine.purificationunituvtreatment"] = 6,
+    ["multimachine.purificationunitdegasifier"] = 7,
+    ["multimachine.purificationunitextractor"] = 8,
+}
+constants.VOLTAGE_TIERS = {
+    { name = "ULV", eu = 8 }, { name = "LV", eu = 32 },
+    { name = "MV", eu = 128 }, { name = "HV", eu = 512 },
+    { name = "EV", eu = 2048 }, { name = "IV", eu = 8192 },
+    { name = "LuV", eu = 32768 }, { name = "ZPM", eu = 131072 },
+    { name = "UV", eu = 524288 }, { name = "UHV", eu = 2097152 },
+    { name = "UEV", eu = 8388608 }, { name = "UIV", eu = 33554432 },
+    { name = "UMV", eu = 134217728 }, { name = "UXV", eu = 536870912 },
+    { name = "MAX", eu = 2147483640 },
+}
+constants.RATE_REFLUX_LEVELS = { [1] = true, [2] = true, [6] = true }
+constants.T7_BOOST_OPTIONS = { 1, 1.25, 1.5, 1.75, 2 }
+constants.PRODUCE_MISSING_SCANS = 3
+constants.STOCK_PER_PARALLEL = 1000
+constants.OPEN_RESERVE_MULTIPLIER = 5
+constants.POWER_LEVELS = {
     [1] = 30720,
     [2] = 30720,
     [3] = 122880,
@@ -1887,43 +2109,20 @@ constants.POWER_LEVELS              = {
     [5] = 491520,
     [6] = 491520,
     [7] = 1966080,
-    [8] = 7864320
+    [8] = 7864320,
 }
-constants.RATE_PRODUCE              = 900
-constants.RATE_CONSUME              = 1000
-constants.RATE_REFLUX               = 90
-constants.RATE_REFLUX_BONUS         = 0.15
-constants.RATE_SUCCESS              = { 0.7, 0.8, 1, 1, 0.99, 0.8, 1, 1 }
+constants.RATE_PRODUCE = 900
+constants.RATE_CONSUME = 1000
+constants.RATE_REFLUX = 90
+constants.RATE_REFLUX_BONUS = 0.15
+constants.RATE_SUCCESS = { 0.7, 0.8, 1, 1, 0.99, 0.8, 1, 1 }
 constants.RATE_SUCCESS_DUAL_LITHIUM = 0.9
-constants.RATE_REFLUX_LEVELS        = { [1] = true, [2] = true, [6] = true }
-constants.T7_BOOST_OPTIONS          = { 1, 1.25, 1.5, 1.75, 2 }
-constants.PARALLEL_CAP_T1           = 2386092
-constants.PARALLEL_CAP_OTHER        = 2147483
+constants.PARALLEL_CAP_T1 = 2386092
+constants.PARALLEL_CAP_OTHER = 2147483
 function constants.parallelCap(level)
-    return (level == 1) and constants.PARALLEL_CAP_T1 or constants.PARALLEL_CAP_OTHER
+    return level == 1 and constants.PARALLEL_CAP_T1 or constants.PARALLEL_CAP_OTHER
 end
-constants.FLUID_NAMES              = {
-    [1] = resources.FLUIDS.PURIFIED_WATER_1.id,
-    [2] = resources.FLUIDS.PURIFIED_WATER_2.id,
-    [3] = resources.FLUIDS.PURIFIED_WATER_3.id,
-    [4] = resources.FLUIDS.PURIFIED_WATER_4.id,
-    [5] = resources.FLUIDS.PURIFIED_WATER_5.id,
-    [6] = resources.FLUIDS.PURIFIED_WATER_6.id,
-    [7] = resources.FLUIDS.PURIFIED_WATER_7.id,
-    [8] = resources.FLUIDS.PURIFIED_WATER_8.id
-}
-constants.MACHINE_NAMES            = {
-    ["multimachine.purificationplant"]            = 0,
-    ["multimachine.purificationunitclarifier"]    = 1,
-    ["multimachine.purificationunitozonation"]    = 2,
-    ["multimachine.purificationunitflocculator"]  = 3,
-    ["multimachine.purificationunitphadjustment"] = 4,
-    ["multimachine.purificationunitplasmaheater"] = 5,
-    ["multimachine.purificationunituvtreatment"]  = 6,
-    ["multimachine.purificationunitdegasifier"]   = 7,
-    ["multimachine.purificationunitextractor"]    = 8
-}
-constants.LEVEL_NAMES              = {
+constants.LEVEL_NAMES = {
     [0] = "主机",
     [1] = "T1澄清",
     [2] = "T2臭氧",
@@ -1932,104 +2131,22 @@ constants.LEVEL_NAMES              = {
     [5] = "T5等离子",
     [6] = "T6紫外",
     [7] = "T7脱气",
-    [8] = "T8萃取"
-}
-constants.PRODUCE_MISSING_SCANS    = 3
-constants.PRODUCE_MISSING_POOL_MAX = 10
-constants.VOLTAGE_TIERS            = {
-    { name = "ULV", eu = 8 }, { name = "LV", eu = 32 },
-    { name = "MV",  eu = 128 }, { name = "HV", eu = 512 },
-    { name = "EV",  eu = 2048 }, { name = "IV", eu = 8192 },
-    { name = "LuV", eu = 32768 }, { name = "ZPM", eu = 131072 },
-    { name = "UV",  eu = 524288 }, { name = "UHV", eu = 2097152 },
-    { name = "UEV", eu = 8388608 }, { name = "UIV", eu = 33554432 },
-    { name = "UMV", eu = 134217728 }, { name = "UXV", eu = 536870912 },
-    { name = "MAX", eu = 2147483640 }
-}
-constants.KEY_CODES                = {
-    Q = 16,
-    R = 19,
-    X = 45
+    [8] = "T8萃取",
 }
 function constants.levelLabel(level)
     return constants.LEVEL_NAMES[level] or ("T" .. tostring(level))
 end
+function constants.levelCode(level)
+    return "T" .. tostring(tonumber(level) or 0)
+end
 return constants
 
-shared/logs.lua
-1844
-local CONFIG       = require("shared.config")
-local logs         = {}
-local lines        = {}
-local pending      = {}
-local maxLines     = (CONFIG.LOG and CONFIG.LOG.MAX_LINES) or 10
-local maxPending   = (CONFIG.LOG and CONFIG.LOG.FILE_LINES) or 200
-local pushed       = 0
-local KINDS = {
-    { prefix = "[警告]", kind = "warn" },
-    { prefix = "[调度]", kind = "schedule" },
-    { prefix = "[系统]", kind = "system" },
-    { prefix = "[界面]", kind = "ui" }
-}
-function logs.kindOf(text)
-    local s = tostring(text)
-    for _, item in ipairs(KINDS) do
-        if s:sub(1, #item.prefix) == item.prefix then return item.kind end
-    end
-    return "info"
-end
-local function note(kind, text)
-    local prefix = "[" .. tostring(kind) .. "]"
-    for _, item in ipairs(KINDS) do
-        if item.kind == kind then
-            prefix = item.prefix
-            break
-        end
-    end
-    logs.append(prefix .. " " .. tostring(text))
-end
-function logs.warn(text) return note("warn", text) end
-function logs.schedule(text) return note("schedule", text) end
-function logs.system(text) return note("system", text) end
-function logs.ui(text) return note("ui", text) end
-function logs.append(text)
-    local line = tostring(text)
-    lines[#lines + 1] = line
-    while #lines > maxLines do table.remove(lines, 1) end
-    pending[#pending + 1] = line
-    pushed = pushed + 1
-    while #pending > maxPending do table.remove(pending, 1) end
-end
-function logs.pendingLines()
-    local out = {}
-    for i, line in ipairs(pending) do out[i] = line end
-    return out
-end
-function logs.markFlushed()
-    pending = {}
-end
-function logs.list()
-    local out = {}
-    for i, line in ipairs(lines) do out[i] = line end
-    return out
-end
-function logs.fingerprint()
-    return table.concat({ #lines, pushed, (lines[#lines] or "") }, "\x1f")
-end
-return logs
-
 shared/models.lua
-7840
+8789
 local constants = require("shared.constants")
-local models    = {}
-function models.bool(value, default)
-    if type(value) == "boolean" then return value end
-    local s = tostring(value or ""):lower()
-    if s == "" then return default ~= false end
-    if s == "false" or s == "0" or s == "no" or s == "off" then return false end
-    return true
-end
-models.SNAP_VERSION = 11
+local models = {}
+models.SNAP_VERSION = 1
+models.CHUNK_VERSION = "v2s"
 local function clean(value)
     return (tostring(value == nil and "-" or value):gsub("[|\r\n]", "/"))
 end
@@ -2041,9 +2158,9 @@ local function flagOf(value)
     if value == nil then return "-" end
     return value and "1" or "0"
 end
-local function readFlag(s)
-    if s == "1" then return true end
-    if s == "0" then return false end
+local function readFlag(value)
+    if value == "1" then return true end
+    if value == "0" then return false end
     return nil
 end
 local function split(line)
@@ -2051,365 +2168,245 @@ local function split(line)
     for token in tostring(line):gmatch("[^|]*") do out[#out + 1] = token end
     return out
 end
-function models.snapshot(payload)
-    local lines       = {}
-    local hw          = payload.hardware or {}
-    local sy          = payload.system or {}
-    local pw          = payload.power or {}
-    local plan        = payload.plan or {}
-    lines[#lines + 1] = table.concat({ "V", models.SNAP_VERSION }, "|")
+function models.encodeSnapshot(snapshot)
+    snapshot = snapshot or {}
+    local lines = {}
+    local system = snapshot.system or {}
+    local hardware = snapshot.hardware or {}
+    local water = snapshot.water or {}
+    local host = snapshot.host or {}
+    local power = snapshot.power or {}
+    local net = snapshot.net or {}
+    local logs = snapshot.logs or {}
+    lines[#lines + 1] = table.concat({ "V", models.SNAP_VERSION, clean(snapshot.version) }, "|")
+    lines[#lines + 1] = "R|" .. clean(snapshot.revision)
     lines[#lines + 1] = table.concat({
-        "S", flagOf(sy.running), flagOf(sy.awaiting), clean(sy.priority),
-        flagOf((payload.host or {}).switch), clean(sy.mode), flagOf(sy.enforceThreshold),
-        flagOf((sy.effectiveConfig or {}).enabled),
-        numOf((payload.host or {}).progress), numOf((payload.host or {}).progressMax),
-        flagOf((payload.net or {}).enabled)
+        "S", flagOf(system.running), flagOf(system.awaiting), clean(system.priority),
+        flagOf(host.switch), clean(system.mode), flagOf(system.enforceThreshold),
+        numOf(host.progress), numOf(host.progressMax), flagOf(net.enabled),
     }, "|")
     lines[#lines + 1] = table.concat({
-        "H", numOf(hw.host), numOf(hw.units), numOf(hw.energy),
-        clean(table.concat(hw.missing or {}, ",")), flagOf(hw.me)
+        "H", flagOf(hardware.observed), numOf(hardware.count), numOf(hardware.age),
+        flagOf(hardware.me), clean(table.concat(hardware.missing or {}, ",")),
     }, "|")
+    lines[#lines + 1] = table.concat({ "W", flagOf(water.observed), numOf(water.age) }, "|")
     lines[#lines + 1] = table.concat({
-        "P", numOf(pw.all), numOf(pw.used), clean(table.concat(plan.opened or {}, ","))
+        "P", numOf(power.all), numOf(power.max), numOf(power.used), numOf(power.budget),
     }, "|")
-    for _, row in ipairs(payload.levels or {}) do
+    for level = 1, constants.LEVEL_COUNT do
+        local row = (snapshot.levels or {})[level] or {}
+        local rule = row.rule or {}
         lines[#lines + 1] = table.concat({
-            "L", numOf(row.level), numOf(row.deployed), flagOf(row.switch),
-            numOf(row.active), numOf(row.water),
-            numOf(row.rule and (row.rule.effectiveThreshold or row.rule.threshold)),
-            flagOf(row.rule and row.rule.enabled),
-            numOf(row.sample), numOf(row.suggest), numOf(row.success),
-            numOf(row.parallel)
+            "L", numOf(level), numOf(row.deployed), numOf(row.active), flagOf(row.switch),
+            numOf(row.water), numOf(rule.effectiveThreshold), numOf(rule.userThreshold),
+            numOf(rule.next), flagOf(rule.overridden), flagOf(rule.enabled),
+            numOf(row.sample), numOf(row.learned), numOf(row.suggest), numOf(row.success),
         }, "|")
         for _, machine in ipairs(row.machines or {}) do
             lines[#lines + 1] = table.concat({
-                "M", numOf(row.level), flagOf(machine.active), numOf(machine.current),
-                numOf(machine.confirmed), numOf(machine.success)
+                "M", numOf(level), clean(machine.address), flagOf(machine.active),
+                numOf(machine.current), numOf(machine.confirmed), numOf(machine.success),
             }, "|")
         end
     end
-    if payload.history then
-        local times  = payload.history.times or {}
-        local values = payload.history.values or {}
-        for i = 1, #times do
-            local nums = { "C", math.floor(times[i] or 0) }
-            for level = 1, constants.LEVEL_COUNT do
-                nums[#nums + 1] = math.floor((values[level] and values[level][i]) or 0)
-            end
-            lines[#lines + 1] = table.concat(nums, "|")
+    local history = snapshot.history or {}
+    lines[#lines + 1] = table.concat({
+        "Y", numOf(history.interval), numOf(history.windowMinutes), numOf(history.count),
+    }, "|")
+    for slot = 1, tonumber(history.count) or 0 do
+        local values = { "C", numOf(slot) }
+        for level = 1, constants.LEVEL_COUNT do
+            local series = (history.values or {})[level] or {}
+            values[#values + 1] = numOf(series[slot])
         end
+        lines[#lines + 1] = table.concat(values, "|")
     end
-    for _, text in ipairs(payload.logs or {}) do
-        lines[#lines + 1] = "G|" .. clean(text)
+    lines[#lines + 1] = "GR|" .. numOf(logs.revision)
+    for _, entry in ipairs(logs.entries or {}) do
+        lines[#lines + 1] = table.concat({
+            "G", numOf(entry.seq), numOf(entry.at), clean(entry.kind), clean(entry.text),
+        }, "|")
     end
-    return table.concat(lines, "\n") .. "\n"
+    return table.concat(lines, "\n")
 end
-function models.parseSnapshot(text)
+function models.decodeSnapshot(text)
     local payload = {
+        version = "-",
+        revision = "?",
         system = {},
         hardware = {},
+        water = {},
+        host = {},
         power = {},
-        plan = { opened = {} },
+        net = { enabled = false, available = false },
         levels = {},
-        logs = {}
+        history = { interval = 30, windowMinutes = 40, count = 0, values = {} },
+        logs = { revision = 0, entries = {} },
     }
+    for level = 1, constants.LEVEL_COUNT do payload.history.values[level] = {} end
     local seen = false
     for line in tostring(text or ""):gmatch("[^\n]+") do
-        local f    = split(line)
+        local f = split(line)
         local mark = f[1]
         if mark == "V" then
-            payload.version = tonumber(f[2]) or 0
-            seen            = true
+            payload.snapVersion = tonumber(f[2])
+            payload.version = f[3] or "-"
+            seen = true
+        elseif mark == "R" then
+            payload.revision = f[2] or "?"
         elseif mark == "S" then
             payload.system = {
                 running = readFlag(f[2]),
                 awaiting = readFlag(f[3]),
                 priority = f[4],
-                mode = (f[6] and f[6] ~= "-") and f[6] or nil,
+                mode = f[6],
                 enforceThreshold = readFlag(f[7]),
-                effectiveConfig = { enabled = readFlag(f[8]) == true }
             }
             payload.host = {
-                switch = readFlag(f[5] or "-"),
-                progress = tonumber(f[9] or ""),
-                progressMax = tonumber(f[10] or "")
+                switch = readFlag(f[5]),
+                progress = tonumber(f[8]),
+                progressMax = tonumber(f[9]),
             }
-            payload.net = { enabled = readFlag(f[11]) == true, available = false }
+            payload.net.enabled = readFlag(f[10]) == true
         elseif mark == "H" then
             local missing = {}
-            if f[5] and f[5] ~= "-" and f[5] ~= "" then
-                for name in f[5]:gmatch("[^,]+") do missing[#missing + 1] = name end
+            if f[6] and f[6] ~= "-" and f[6] ~= "" then
+                for name in f[6]:gmatch("[^,]+") do missing[#missing + 1] = name end
             end
             payload.hardware = {
-                host = tonumber(f[2]) or 0,
-                units = tonumber(f[3]) or 0,
-                energy = tonumber(f[4]) or 0,
+                observed = readFlag(f[2]) == true,
+                count = tonumber(f[3]) or 0,
+                age = tonumber(f[4]),
+                me = readFlag(f[5]) == true,
                 missing = missing,
-                me = readFlag(f[6]) == true
             }
+        elseif mark == "W" then
+            payload.water = { observed = readFlag(f[2]) == true, age = tonumber(f[3]) }
         elseif mark == "P" then
             payload.power = {
                 all = tonumber(f[2]) or 0,
-                used = tonumber(f[3]) or 0
+                max = tonumber(f[3]) or 0,
+                used = tonumber(f[4]) or 0,
+                budget = tonumber(f[5]) or 0,
             }
-            local opened = {}
-            if f[4] and f[4] ~= "-" and f[4] ~= "" then
-                for value in f[4]:gmatch("[^,]+") do
-                    local level = tonumber(value)
-                    if level then opened[#opened + 1] = level end
-                end
-            end
-            payload.plan = { opened = opened }
         elseif mark == "L" then
             local level = tonumber(f[2])
             if level then
                 payload.levels[level] = {
                     level = level,
                     deployed = tonumber(f[3]) or 0,
-                    switch = readFlag(f[4]),
-                    active = tonumber(f[5]),
+                    active = tonumber(f[4]),
+                    switch = readFlag(f[5]),
                     water = tonumber(f[6]),
                     rule = {
-                        threshold          = tonumber(f[7]) or 0,
-                        effectiveThreshold = tonumber(f[7]) or 0,
-                        enabled            = readFlag(f[8]) == true
+                        effectiveThreshold = tonumber(f[7]),
+                        userThreshold = tonumber(f[8]),
+                        next = tonumber(f[9]),
+                        overridden = readFlag(f[10]) == true,
+                        enabled = readFlag(f[11]) == true,
                     },
-                    sample   = tonumber(f[9]),
-                    suggest  = tonumber(f[10]),
-                    success  = tonumber(f[11]),
-                    parallel = tonumber(f[12])
+                    sample = tonumber(f[12]),
+                    learned = tonumber(f[13]),
+                    suggest = tonumber(f[14]),
+                    success = tonumber(f[15]),
+                    machines = {},
                 }
             end
         elseif mark == "M" then
             local level = tonumber(f[2])
-            local row   = level and payload.levels[level]
+            local row = level and payload.levels[level]
             if row then
-                row.machines = row.machines or {}
                 row.machines[#row.machines + 1] = {
-                    active    = readFlag(f[3]),
-                    current   = tonumber(f[4]),
-                    confirmed = tonumber(f[5]),
-                    success   = tonumber(f[6])
+                    address = f[3],
+                    active = readFlag(f[4]),
+                    current = tonumber(f[5]),
+                    confirmed = tonumber(f[6]),
+                    success = tonumber(f[7]),
                 }
             end
+        elseif mark == "Y" then
+            payload.history.interval = tonumber(f[2]) or 30
+            payload.history.windowMinutes = tonumber(f[3]) or 40
+            payload.history.count = tonumber(f[4]) or 0
         elseif mark == "C" then
-            local t = tonumber(f[2])
-            if t then
-                local h = payload.history
-                if not h then
-                    h = { times = {}, values = {} }
-                    for level = 1, constants.LEVEL_COUNT do h.values[level] = {} end
-                    payload.history = h
-                end
-                h.times[#h.times + 1] = t
-                for level = 1, constants.LEVEL_COUNT do
-                    h.values[level][#h.values[level] + 1] = tonumber(f[2 + level]) or 0
-                end
+            for level = 1, constants.LEVEL_COUNT do
+                local values = payload.history.values[level]
+                values[#values + 1] = tonumber(f[2 + level]) or 0
             end
+        elseif mark == "GR" then
+            payload.logs.revision = tonumber(f[2]) or 0
         elseif mark == "G" then
-            payload.logs[#payload.logs + 1] = tostring(f[2] or "")
+            payload.logs.entries[#payload.logs.entries + 1] = {
+                seq = tonumber(f[2]) or 0,
+                at = tonumber(f[3]) or 0,
+                kind = f[4] or "info",
+                text = f[5] or "",
+            }
         end
     end
-    if not seen then return nil, "不是 v3 快照（缺少版本行）" end
+    if not seen then return nil, "snapshot version line missing" end
+    if payload.snapVersion ~= models.SNAP_VERSION then
+        return nil, "snapshot version mismatch: " .. tostring(payload.snapVersion)
+    end
     return payload
 end
-function models.chunk(message)
-    local frame, index, total, part = tostring(message or ""):match("^v3|(%d+)|(%d+)|(%d+)|(.*)$")
+function models.chunk(frame, index, total, part)
+    return table.concat({ models.CHUNK_VERSION, frame, index, total, part or "" }, "|")
+end
+function models.parseChunk(message)
+    local frame, index, total, part = tostring(message or "")
+        :match("^" .. models.CHUNK_VERSION .. "|(%d+)|(%d+)|(%d+)|(.*)$")
     if not frame then return nil end
     return tonumber(frame), tonumber(index), tonumber(total), part
 end
 return models
 
-shared/resources.lua
-4199
-local resources = {}
-resources.FLUIDS = {
-    PURIFIED_WATER_1 = { id = "grade1purifiedwater", label = "一级净化水" },
-    PURIFIED_WATER_2 = { id = "grade2purifiedwater", label = "二级净化水" },
-    PURIFIED_WATER_3 = { id = "grade3purifiedwater", label = "三级净化水" },
-    PURIFIED_WATER_4 = { id = "grade4purifiedwater", label = "四级净化水" },
-    PURIFIED_WATER_5 = { id = "grade5purifiedwater", label = "五级净化水" },
-    PURIFIED_WATER_6 = { id = "grade6purifiedwater", label = "六级净化水" },
-    PURIFIED_WATER_7 = { id = "grade7purifiedwater", label = "七级净化水" },
-    PURIFIED_WATER_8 = { id = "grade8purifiedwater", label = "八级净化水" },
-    POLYALUMINIUM_CHLORIDE = { id = "polyaluminiumchloride", label = "聚氯化铝" },
-    HYDROCHLORIC_ACID = { id = "hydrochloricacid_gt5u", label = "氢氯酸" },
-    HELIUM_PLASMA = { id = "plasma.helium", label = "氦等离子" },
-    SUPERCOOLANT  = { id = "supercoolant", label = "超级冷却液" },
-    HELIUM          = { id = "helium", label = "氦" },
-    NEON            = { id = "neon", label = "氖" },
-    KRYPTON         = { id = "krypton", label = "氪" },
-    XENON           = { id = "xenon", label = "氙" },
-    MOLTEN_NEUTRONIUM = { id = "molten.neutronium", label = "熔融中子" },
-    MOLTEN_SUPERCONDUCTOR_UV  = { id = "molten.longasssuperconductornameforuvwire", label = "熔融超导粗胚（UV）" },
-    MOLTEN_SUPERCONDUCTOR_UHV = { id = "molten.longasssuperconductornameforuhvwire", label = "熔融超导粗胚（UHV）" },
-    MOLTEN_SUPERCONDUCTOR_UEV = { id = "molten.superconductoruevbase", label = "熔融超导粗胚（UEV）" },
-    MOLTEN_SUPERCONDUCTOR_UIV = { id = "molten.superconductoruivbase", label = "熔融超导粗胚（UIV）" },
-    MOLTEN_SUPERCONDUCTOR_UMV = { id = "molten.superconductorumvbase", label = "熔融超导粗胚（UMV）" }
+shared/util.lua
+1454
+local util = {}
+local SHORT_UNITS = {
+    { "P", 1e15 },
+    { "T", 1e12 },
+    { "G", 1e9 },
+    { "M", 1e6 },
+    { "K", 1e3 },
 }
-resources.ITEMS = {
-    SODIUM_HYDROXIDE_DUST = {
-        name   = "gregtech:gt.metaitem.01",
-        damage = 2685,
-        label  = "氢氧化钠粉"
-    },
-    LENS_SYNTHETIC_JADE = {
-        name   = "bartworks:gt.bwMetaGeneratedlens",
-        damage = 10023,
-        label  = "合成玉透镜"
-    },
-    LENS_AMBER = {
-        name   = "gregtech:gt.metaitem.01",
-        damage = 24514,
-        label  = "琥珀透镜"
-    },
-    LENS_WIND_MAGIC_CRYSTAL = {
-        name   = "gregtech:gt.metaitem.01",
-        damage = 24540,
-        label  = "风之魔晶透镜"
-    },
-    LENS_EMERALD = {
-        name   = "gregtech:gt.metaitem.01",
-        damage = 24501,
-        label  = "绿宝石透镜"
-    },
-    LENS_MAGIC_DIAMOND = {
-        name   = "gregtech:gt.metaitem.01",
-        damage = 24208,
-        label  = "魔力钻石透镜"
-    },
-    LENS_BLUE_TOPAZ = {
-        name   = "gregtech:gt.metaitem.01",
-        damage = 24513,
-        label  = "蓝黄玉透镜"
-    },
-    LENS_AMETHYST = {
-        name   = "gregtech:gt.metaitem.01",
-        damage = 24509,
-        label  = "紫水晶透镜"
-    },
-    LENS_FLUORINE_IRON_TOURMALINE = {
-        name   = "bartworks:gt.bwMetaGeneratedlens",
-        damage = 5,
-        label  = "氟铁电气石透镜"
-    },
-    LENS_DILITHIUM = {
-        name   = "gregtech:gt.metaitem.01",
-        damage = 24515,
-        label  = "双锂透镜"
-    },
-    QUARK_UP_CATALYST = {
-        name   = "gregtech:gt.metaitem.03",
-        damage = 32235,
-        label  = "上夸克释放催化剂"
-    },
-    QUARK_DOWN_CATALYST = {
-        name   = "gregtech:gt.metaitem.03",
-        damage = 32236,
-        label  = "下夸克释放催化剂"
-    },
-    QUARK_STRANGE_CATALYST = {
-        name   = "gregtech:gt.metaitem.03",
-        damage = 32237,
-        label  = "奇夸克释放催化剂"
-    },
-    QUARK_CHARM_CATALYST = {
-        name   = "gregtech:gt.metaitem.03",
-        damage = 32238,
-        label  = "粲夸克释放催化剂"
-    },
-    QUARK_BOTTOM_CATALYST = {
-        name   = "gregtech:gt.metaitem.03",
-        damage = 32239,
-        label  = "底夸克释放催化剂"
-    },
-    QUARK_TOP_CATALYST = {
-        name   = "gregtech:gt.metaitem.03",
-        damage = 32240,
-        label  = "顶夸克释放催化剂"
-    }
-}
-return resources
-
-shared/utils.lua
-2987
-local constants = require("shared.constants")
-local unicode   = require("unicode")
-local utils = {}
-function utils.formatNumber(num)
-    if type(num) ~= "number" then return tostring(num) end
-    local s = tostring(math.floor(num))
-    local sign = s:sub(1, 1) == "-" and "-" or ""
-    if sign == "-" then s = s:sub(2) end
-    local out = {}
-    while #s > 3 do
-        table.insert(out, 1, s:sub(-3))
-        s = s:sub(1, #s - 3)
+local GAME_TICKS_PER_HOUR = 1000
+local REAL_TICKS_PER_SECOND = 20
+function util.clamp(value, minimum, maximum)
+    return math.min(maximum, math.max(minimum, value))
+end
+function util.formatNumber(value)
+    if type(value) ~= "number" then return tostring(value) end
+    local text = tostring(math.floor(value))
+    text = text:gsub("%.0$", "")
+    local sign = text:sub(1, 1) == "-" and "-" or ""
+    if sign == "-" then text = text:sub(2) end
+    local groups = {}
+    while #text > 3 do
+        table.insert(groups, 1, text:sub(-3))
+        text = text:sub(1, #text - 3)
     end
-    table.insert(out, 1, s)
-    return sign .. table.concat(out, ",")
+    table.insert(groups, 1, text)
+    return sign .. table.concat(groups, ",")
 end
-function utils.formatShortNumber(num)
-    if type(num) ~= "number" then return tostring(num) end
-    local units = { { "P", 1e15 }, { "T", 1e12 }, { "G", 1e9 }, { "M", 1e6 }, { "K", 1e3 } }
-    for _, u in ipairs(units) do
-        if math.abs(num) >= u[2] then return string.format("%.2f%s", num / u[2], u[1]) end
+function util.formatShortNumber(value)
+    if type(value) ~= "number" then return tostring(value) end
+    for _, unit in ipairs(SHORT_UNITS) do
+        if math.abs(value) >= unit[2] then
+            return string.format("%.2f%s", value / unit[2], unit[1])
+        end
     end
-    return tostring(math.floor(num))
+    return tostring(math.floor(value))
 end
-function utils.shortAddress(address)
-    local s = tostring(address or "")
-    if s == "" then return "-" end
-    return s:sub(1, 8)
+function util.realSecondsToGameHours(realSeconds)
+    return (tonumber(realSeconds) or 0) * REAL_TICKS_PER_SECOND / GAME_TICKS_PER_HOUR
 end
-function utils.sideLabel(side)
-    local names = { [0] = "下", [1] = "上", [2] = "北", [3] = "南", [4] = "西", [5] = "东" }
-    return names[side] or tostring(side)
+function util.formatVolume(value)
+    return util.formatShortNumber(tonumber(value) or 0) .. "L"
 end
-function utils.truncate(value, maxWidth)
-    local source = tostring(value or "")
-    maxWidth = math.max(1, math.floor(tonumber(maxWidth) or unicode.wlen(source)))
-    if unicode.wlen(source) <= maxWidth then return source end
-    local suffix = "…"
-    local limit  = math.max(0, maxWidth - unicode.wlen(suffix))
-    local out, width = {}, 0
-    for index = 1, unicode.len(source) do
-        local char = unicode.sub(source, index, index)
-        local charWidth = unicode.wlen(char)
-        if width + charWidth > limit then break end
-        out[#out + 1] = char
-        width = width + charWidth
-    end
-    return table.concat(out) .. suffix
+function util.shortAddress(address)
+    return tostring(address or ""):sub(1, 8)
 end
-function utils.joinLimited(values, maxWidth, separator)
-    local out = {}
-    for index, value in ipairs(values or {}) do out[index] = tostring(value) end
-    return utils.truncate(table.concat(out, separator or "、"), maxWidth)
-end
-function utils.normalizeFluidName(name)
-    local clean = tostring(name or ""):lower():gsub("^gregtech:", ""):gsub("^%s+", ""):gsub("%s+$", "")
-    return clean, "gregtech:" .. clean
-end
-function utils.toPercent(value)
-    local num = tonumber(value)
-    if num == nil then return nil end
-    return num <= 1 and num * 100 or num
-end
-function utils.keyChar(char)
-    if type(char) == "number" then
-        if char >= 32 and char <= 126 then return string.char(char):lower() end
-        return nil
-    end
-    if type(char) == "string" and #char == 1 then return char:lower() end
-    return nil
-end
-function utils.isKey(char, code, letter)
-    local want = tostring(letter or ""):lower()
-    local got  = utils.keyChar(char)
-    if got and got == want then return true end
-    local codeWant = constants.KEY_CODES[tostring(letter or ""):upper()]
-    return codeWant ~= nil and code == codeWant
-end
-return utils
+return util
 

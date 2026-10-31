@@ -4,14 +4,14 @@
 -- 【职责】物品 / 流体资源注册名、damage、显示名的唯一真源
 -- 【不做什么】不含机器 / 组件、等级映射、数量、配方或业务逻辑
 -- 【依赖】无
--- 【被谁用】shared/constants、backend/domain/produce/*
+-- 【被谁用】hardware/fluid、business/produce/*
 -- 【维护】GTNH 资源名或显示名变化时只改本文件；等级/机器/组件映射不在这里
 --------------------------------------------------------------------------------
 
 local resources = {}
 
 resources.FLUIDS = {
-    -- 净化水；等级映射在 shared/constants.FLUID_NAMES
+    -- 净化水；按等级引用时使用 PURIFIED_WATER_<level>
     PURIFIED_WATER_1 = { id = "grade1purifiedwater", label = "一级净化水" },
     PURIFIED_WATER_2 = { id = "grade2purifiedwater", label = "二级净化水" },
     PURIFIED_WATER_3 = { id = "grade3purifiedwater", label = "三级净化水" },
@@ -22,14 +22,14 @@ resources.FLUIDS = {
     PURIFIED_WATER_8 = { id = "grade8purifiedwater", label = "八级净化水" },
 
     -- T3
-    POLYALUMINIUM_CHLORIDE = { id = "polyaluminiumchloride", label = "聚氯化铝" },
+    POLYALUMINIUM_CHLORIDE = { id = "polyaluminiumchloride", label = "聚氯化铝", short = "聚氯化铝" },
 
     -- T4
     HYDROCHLORIC_ACID = { id = "hydrochloricacid_gt5u", label = "氢氯酸" },
 
     -- T5 / T7
     HELIUM_PLASMA = { id = "plasma.helium", label = "氦等离子" },
-    SUPERCOOLANT  = { id = "supercoolant", label = "超级冷却液" },
+    SUPERCOOLANT  = { id = "supercoolant", label = "超级冷却液", short = "超冷液" },
 
     -- T7
     HELIUM          = { id = "helium", label = "氦" },
@@ -105,33 +105,38 @@ resources.ITEMS = {
     QUARK_UP_CATALYST = {
         name   = "gregtech:gt.metaitem.03",
         damage = 32235,
-        label  = "上夸克释放催化剂"
+        label  = "上夸克释放催化剂", short = "上"
     },
     QUARK_DOWN_CATALYST = {
         name   = "gregtech:gt.metaitem.03",
         damage = 32236,
-        label  = "下夸克释放催化剂"
+        label  = "下夸克释放催化剂", short = "下"
     },
     QUARK_STRANGE_CATALYST = {
         name   = "gregtech:gt.metaitem.03",
         damage = 32237,
-        label  = "奇夸克释放催化剂"
+        label  = "奇夸克释放催化剂", short = "奇"
     },
     QUARK_CHARM_CATALYST = {
         name   = "gregtech:gt.metaitem.03",
         damage = 32238,
-        label  = "粲夸克释放催化剂"
+        label  = "粲夸克释放催化剂", short = "粲"
     },
     QUARK_BOTTOM_CATALYST = {
         name   = "gregtech:gt.metaitem.03",
         damage = 32239,
-        label  = "底夸克释放催化剂"
+        label  = "底夸克释放催化剂", short = "底"
     },
     QUARK_TOP_CATALYST = {
         name   = "gregtech:gt.metaitem.03",
         damage = 32240,
-        label  = "顶夸克释放催化剂"
+        label  = "顶夸克释放催化剂", short = "顶"
     }
 }
+
+function resources.purifiedWaterId(level)
+    local item = resources.FLUIDS["PURIFIED_WATER_" .. tostring(level)]
+    return item and item.id
+end
 
 return resources

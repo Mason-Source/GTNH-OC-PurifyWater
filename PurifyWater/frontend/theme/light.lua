@@ -1,0 +1,42 @@
+-- 参考 VS Code Light Modern，降低背景亮度与正文对比度，避免纯白底喧宾夺主。
+return {
+    id = "light",
+    label = "浅色",
+
+    color = {
+        canvas = 0xe8edf3,
+        surface = { base = "canvas", color = 0xffffff, alpha = 0.28 },
+        surfaceAlt = { base = "surface", color = 0x64748b, alpha = 0.10 },
+        text = 0x3b3b3b,
+        muted = 0x616161,
+        accent = 0x005fb8,
+        success = 0x2ea043,
+        warning = 0xbf8803,
+        danger = 0xc72e0f,
+        disabled = 0x8b949e,
+        border = 0xd0d7de,
+        borderFocus = 0x005fb8,
+        chartGrid = 0xd0d7de,
+        chartAxis = 0x6e7681,
+        barTrack = 0xcfe8d5,
+        barFill = 0x2ea043,
+        barEmpty = 0xf4d7d7,
+        cycleTrack = 0xd8e2ef,
+        cycleFill = 0x005fb8,
+        chip = { base = "surface", color = 0x475569, alpha = 0.10 },
+        chipActive = { base = "surface", color = 0x475569, alpha = 0.20 },
+        chipDisabled = { base = "surface", color = 0x475569, alpha = 0.05 },
+        cellSelected = { base = "surface", color = 0x475569, alpha = 0.18 },
+        chipWarm = { base = "surface", color = 0xbf8803, alpha = 0.10 },
+        chipCool = { base = "surface", color = 0x005fb8, alpha = 0.11 },
+        chipDanger = { base = "surface", color = 0xc72e0f, alpha = 0.10 },
+    },
+
+    log = {
+        error = "danger",
+        warn = "warning",
+        system = "text",
+        diag = "disabled",
+    },
+    series = { 0x005fb8, 0x2ea043, 0xbf8803, 0x7e22ce, 0xc72e0f, 0x0f766e, 0xa16207, 0xbe185d },
+}

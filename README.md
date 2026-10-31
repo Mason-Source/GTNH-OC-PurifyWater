@@ -38,7 +38,7 @@ GTNH 净水线自动控制程序（OpenComputers）。一台 OC 电脑接上 ME 
 ```bash
 wget -f https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/installer.lua installer.lua
 ./installer.lua              # 主控端（默认；不会装 monitor.lua）
-./installer.lua --monitor    # 镜像端：只装公共 + 镜像端文件（不会出现 backend/ 与 main.lua）
+./installer.lua --monitor    # 镜像端：只装公共 + 镜像端文件（不装业务、硬件、配置页与 main.lua）
 ```
 
 > **参数传法（OpenOS 特性）**：`lua` 命令在执行脚本前会先摘掉 `--xxx` / `-x` 参数（`shell.parse`），
@@ -50,7 +50,7 @@ wget -f https://raw.githubusercontent.com/Mason-Source/GTNH-OC-PurifyWater/main/
 | 参数 | 作用 |
 |---|---|
 | （无） | 安装控制端（下载 `payload_main.bundle`） |
-| `--monitor` | 安装镜像端（下载 `payload_monitor.bundle`；不装 `backend/` 与 `main.lua`） |
+| `--monitor` | 安装镜像端（下载 `payload_monitor.bundle`；不装业务、硬件、配置页与 `main.lua`） |
 | `--mirror` / `-m` | 优先使用备用下载通道 |
 | `--debug` / `-d` | 输出完整过程到 `installer.log` |
 
@@ -91,7 +91,7 @@ monitor.lua [端口]  # 镜像端（等控制端开了【无线广播】再跑�
 
 - **硬件**：屏幕 + **Network Card / Wireless Network Card / Linked Card**（组件类型为 `modem` 或
   `tunnel`；）。两端须在同一网络内，端口一致（默认 `4096`）。
-- **安装**：`./installer.lua --monitor`（不含 `backend/` 与 `main.lua`）。
+- **安装**：`./installer.lua --monitor`（不含业务、硬件、配置页与 `main.lua`）。
 - **使用**：控制端打开【无线广播】后，在镜像端运行 `./monitor.lua [端口]`。
 - **界面**：复用控制端总览面板。控制按钮除【退出程序】外均禁用；该按钮只退出镜像端进程，不影响控制端。
   图表档位、各级详情可正常操作（均为本地视图动作，不发送命令）；配置页不可进入。
@@ -103,6 +103,6 @@ monitor.lua [端口]  # 镜像端（等控制端开了【无线广播】再跑�
 
 GTNH 2.8.4以上； OpenComputers：T3机箱 T3显示屏 T3APU（=T4CPU+T3显卡） 无线网卡 内存≥2MB（=T3.5内存*2）。
 
-内存实测：**2048K（2MB）稳定** —— 1024K 能启动，但半小时内会崩；
+内存建议：**64MB**；实机 64MB 环境下，目前观测峰值约 13MB。
 
-内存诊断（`内存基线` / `可用 / 地板 / 峰值`）只在 `debugTools` 分支提供；发布线不加载任何诊断模块。
+发布版不包含内存观测或其它诊断探针。
