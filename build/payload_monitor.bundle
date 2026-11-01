@@ -1,4 +1,4 @@
-PW1	role=monitor	version=v6.0.0	count=24
+PW1	role=monitor	version=v6.0.1	count=24
 core/bootstrap.lua
 1308
 local constants = require("shared.constants")
@@ -75,7 +75,7 @@ end
 return locate
 
 frontend/app.lua
-6298
+6444
 local component = require("component")
 local clock = require("services.clock")
 local config = require("shared.config")
@@ -214,7 +214,11 @@ function app.frame(reason)
     if app.snapshotReader then
         snapshot = app.snapshotReader()
     else
-        snapshot = require("services.read_model").snapshot()
+        local read_model = require("services.read_model")
+        if reason == "data" and read_model.revision() == app.revision then
+            return 0
+        end
+        snapshot = read_model.snapshot()
     end
     if not snapshot then return 0 end
     local themeId = snapshot.system and snapshot.system.theme
@@ -1998,7 +2002,7 @@ end
 return clock
 
 shared/config.lua
-1367
+1396
 local CONFIG = {
     LOOP_MIN_IDLE = 0.05,
     LOOP_MAX_IDLE = 1.0,
@@ -2058,6 +2062,7 @@ local CONFIG = {
         FILE_LINES = 200,
         FILE_COUNT = 10,
         VIEW_LINES = 80,
+        PENDING_LINES = 300,
     },
 }
 return CONFIG
@@ -2065,7 +2070,7 @@ return CONFIG
 shared/constants.lua
 2493
 local constants = {
-    CODE_VERSION = "v6.0.0",
+    CODE_VERSION = "v6.0.1",
     LEVEL_COUNT = 8,
     HOST_LEVEL = 0,
     T3_LEVEL = 3,

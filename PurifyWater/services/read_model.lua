@@ -131,6 +131,10 @@ local function buildProduceLevels(data)
     end
     return out
 end
+function read_model.revision()
+    return tostring(state.revision()) .. ":" .. tostring(log.revision())
+end
+
 function read_model.snapshot()
     local data = state.get()
     local hardware = factValue(data.facts.hardware)
@@ -180,7 +184,7 @@ function read_model.snapshot()
     local entries = log.entries()
     return {
         version = constants.CODE_VERSION,
-        revision = tostring(state.revision()) .. ":" .. tostring(log.revision()),
+        revision = read_model.revision(),
 
         system = {
             running = data.control.session == "running",

@@ -5,6 +5,7 @@ local storage = require("services.storage")
 
 local log = {}
 local CHUNK = config.LOG.CHUNK_LINES or 20
+local MAX_PENDING = config.LOG.PENDING_LINES or 300
 local FILE_LINES = config.LOG.FILE_LINES
 local FILE_COUNT = config.LOG.FILE_COUNT
 local VIEW_LINES = config.LOG.VIEW_LINES or 80
@@ -99,6 +100,9 @@ local function append(level, message)
     if #recent > VIEW_LINES then table.remove(recent, 1) end
     lastLine = string.format("%.3f|%s|%s", clock.uptime(), level, record.text)
     pending[#pending + 1] = lastLine
+    if #pending > MAX_PENDING then
+        table.remove(pending, 1)
+    end
 end
 
 function log.error(message) append("ERROR", message) end

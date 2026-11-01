@@ -67,6 +67,7 @@ local CONFIG = {
         FILE_LINES = 200,
         FILE_COUNT = 10,
         VIEW_LINES = 80,
+        PENDING_LINES = 300,
     },
 }
 

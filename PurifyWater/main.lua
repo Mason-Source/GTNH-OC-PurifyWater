@@ -143,7 +143,11 @@ local function run()
                 log.error("后台任务失败：" .. tostring(result))
                 log.diag("任务：" .. tostring(item.name))
             end
-            work.after(item, finishedAt, ok and result == true)
+            if ok then
+                work.after(item, finishedAt, result == true)
+            else
+                work.fail(item, finishedAt)
+            end
 
             ui.frameData()
         end,

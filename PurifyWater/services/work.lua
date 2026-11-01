@@ -11,6 +11,7 @@ local log_flush = require("services.log_flush")
 
 local work = {}
 local data = state.get()
+local backoff = {}
 
 local order = {
     {
@@ -52,6 +53,8 @@ local order = {
 }
 
 local function itemDue(item, now)
+    local blockedUntil = backoff[item.name]
+    if blockedUntil and blockedUntil > now then return blockedUntil end
     if item.nextDue then return item.nextDue(now) end
     return data.work[item.name].dueAt
 end
@@ -72,6 +75,7 @@ function work.select(now)
 end
 
 function work.after(item, now, more)
+    backoff[item.name] = nil
     local slot = data.work[item.name]
     if more then
         slot.dueAt = now
@@ -80,6 +84,10 @@ function work.after(item, now, more)
     else
         slot.dueAt = now + item.interval
     end
+end
+
+function work.fail(item, now)
+    backoff[item.name] = now + 5
 end
 
 return work

@@ -1,6 +1,6 @@
 -- 固定等级与机器映射；运行期可调项放 config。
 local constants = {
-    CODE_VERSION = "v6.0.0",
+    CODE_VERSION = "v6.0.1",
     LEVEL_COUNT = 8,
     HOST_LEVEL = 0,
     T3_LEVEL = 3,

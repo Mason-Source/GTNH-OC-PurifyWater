@@ -155,7 +155,11 @@ function app.frame(reason)
     if app.snapshotReader then
         snapshot = app.snapshotReader()
     else
-        snapshot = require("services.read_model").snapshot()
+        local read_model = require("services.read_model")
+        if reason == "data" and read_model.revision() == app.revision then
+            return 0
+        end
+        snapshot = read_model.snapshot()
     end
     if not snapshot then return 0 end
 

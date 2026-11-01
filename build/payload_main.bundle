@@ -1,4 +1,4 @@
-PW1	role=main	version=v6.0.0	count=73
+PW1	role=main	version=v6.0.1	count=73
 business/apply.lua
 1104
 local constants = require("shared.constants")
@@ -1563,7 +1563,7 @@ end
 return locate
 
 frontend/app.lua
-6298
+6444
 local component = require("component")
 local clock = require("services.clock")
 local config = require("shared.config")
@@ -1702,7 +1702,11 @@ function app.frame(reason)
     if app.snapshotReader then
         snapshot = app.snapshotReader()
     else
-        snapshot = require("services.read_model").snapshot()
+        local read_model = require("services.read_model")
+        if reason == "data" and read_model.revision() == app.revision then
+            return 0
+        end
+        snapshot = read_model.snapshot()
     end
     if not snapshot then return 0 end
     local themeId = snapshot.system and snapshot.system.theme
@@ -4788,7 +4792,7 @@ end
 return transposer
 
 main.lua
-6620
+6717
 local selfPath = (debug.getinfo(1, "S").source or ""):gsub("^@", "")
 local selfDir = selfPath:match("^(.*)[/\\][^/\\]*$")
 local locateChunk = assert(loadfile((selfDir or ".") .. "/core/locate.lua"), "cannot load core/locate.lua")
@@ -4923,7 +4927,11 @@ local function run()
                 log.error("后台任务失败：" .. tostring(result))
                 log.diag("任务：" .. tostring(item.name))
             end
-            work.after(item, finishedAt, ok and result == true)
+            if ok then
+                work.after(item, finishedAt, result == true)
+            else
+                work.fail(item, finishedAt)
+            end
             ui.frameData()
         end,
     })
@@ -6169,12 +6177,13 @@ end
 return learning
 
 services/log.lua
-4067
+4195
 local config = require("shared.config")
 local clock = require("services.clock")
 local storage = require("services.storage")
 local log = {}
 local CHUNK = config.LOG.CHUNK_LINES or 20
+local MAX_PENDING = config.LOG.PENDING_LINES or 300
 local FILE_LINES = config.LOG.FILE_LINES
 local FILE_COUNT = config.LOG.FILE_COUNT
 local VIEW_LINES = config.LOG.VIEW_LINES or 80
@@ -6258,6 +6267,9 @@ local function append(level, message)
     if #recent > VIEW_LINES then table.remove(recent, 1) end
     lastLine = string.format("%.3f|%s|%s", clock.uptime(), level, record.text)
     pending[#pending + 1] = lastLine
+    if #pending > MAX_PENDING then
+        table.remove(pending, 1)
+    end
 end
 function log.error(message) append("ERROR", message) end
 function log.warn(message) append("WARN", message) end
@@ -7720,7 +7732,7 @@ end
 return produce_store
 
 services/read_model.lua
-10248
+10316
 local constants = require("shared.constants")
 local log = require("services.log")
 local state = require("services.state")
@@ -7843,6 +7855,9 @@ local function buildProduceLevels(data)
     end
     return out
 end
+function read_model.revision()
+    return tostring(state.revision()) .. ":" .. tostring(log.revision())
+end
 function read_model.snapshot()
     local data = state.get()
     local hardware = factValue(data.facts.hardware)
@@ -7890,7 +7905,7 @@ function read_model.snapshot()
     local entries = log.entries()
     return {
         version = constants.CODE_VERSION,
-        revision = tostring(state.revision()) .. ":" .. tostring(log.revision()),
+        revision = read_model.revision(),
         system = {
             running = data.control.session == "running",
             awaiting = data.control.awaiting == true,
@@ -8573,7 +8588,7 @@ end
 return storage
 
 services/work.lua
-2104
+2335
 local config = require("shared.config")
 local state = require("services.state")
 local hardware_service = require("services.hardware_service")
@@ -8585,6 +8600,7 @@ local net_service = require("services.net_service")
 local log_flush = require("services.log_flush")
 local work = {}
 local data = state.get()
+local backoff = {}
 local order = {
     {
         name = "hardware",
@@ -8623,6 +8639,8 @@ local order = {
     },
 }
 local function itemDue(item, now)
+    local blockedUntil = backoff[item.name]
+    if blockedUntil and blockedUntil > now then return blockedUntil end
     if item.nextDue then return item.nextDue(now) end
     return data.work[item.name].dueAt
 end
@@ -8640,6 +8658,7 @@ function work.select(now)
     end
 end
 function work.after(item, now, more)
+    backoff[item.name] = nil
     local slot = data.work[item.name]
     if more then
         slot.dueAt = now
@@ -8649,10 +8668,13 @@ function work.after(item, now, more)
         slot.dueAt = now + item.interval
     end
 end
+function work.fail(item, now)
+    backoff[item.name] = now + 5
+end
 return work
 
 shared/config.lua
-1367
+1396
 local CONFIG = {
     LOOP_MIN_IDLE = 0.05,
     LOOP_MAX_IDLE = 1.0,
@@ -8712,6 +8734,7 @@ local CONFIG = {
         FILE_LINES = 200,
         FILE_COUNT = 10,
         VIEW_LINES = 80,
+        PENDING_LINES = 300,
     },
 }
 return CONFIG
@@ -8719,7 +8742,7 @@ return CONFIG
 shared/constants.lua
 2493
 local constants = {
-    CODE_VERSION = "v6.0.0",
+    CODE_VERSION = "v6.0.1",
     LEVEL_COUNT = 8,
     HOST_LEVEL = 0,
     T3_LEVEL = 3,
