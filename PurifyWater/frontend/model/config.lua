@@ -32,10 +32,14 @@ function config.build(read)
         local product = produce[level] or {}
         local produceText, produceRole = "-", "disabled"
         if product.implemented then
-            if product.enabled and not product.ready then
-                produceText, produceRole = "[!]", "warning"
+            if product.enabled then
+                if product.ready then
+                    produceText, produceRole = "[√]", "success"
+                else
+                    produceText, produceRole = "[!]", "warning"
+                end
             elseif product.ready then
-                produceText, produceRole = "[√]", "success"
+                produceText, produceRole = "[○]", "muted"
             else
                 produceText, produceRole = "[ ]", "disabled"
             end

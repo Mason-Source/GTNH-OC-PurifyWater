@@ -1,4 +1,4 @@
-PW1	role=monitor	version=v6.0.1	count=24
+PW1	role=monitor	version=v6.0.2	count=24
 core/bootstrap.lua
 1308
 local constants = require("shared.constants")
@@ -2074,7 +2074,7 @@ return CONFIG
 shared/constants.lua
 2493
 local constants = {
-    CODE_VERSION = "v6.0.1",
+    CODE_VERSION = "v6.0.2",
     LEVEL_COUNT = 8,
     HOST_LEVEL = 0,
     T3_LEVEL = 3,

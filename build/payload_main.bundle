@@ -1,4 +1,4 @@
-PW1	role=main	version=v6.0.1	count=73
+PW1	role=main	version=v6.0.2	count=73
 business/apply.lua
 1104
 local constants = require("shared.constants")
@@ -1957,7 +1957,7 @@ end
 return input
 
 frontend/model/config.lua
-3273
+3398
 local constants = require("shared.constants")
 local util = require("shared.util")
 local config = {}
@@ -1986,10 +1986,14 @@ function config.build(read)
         local product = produce[level] or {}
         local produceText, produceRole = "-", "disabled"
         if product.implemented then
-            if product.enabled and not product.ready then
-                produceText, produceRole = "[!]", "warning"
+            if product.enabled then
+                if product.ready then
+                    produceText, produceRole = "[√]", "success"
+                else
+                    produceText, produceRole = "[!]", "warning"
+                end
             elseif product.ready then
-                produceText, produceRole = "[√]", "success"
+                produceText, produceRole = "[○]", "muted"
             else
                 produceText, produceRole = "[ ]", "disabled"
             end
@@ -8746,7 +8750,7 @@ return CONFIG
 shared/constants.lua
 2493
 local constants = {
-    CODE_VERSION = "v6.0.1",
+    CODE_VERSION = "v6.0.2",
     LEVEL_COUNT = 8,
     HOST_LEVEL = 0,
     T3_LEVEL = 3,
