@@ -24,6 +24,8 @@ return {
         cycleFill = 0x38bdf8,
         chip = { base = "surface", color = 0x64748b, alpha = 0.22 },
         chipActive = { base = "surface", color = 0x475569, alpha = 0.72 },
+        chartChip = { base = "surface", color = 0x94a3b8, alpha = 0.18 },
+        chartChipActive = { base = "surface", color = 0x94a3b8, alpha = 0.38 },
         chipDisabled = { base = "surface", color = 0x000000, alpha = 0.32 },
         cellSelected = { base = "surface", color = 0x475569, alpha = 0.72 },
         chipWarm = { base = "surface", color = 0xf59e0b, alpha = 0.12 },

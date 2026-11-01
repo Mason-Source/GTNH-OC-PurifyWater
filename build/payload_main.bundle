@@ -2358,7 +2358,7 @@ end
 return Page
 
 frontend/theme/dark.lua
-1406
+1560
 return {
     id = "dark",
     label = "深色",
@@ -2384,6 +2384,8 @@ return {
         cycleFill = 0x38bdf8,
         chip = { base = "surface", color = 0x64748b, alpha = 0.22 },
         chipActive = { base = "surface", color = 0x475569, alpha = 0.72 },
+        chartChip = { base = "surface", color = 0x94a3b8, alpha = 0.18 },
+        chartChipActive = { base = "surface", color = 0x94a3b8, alpha = 0.38 },
         chipDisabled = { base = "surface", color = 0x000000, alpha = 0.32 },
         cellSelected = { base = "surface", color = 0x475569, alpha = 0.72 },
         chipWarm = { base = "surface", color = 0xf59e0b, alpha = 0.12 },
@@ -2400,7 +2402,7 @@ return {
 }
 
 frontend/theme/light.lua
-1440
+1594
 return {
     id = "light",
     label = "浅色",
@@ -2426,6 +2428,8 @@ return {
         cycleFill = 0x005fb8,
         chip = { base = "surface", color = 0x475569, alpha = 0.10 },
         chipActive = { base = "surface", color = 0x475569, alpha = 0.20 },
+        chartChip = { base = "surface", color = 0x64748b, alpha = 0.07 },
+        chartChipActive = { base = "surface", color = 0x475569, alpha = 0.22 },
         chipDisabled = { base = "surface", color = 0x475569, alpha = 0.05 },
         cellSelected = { base = "surface", color = 0x475569, alpha = 0.18 },
         chipWarm = { base = "surface", color = 0xbf8803, alpha = 0.10 },
@@ -2510,7 +2514,7 @@ end
 return Component
 
 frontend/ui/components/chart.lua
-9851
+9857
 local Component = require("frontend.ui.base")
 local constants = require("shared.constants")
 local util = require("shared.util")
@@ -2551,8 +2555,8 @@ local function chips(_, context, r, windowMinutes)
         local width = p:measure(text)
         local rect = { x = x, y = r.y + 1, w = width, h = 1 }
         local active = selected == level
-        local bg = active and "chipActive" or "chip"
-        local fg = active and "canvas" or (level == 0 and "accent" or context.theme.series[level])
+        local bg = active and "chartChipActive" or "chartChip"
+        local fg = active and "text" or (level == 0 and "accent" or context.theme.series[level])
         p:fill(rect, bg)
         p:text(rect.x + 1, rect.y, labels[level + 1], fg, bg, width - 1)
         context:hit({ type = "chart_level", level = level }, rect)
@@ -2569,7 +2573,7 @@ local function metrics(r)
     return x0, y0, w, h
 end
 local function shortNumber(value, width)
-    local text = util.formatVolume(tonumber(value) or 0)
+    local text = util.formatShortNumber(tonumber(value) or 0)
     width = math.max(1, math.floor(width or 1))
     if #text <= width then return text end
     local short = text:gsub("%.%d+", "")
@@ -2618,7 +2622,7 @@ local function drawSeries(self, context, r, history, level)
     local count = #values
     local windowMinutes = tonumber(history.windowMinutes) or 40
     local label = constants.levelLabel(level)
-    p:text(x0, y0 - 1, string.format("近 %d 游戏时 %s 水量曲线（L）", gameHoursText(windowMinutes), label),
+    p:text(x0, y0 - 1, string.format("近 %d 游戏时 %s 水量曲线", gameHoursText(windowMinutes), label),
         "accent", "surface", w)
     if count < 2 then
         p:text(x0, y0 + math.floor(h / 2), "数据采集中…", "warning", "surface", w)

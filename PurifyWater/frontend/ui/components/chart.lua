@@ -44,8 +44,8 @@ local function chips(_, context, r, windowMinutes)
         local width = p:measure(text)
         local rect = { x = x, y = r.y + 1, w = width, h = 1 }
         local active = selected == level
-        local bg = active and "chipActive" or "chip"
-        local fg = active and "canvas" or (level == 0 and "accent" or context.theme.series[level])
+        local bg = active and "chartChipActive" or "chartChip"
+        local fg = active and "text" or (level == 0 and "accent" or context.theme.series[level])
         p:fill(rect, bg)
         p:text(rect.x + 1, rect.y, labels[level + 1], fg, bg, width - 1)
         context:hit({ type = "chart_level", level = level }, rect)
@@ -64,7 +64,7 @@ local function metrics(r)
 end
 
 local function shortNumber(value, width)
-    local text = util.formatVolume(tonumber(value) or 0)
+    local text = util.formatShortNumber(tonumber(value) or 0)
     width = math.max(1, math.floor(width or 1))
     if #text <= width then return text end
     local short = text:gsub("%.%d+", "")
@@ -119,7 +119,7 @@ local function drawSeries(self, context, r, history, level)
     local count = #values
     local windowMinutes = tonumber(history.windowMinutes) or 40
     local label = constants.levelLabel(level)
-    p:text(x0, y0 - 1, string.format("近 %d 游戏时 %s 水量曲线（L）", gameHoursText(windowMinutes), label),
+    p:text(x0, y0 - 1, string.format("近 %d 游戏时 %s 水量曲线", gameHoursText(windowMinutes), label),
         "accent", "surface", w)
 
     if count < 2 then
