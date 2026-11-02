@@ -380,7 +380,7 @@ local function commitBinding(level, machine, address, rate)
     state.bump()
     log.system(string.format("%s 已绑定转运器 %s → 机器 %s（速率 %s/s）",
         constants.levelCode(level), util.shortAddress(address), machineLabel(level, machine),
-        util.formatVolume(rate)))
+        util.formatNumber(rate) .. "L"))
     queueConfigure(entry, "auto")
     return true
 end
@@ -596,7 +596,7 @@ local function stepRate(task)
             state.bump()
             log.warn(string.format("%s 转运器 %s 速率不足：%s/s < %s/s，绑定失败",
                 constants.levelCode(task.level), util.shortAddress(task.transposer),
-                util.formatVolume(rate), util.formatVolume(minRate)))
+                util.formatNumber(rate) .. "L", util.formatNumber(minRate) .. "L"))
             finishCurrent()
             return
         end

@@ -166,9 +166,9 @@ local function usageText(task)
     table.sort(list, function(a, b) return (a.order or 0) < (b.order or 0) end)
     local parts = {}
     for _, item in ipairs(list) do
-        local amount = util.formatShortNumber(item.amount or 0)
+        local amount = util.formatNumber(item.amount or 0)
         if item.unit == "fluid" then
-            parts[#parts + 1] = item.label .. " " .. util.formatVolume(item.amount)
+            parts[#parts + 1] = item.label .. " " .. amount .. "L"
         else
             parts[#parts + 1] = string.format("%s×%s", item.label, amount)
         end

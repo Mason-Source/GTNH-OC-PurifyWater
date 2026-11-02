@@ -6587,7 +6587,7 @@ end
 return service
 
 services/produce_runtime.lua
-13000
+12978
 local CONFIG = require("shared.config")
 local constants = require("shared.constants")
 local state = require("services.state")
@@ -6726,9 +6726,9 @@ local function usageText(task)
     table.sort(list, function(a, b) return (a.order or 0) < (b.order or 0) end)
     local parts = {}
     for _, item in ipairs(list) do
-        local amount = util.formatShortNumber(item.amount or 0)
+        local amount = util.formatNumber(item.amount or 0)
         if item.unit == "fluid" then
-            parts[#parts + 1] = item.label .. " " .. util.formatVolume(item.amount)
+            parts[#parts + 1] = item.label .. " " .. amount .. "L"
         else
             parts[#parts + 1] = string.format("%s×%s", item.label, amount)
         end
@@ -6925,7 +6925,7 @@ end
 return runtime
 
 services/produce_service.lua
-30786
+30807
 local config = require("shared.config")
 local constants = require("shared.constants")
 local state = require("services.state")
@@ -7255,7 +7255,7 @@ local function commitBinding(level, machine, address, rate)
     state.bump()
     log.system(string.format("%s 已绑定转运器 %s → 机器 %s（速率 %s/s）",
         constants.levelCode(level), util.shortAddress(address), machineLabel(level, machine),
-        util.formatVolume(rate)))
+        util.formatNumber(rate) .. "L"))
     queueConfigure(entry, "auto")
     return true
 end
@@ -7451,7 +7451,7 @@ local function stepRate(task)
             state.bump()
             log.warn(string.format("%s 转运器 %s 速率不足：%s/s < %s/s，绑定失败",
                 constants.levelCode(task.level), util.shortAddress(task.transposer),
-                util.formatVolume(rate), util.formatVolume(minRate)))
+                util.formatNumber(rate) .. "L", util.formatNumber(minRate) .. "L"))
             finishCurrent()
             return
         end
