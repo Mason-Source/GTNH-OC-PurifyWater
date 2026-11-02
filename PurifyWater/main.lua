@@ -1,4 +1,11 @@
--- 主控入口：按 V1 定位器确定应用目录，再装配最小运行链。
+--------------------------------------------------------------------------------
+-- PurifyWater/main.lua
+--
+-- 定位：应用组合根和主控入口。
+-- 功能：定位应用目录，装配服务与前端，驱动单步内核，并在退出时执行停机、历史保存、日志落盘和分辨率恢复。
+-- 边界：只做装配与生命周期编排；业务规则留在 services/business，组件访问必须经过硬件层。
+--------------------------------------------------------------------------------
+
 local selfPath = (debug.getinfo(1, "S").source or ""):gsub("^@", "")
 local selfDir = selfPath:match("^(.*)[/\\][^/\\]*$")
 local locateChunk = assert(loadfile((selfDir or ".") .. "/core/locate.lua"), "cannot load core/locate.lua")
@@ -36,6 +43,7 @@ local history_service = require("services.history_service")
 local log = require("services.log")
 local clock = require("services.clock")
 
+--- 等待一个平台事件或超时；超时时返回 nil，避免伪造空事件。
 local function wait(delay)
     local values = { event.pull(delay) }
     if values[1] == nil then return nil end
@@ -44,6 +52,7 @@ end
 
 local exitReason = "程序退出"
 
+--- 按“初始化 -> 注册命令处理 -> 单步循环 -> 收尾”顺序运行主控生命周期。
 local function run()
     local quitting = false
     local uiDirty = false
@@ -73,9 +82,15 @@ local function run()
             produce_service.requestRefresh()
             return true
         end
-        local recognized, ok, err = schedule_service.handle(name, action)
+        local recognized, ok, err, status = schedule_service.handle(name, action)
         if recognized then
-            if ok == false and err and err ~= "" then log.warn("操作未完成：" .. tostring(err)) end
+            if ok == false and err and err ~= "" then
+                if status == "pending" then
+                    log.system("操作等待初始化：" .. tostring(err))
+                else
+                    log.warn("操作未完成：" .. tostring(err))
+                end
+            end
             return ok
         end
         recognized, ok, err = produce_service.handle(name, action)
@@ -93,8 +108,15 @@ local function run()
             if ok == false and err and err ~= "" then log.warn("操作未完成：" .. tostring(err)) end
             return ok
         end
-        ok, err = config_service.handle(name, action)
-        if ok == false and err and err ~= "" then log.warn("操作未完成：" .. tostring(err)) end
+        local configStatus
+        ok, err, configStatus = config_service.handle(name, action)
+        if ok == false and err and err ~= "" then
+            if configStatus == "pending" then
+                log.system("操作等待初始化：" .. tostring(err))
+            else
+                log.warn("操作未完成：" .. tostring(err))
+            end
+        end
         return ok
     end)
 

@@ -1,4 +1,11 @@
--- 并行学习：周期样本确认与学习值写入，不碰组件、不参与建议计算。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/learning_service.lua
+--
+-- 定位：并行与成功率的周期学习服务。
+-- 功能：要求同一机器连续多个周期保持一致，确认后写入 plan.learned。
+-- 边界：只在调度运行期间学习；不参与建议计算，不直接读取传感器。
+--------------------------------------------------------------------------------
+
 local CONFIG = require("shared.config")
 local constants = require("shared.constants")
 local state = require("services.state")
@@ -11,6 +18,7 @@ local function limit()
     return math.max(1, CONFIG.RATES.PARALLEL_CONFIRM_CYCLES or 3)
 end
 
+--- 提交单个周期样本，并在连续一致后写入学习并行值。
 function learning.observe(level, address, parallel, success, seq)
     local data = state.get()
     if not control.isRunning(data) then return false end
@@ -51,17 +59,20 @@ function learning.observe(level, address, parallel, success, seq)
     return changed
 end
 
+--- 返回指定机器已经确认的学习并行值。
 function learning.confirmed(address)
     local item = tracker[address]
     return item and item.confirmed or nil
 end
 
+--- 清除指定等级所有机器的学习跟踪。
 function learning.clearLevel(level)
     for address, item in pairs(tracker) do
         if item.level == level then tracker[address] = nil end
     end
 end
 
+--- 清除全部跟踪与已学习值。
 function learning.resetAll()
     tracker = {}
     local data = state.get()
@@ -75,6 +86,7 @@ function learning.resetAll()
     return changed
 end
 
+--- 返回已有有效学习值的等级数量。
 function learning.count()
     local count = 0
     for level = 1, constants.LEVEL_COUNT do

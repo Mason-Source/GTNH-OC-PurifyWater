@@ -1,6 +1,15 @@
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/ui/components/control.lua
+--
+-- 定位：总览页控制面板组件。
+-- 功能：展示系统摘要并绘制启动、模式、刷新、广播和退出按钮。
+-- 边界：只发出 button 动作，不直接执行业务命令。
+--------------------------------------------------------------------------------
+
 local Component = require("frontend.ui.base")
 local Control = {}
 
+--- 创建总览页控制面板组件。
 function Control.new()
     local self = Component.new("control", { rows = {}, buttons = {} })
     self.fingerprint = Control.fingerprint
@@ -8,6 +17,7 @@ function Control.new()
     return self
 end
 
+--- 生成控制面板内容与尺寸的渲染指纹。
 function Control:fingerprint(context)
     local parts = { self.key, self.rect.x, self.rect.y, self.rect.w, self.rect.h, context.themeId }
     for _, row in ipairs(self.props.rows or {}) do
@@ -47,6 +57,7 @@ local function columns(area, weights)
     return out
 end
 
+--- 绘制系统摘要和操作按钮。
 function Control:render(context)
     local p = context.painter
     local r = self.rect

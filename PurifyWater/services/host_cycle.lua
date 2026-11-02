@@ -1,20 +1,28 @@
--- T0 周期边沿检测；只维护周期号，不读取组件。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/host_cycle.lua
+--
+-- 定位：净水主机周期边沿检测器。
+-- 功能：观察主机进度变化，识别新周期并维护单调周期序号。
+-- 边界：只维护周期号，不读取组件，也不触发制作任务。
+--------------------------------------------------------------------------------
+
 local state = require("services.state")
+local facts = require("services.facts")
 
 local host_cycle = {}
 local armed = false
 
+--- 用主机进度边沿检测新周期并递增周期序号。
 function host_cycle.observe(progress, maxProgress)
     if type(progress) ~= "number" then return false end
     local data = state.get()
     local cycle = data.facts.host.cycle
     local previous = cycle.progress
 
-    data.facts.host.progress.value = progress
-    data.facts.host.progress.observedAt = require("services.clock").uptime()
+    local progressFact = data.facts.host.progress
+    facts.publish(progressFact, progress)
     if type(maxProgress) == "number" then
-        data.facts.host.progressMax.value = maxProgress
-        data.facts.host.progressMax.observedAt = data.facts.host.progress.observedAt
+        facts.publish(data.facts.host.progressMax, maxProgress)
     end
 
     if previous == nil then
@@ -31,10 +39,11 @@ function host_cycle.observe(progress, maxProgress)
 
     armed = false
     cycle.seq = (cycle.seq or 0) + 1
-    cycle.detectedAt = data.facts.host.progress.observedAt
+    cycle.detectedAt = progressFact.observedAt
     return true, cycle.seq
 end
 
+--- 返回最近识别到的周期序号。
 function host_cycle.seq()
     return state.get().facts.host.cycle.seq or 0
 end

@@ -1,3 +1,11 @@
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/theme/dark.lua
+--
+-- 定位：深色主题数据。
+-- 功能：声明深色背景、语义色、日志级别色和八级曲线配色。
+-- 边界：只提供色值与角色映射，不含绘制逻辑。
+--------------------------------------------------------------------------------
+
 return {
     id = "dark",
     label = "深色",
@@ -6,6 +14,12 @@ return {
         canvas = 0x0d1117,
         surface = { base = "canvas" },
         surfaceAlt = { base = "canvas", color = 0x64748b, alpha = 0.14 },
+        menu = "surfaceAlt",
+        menuMuted = "muted",
+        menuChip = "chip",
+        menuChipActive = "chipActive",
+        menuChipText = "text",
+        menuChipActiveText = "accent",
         text = 0xe5e7eb,
         muted = 0x94a3b8,
         accent = 0x38bdf8,

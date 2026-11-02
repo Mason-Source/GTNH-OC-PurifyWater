@@ -1,4 +1,11 @@
--- LogRecord -> LogView：DIAG 静默，其余三级由前端统一加中文前缀。
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/model/logs.lua
+--
+-- 定位：日志展示模型。
+-- 功能：过滤 DIAG 记录，为错误、警告和系统消息添加中文前缀并生成稳定 revision。
+-- 边界：只读日志记录，不写日志文件。
+--------------------------------------------------------------------------------
+
 local logs_model = {}
 
 local LEVELS = {
@@ -14,6 +21,7 @@ local PREFIX = {
     system = "[系统] ",
 }
 
+--- 把日志记录转换为带中文级别前缀的显示模型。
 function logs_model.build(source)
     local entries = {}
     local revision = 0

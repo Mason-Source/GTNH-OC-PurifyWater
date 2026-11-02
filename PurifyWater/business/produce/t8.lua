@@ -1,4 +1,11 @@
--- T8 萃取：按最短覆盖路径逐周期投 18 枚夸克释放催化剂。
+--------------------------------------------------------------------------------
+-- PurifyWater/business/produce/t8.lua
+--
+-- 定位：T8 萃取制作自动化。
+-- 功能：反复读取成功率并按最短覆盖路径投放最多 18 枚夸克释放催化剂。
+-- 边界：只生成物品转运状态；组件状态由运行时观测。
+--------------------------------------------------------------------------------
+
 local resources = require("shared.resources")
 local machine = require("business.produce.machine")
 local flow = require("business.produce.flow")
@@ -11,6 +18,7 @@ local CATALYSTS = {
     resources.ITEMS.QUARK_BOTTOM_CATALYST,
     resources.ITEMS.QUARK_TOP_CATALYST,
 }
+-- 18 步固定覆盖路径：先用 1-6，再交错重复六种催化剂，避免连续同种投放。
 local WALK = { 1, 2, 3, 4, 5, 6, 2, 4, 6, 1, 3, 5, 1, 4, 6, 3, 2, 5 }
 local SETTLE_SECONDS = 2
 
@@ -20,6 +28,7 @@ local t8 = {
     initial = "sensor",
 }
 
+--- 返回 T8 可能投放的六种夸克释放催化剂。
 function t8.requiredItems() return CATALYSTS end
 
 local function toPercent(value)
@@ -29,6 +38,7 @@ local function toPercent(value)
     return value
 end
 
+--- 创建以成功率读取为起点的 T8 任务。
 function t8.build()
     return { state = "sensor", index = 1, first = true }
 end

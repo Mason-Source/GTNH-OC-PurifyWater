@@ -1,4 +1,11 @@
--- 水位历史：30 秒采样、80 点固定环、内存维护、1000 秒/退出直接覆写。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/history_service.lua
+--
+-- 定位：水位历史环的采样、查询与持久化服务。
+-- 功能：按配置周期采样 T1-T8 水位，维护固定容量环，并周期性或退出时覆写 history.dat。
+-- 边界：只处理水位历史；不参与控制计划或前端布局。
+--------------------------------------------------------------------------------
+
 local CONFIG = require("shared.config")
 local constants = require("shared.constants")
 local state = require("services.state")
@@ -78,6 +85,7 @@ local function applyLoaded(value)
     return true, nil
 end
 
+--- 载入历史环并安排首次采样与保存时间。
 function service.load()
     local h = history()
     h.capacity = CAPACITY
@@ -114,6 +122,7 @@ function service.load()
     return true
 end
 
+--- 按周期采样新水位，并按固定间隔保存历史。
 function service.step(now)
     if now >= due.sample then
         local water = state.get().facts.water
@@ -134,11 +143,15 @@ function service.step(now)
     return false
 end
 
+--- 返回下一次采样或保存时间中较早者。
+---@param now number 当前时间。
+---@return number dueAt 下一次到期时间。
 ---@diagnostic disable-next-line: unused-local
 function service.nextDue(now)
     return math.min(due.sample, due.save)
 end
 
+--- 将当前历史环完整覆写到 history.dat。
 function service.save()
     if not loaded then return false, "history not loaded" end
     local ok, err = storage.replace(PATH, serialize())
@@ -146,6 +159,7 @@ function service.save()
     return true, nil
 end
 
+--- 返回按时间顺序展开的只读历史视图。
 function service.view()
     local h = history()
     local levelCount = constants.LEVEL_COUNT
@@ -170,8 +184,11 @@ function service.view()
     }
 end
 
+--- 返回历史文件路径。
 function service.path() return PATH end
+--- 返回历史采样间隔（秒）。
 function service.interval() return INTERVAL end
+--- 返回历史环容量（点数）。
 function service.capacity() return CAPACITY end
 
 return service

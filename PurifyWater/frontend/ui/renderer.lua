@@ -1,7 +1,15 @@
--- 保留式渲染器：按组件指纹比较，只重画脏组件。
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/ui/renderer.lua
+--
+-- 定位：保留式增量渲染器。
+-- 功能：按组件指纹跳过未变化组件，清理失效命中框并转发触摸命中。
+-- 边界：不构造 ViewModel，不修改业务状态。
+--------------------------------------------------------------------------------
+
 local Renderer = {}
 Renderer.__index = Renderer
 
+--- 创建保留式渲染器。
 function Renderer.new(painter)
     return setmetatable({
         painter = painter,
@@ -12,18 +20,22 @@ function Renderer.new(painter)
     }, Renderer)
 end
 
+--- 把主题同步给底层绘制器。
 function Renderer:setTheme(theme)
     self.painter:setTheme(theme)
 end
 
+--- 使全部组件和命中框在下一帧重建。
 function Renderer:invalidateAll()
     self.forceAll = true
 end
 
+--- 使指定组件失效；无 key 时整页失效。
 function Renderer:invalidate(key)
     if key then self.fingerprints[key] = nil else self.forceAll = true end
 end
 
+--- 创建组件渲染上下文，并收集本次绘制产生的命中框。
 local function makeContext(renderer, app)
     local context = {
         painter = renderer.painter,
@@ -45,6 +57,7 @@ local function makeContext(renderer, app)
     return context
 end
 
+--- 按组件指纹渲染脏组件并重建命中框。
 function Renderer:render(components, app)
     local context = makeContext(self, app)
 
@@ -82,6 +95,7 @@ function Renderer:render(components, app)
     return drawn
 end
 
+--- 把屏幕坐标转换为最上层可交互动作。
 function Renderer:hit(x, y)
     for _, box in ipairs(self.hitboxes) do
         local rect = box.rect

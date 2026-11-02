@@ -327,6 +327,7 @@ end
 local function downloadPayload()
     local rel = payloadName()
     local tryOrder = (PREFER == 2) and { 2, 1 } or { 1, 2 }
+    ---@type string|nil
     local last = "未知错误"
 
     if PREFER == 2 and MIRROR_PREFIX == "" then tryOrder = { 1 } end

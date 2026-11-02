@@ -1,4 +1,11 @@
--- 能源仓分类与 EU/t 换算。
+--------------------------------------------------------------------------------
+-- PurifyWater/hardware/energy.lua
+--
+-- 定位：能源仓名称分类与 EU/t 推算。
+-- 功能：识别标准、多方块、激光和无线能源仓，并根据名称与缓存值计算输入功率。
+-- 边界：只做名称解析和数值换算，不读取组件。
+--------------------------------------------------------------------------------
+
 local constants = require("shared.constants")
 
 local energy = {}
@@ -21,6 +28,7 @@ local function laserBufferK(head)
     return nil
 end
 
+--- 根据能源仓注册名识别仓型、电压、电流和激光缓存倍率。
 function energy.classify(name)
     name = tostring(name or "")
     local head = name:match("^hatch%.([^.]+)") or name
@@ -61,6 +69,7 @@ function energy.classify(name)
     }
 end
 
+--- 计算能源仓可提供的 EU/t 功率及识别出的仓型。
 function energy.powerOf(item, euMax)
     local info = energy.classify(item and item.name)
     if info.kind == "unknown" then return 0, "unrecognized energy hatch" end

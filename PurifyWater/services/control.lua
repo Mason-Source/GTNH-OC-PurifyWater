@@ -1,5 +1,13 @@
--- 会话与调度门控：control 数据的唯一写者，不碰组件、不读观测。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/control.lua
+--
+-- 定位：系统会话与调度门控状态。
+-- 功能：维护运行、停止、等待用户和启动原因等 control 字段，并提供可启动条件检查。
+-- 边界：是 control 数据的唯一写者；不读取观测、不访问组件。
+--------------------------------------------------------------------------------
+
 local constants = require("shared.constants")
+local facts = require("services.facts")
 
 local control = {}
 
@@ -8,6 +16,7 @@ local function ensure(data)
     data.control.awaiting = data.control.awaiting == true
 end
 
+--- 复制当前建议并行，作为本次运行的变化判定基线。
 local function baselineOf(data)
     local out = {}
     for level = 1, constants.LEVEL_COUNT do
@@ -16,27 +25,48 @@ local function baselineOf(data)
     return out
 end
 
+--- 检查硬件、水位和主机状态是否满足启动条件。
+---@return string status ready/pending/error/invalid。
+---@return string|nil reason 非 ready 状态的原因。
 function control.canStart(data)
+    local hardwareStatus, hardwareReason = facts.status(data.facts.hardware)
+    if hardwareStatus == "pending" then return "pending", "正在完成首轮硬件扫描" end
+    if hardwareStatus == "error" then return "error", "硬件观测失败：" .. tostring(hardwareReason) end
+
     local hardware = data.facts.hardware
-    if not hardware or hardware.value == nil then return false, "正在完成首轮硬件扫描" end
     if #(hardware.missing or {}) > 0 then
-        return false, "硬件缺失：" .. table.concat(hardware.missing or {}, "、")
+        return "invalid", "硬件缺失：" .. table.concat(hardware.missing or {}, "、")
     end
-    if not data.facts.water or data.facts.water.value == nil then
-        return false, "正在等待首轮水位观测"
+
+    if data.power.observedAt == nil then
+        if data.power.error then
+            return "error", "能源观测失败：" .. tostring(data.power.error)
+        end
+        return "pending", "正在读取能源仓功率"
     end
-    if data.facts.host.switch.value == false then return false, "净水主机未开机" end
-    return true, nil
+
+    local waterStatus, waterReason = facts.status(data.facts.water)
+    if waterStatus == "pending" then return "pending", "正在等待首轮水位观测" end
+    if waterStatus == "error" then return "error", "水位观测失败：" .. tostring(waterReason) end
+
+    local hostStatus, hostReason = facts.status(data.facts.host.switch)
+    if hostStatus == "pending" then return "pending", "正在等待主机开关观测" end
+    if hostStatus == "error" then return "error", "主机开关观测失败：" .. tostring(hostReason) end
+    if data.facts.host.switch.value == false then return "invalid", "净水主机未开机" end
+    return "ready"
 end
 
+--- 判断当前会话是否处于运行状态。
 function control.isRunning(data)
     return data.control and data.control.session == "running"
 end
 
+--- 判断当前会话是否在等待用户处理。
 function control.isAwaiting(data)
     return data.control and data.control.awaiting == true
 end
 
+--- 把会话切换到运行态并记录启动原因与建议基线。
 function control.start(data, reason)
     ensure(data)
     data.control.session = "running"
@@ -48,6 +78,7 @@ function control.start(data, reason)
     return true
 end
 
+--- 把会话切换到停止态并记录停机原因。
 function control.stop(data, reason)
     ensure(data)
     data.control.session = "stopped"
@@ -57,6 +88,7 @@ function control.stop(data, reason)
     data.control.suggestBaseline = nil
 end
 
+--- 暂停会话并要求用户处理异常。
 function control.awaitUser(data, reason)
     ensure(data)
     data.control.session = "stopped"

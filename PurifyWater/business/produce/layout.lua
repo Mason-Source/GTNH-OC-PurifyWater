@@ -1,8 +1,16 @@
--- 制作自动化的侧位分类与槽位逻辑；需求定义由各等级方法提供。
+--------------------------------------------------------------------------------
+-- PurifyWater/business/produce/layout.lua
+--
+-- 定位：制作自动化的侧位分类与槽位规划逻辑。
+-- 功能：识别输入来源侧、唯一目标侧、流体罐位、物品槽位和拓扑指纹，并检查原料可用性。
+-- 边界：只处理已经采集的面数据，不读取组件；需求定义由制作方法注册表提供。
+--------------------------------------------------------------------------------
+
 local produce_registry = require("business.produce")
 
 local layout = {}
 
+--- 返回指定等级的流体与物品需求。
 function layout.requirements(level)
     level = tonumber(level)
     if not produce_registry.has(level) then return nil end
@@ -10,6 +18,7 @@ function layout.requirements(level)
         produce_registry.requiredItems(level) or {}
 end
 
+--- 判断指定等级是否已有制作自动化实现。
 function layout.implemented(level)
     return produce_registry.has(level)
 end
@@ -52,6 +61,7 @@ local function normalizeFace(face)
     }
 end
 
+--- 比较需求与来源流体，并返回缺失项显示名。
 local function missingFluids(required, found)
     local missing = {}
     for _, item in ipairs(required or {}) do
@@ -73,6 +83,7 @@ local function missingFluids(required, found)
     return missing
 end
 
+--- 要求目标侧唯一可判定；零个或多个候选都返回原因。
 local function chooseTarget(candidates, label)
     local picked, count = nil, 0
     for side = 0, 5 do
@@ -85,7 +96,8 @@ local function chooseTarget(candidates, label)
     return picked, nil
 end
 
--- 来源方向 = 流体来源 ∪ 物品来源；目标只能来自非来源方向。
+--- 分类六面输入并选出唯一目标侧。
+--- 来源方向为流体来源与物品来源的并集；目标只能来自非来源方向。
 function layout.classify(rawFaces, requiredFluids, requiredItems)
     local faces = {}
     for side = 0, 5 do faces[side] = normalizeFace(rawFaces and rawFaces[side]) end
@@ -203,6 +215,7 @@ local function addEntry(map, key, entry)
     list[#list + 1] = entry
 end
 
+--- 为已分类的来源生成流体罐与物品槽缓存。
 function layout.buildSlots(faces, sides, requiredItems, cacheItems)
     local slots = { ready = true, fluid = {}, item = {} }
     for _, side in ipairs((sides and sides.sources) or {}) do
@@ -231,6 +244,7 @@ function layout.buildSlots(faces, sides, requiredItems, cacheItems)
     return slots
 end
 
+--- 检查当前来源侧是否仍包含全部必需物料。
 function layout.sourcesAvailable(faces, sides, requiredFluids, requiredItems)
     local fluids, items = {}, {}
     for _, side in ipairs((sides and sides.sources) or {}) do
@@ -263,7 +277,8 @@ function layout.sourcesAvailable(faces, sides, requiredFluids, requiredItems)
     end
     return true, nil
 end
--- 容器拓扑指纹；只描述容器/内容类型，不包含数量，避免缺料被误判为配置变化。
+--- 生成容器拓扑指纹。
+--- 只描述容器和内容类型，不包含数量，避免缺料被误判为配置变化。
 function layout.topology(faces)
     local parts = {}
     for side = 0, 5 do

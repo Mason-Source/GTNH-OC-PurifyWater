@@ -1,4 +1,11 @@
--- T3 絮凝：每周期固定投 900KL 聚氯化铝。
+--------------------------------------------------------------------------------
+-- PurifyWater/business/produce/t3.lua
+--
+-- 定位：T3 絮凝制作自动化。
+-- 功能：每周期向絮凝机固定转运 900,000 L 聚氯化铝，并复用通用流体子流程。
+-- 边界：只定义需求和状态，不直接访问组件。
+--------------------------------------------------------------------------------
+
 local resources = require("shared.resources")
 local machine = require("business.produce.machine")
 local flow = require("business.produce.flow")
@@ -12,9 +19,12 @@ local t3 = {
     initial = "transfer",
 }
 
+--- 返回 T3 所需的聚氯化铝流体。
 function t3.requiredFluids() return { FLUID } end
+--- 返回 T3 自动转运的最低速率要求。
 function t3.minTransferRate() return 2621440 end
 
+--- 创建 T3 每周期固定投料任务。
 function t3.build()
     return { state = "transfer" }
 end

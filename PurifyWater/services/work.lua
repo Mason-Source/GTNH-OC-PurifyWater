@@ -1,4 +1,11 @@
--- 固定工作表：扫描服务自行管理内部截止时间，工作层只做统一调度。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/work.lua
+--
+-- 定位：固定后台工作表与统一调度器。
+-- 功能：按固定优先级选择到期服务步骤，处理截止时间、立即续跑和失败退避。
+-- 边界：不实现具体业务；每轮最多执行一个工作表步骤。
+--------------------------------------------------------------------------------
+
 local config = require("shared.config")
 local state = require("services.state")
 local hardware_service = require("services.hardware_service")
@@ -52,6 +59,7 @@ local order = {
 
 }
 
+--- 返回工作表项在考虑失败退避后的截止时间。
 local function itemDue(item, now)
     local blockedUntil = backoff[item.name]
     if blockedUntil and blockedUntil > now then return blockedUntil end
@@ -59,6 +67,7 @@ local function itemDue(item, now)
     return data.work[item.name].dueAt
 end
 
+--- 返回固定工作表中最近的到期时间。
 function work.nextDue(now)
     local best = now + config.LOOP_MAX_IDLE
     for _, item in ipairs(order) do
@@ -68,12 +77,14 @@ function work.nextDue(now)
     return best
 end
 
+--- 按固定优先级返回第一个到期服务步骤。
 function work.select(now)
     for _, item in ipairs(order) do
         if now >= itemDue(item, now) then return item end
     end
 end
 
+--- 记录步骤完成时间并安排下一截止时间。
 function work.after(item, now, more)
     backoff[item.name] = nil
     local slot = data.work[item.name]
@@ -86,6 +97,7 @@ function work.after(item, now, more)
     end
 end
 
+--- 为失败步骤设置短暂退避。
 function work.fail(item, now)
     backoff[item.name] = now + 5
 end

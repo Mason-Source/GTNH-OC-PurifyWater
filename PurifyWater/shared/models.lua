@@ -1,4 +1,11 @@
--- 镜像快照编解码；纯函数，不使用 loadstring。
+--------------------------------------------------------------------------------
+-- PurifyWater/shared/models.lua
+--
+-- 定位：主控与镜像端之间的纯数据协议层。
+-- 功能：将只读快照编码为分块文本，并执行分块封装、解析和版本校验。
+-- 边界：只做内存编解码，不使用 loadstring，不访问组件或持久化文件。
+--------------------------------------------------------------------------------
+
 local constants = require("shared.constants")
 
 local models = {}
@@ -32,6 +39,10 @@ local function split(line)
     return out
 end
 
+--- 将只读快照编码为用换行分隔的分块传输文本。
+--- 快照协议 v1：每行以标记开头，字段用 | 分隔，未知值编码为 "-"。
+--- V=版本，S=系统/主机，H=硬件，W=水位，P=功率，L=等级，M=单机，
+--- Y/C=历史头与采样行，GR/G=日志版本与日志行。
 function models.encodeSnapshot(snapshot)
     snapshot = snapshot or {}
     local lines = {}
@@ -59,6 +70,7 @@ function models.encodeSnapshot(snapshot)
         "P", numOf(power.all), numOf(power.max), numOf(power.used), numOf(power.budget),
     }, "|")
 
+    -- 每个等级固定输出一行 L；机器明细紧随其后，客户端按等级归并。
     for level = 1, constants.LEVEL_COUNT do
         local row = (snapshot.levels or {})[level] or {}
         local rule = row.rule or {}
@@ -76,6 +88,7 @@ function models.encodeSnapshot(snapshot)
         end
     end
 
+    -- 历史以 C 行携带，每行包含一个采样时刻的 T1-T8 水量。
     local history = snapshot.history or {}
     lines[#lines + 1] = table.concat({
         "Y", numOf(history.interval), numOf(history.windowMinutes), numOf(history.count),
@@ -99,6 +112,7 @@ function models.encodeSnapshot(snapshot)
     return table.concat(lines, "\n")
 end
 
+--- 解析镜像快照文本并校验协议版本。
 function models.decodeSnapshot(text)
     local payload = {
         version = "-",
@@ -223,10 +237,12 @@ function models.decodeSnapshot(text)
     return payload
 end
 
+--- 封装一个带帧号、序号和总片数的快照数据块。
 function models.chunk(frame, index, total, part)
     return table.concat({ models.CHUNK_VERSION, frame, index, total, part or "" }, "|")
 end
 
+--- 解析无线快照数据块的帧号、序号、总片数和正文。
 function models.parseChunk(message)
     local frame, index, total, part = tostring(message or "")
         :match("^" .. models.CHUNK_VERSION .. "|(%d+)|(%d+)|(%d+)|(.*)$")

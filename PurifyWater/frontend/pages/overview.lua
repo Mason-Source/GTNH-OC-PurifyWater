@@ -1,3 +1,11 @@
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/pages/overview.lua
+--
+-- 定位：总览页组件容器。
+-- 功能：组合页签、控制面板、等级状态、历史图表和日志面板，并负责响应式布局。
+-- 边界：不处理输入或业务命令；只消费 ViewModel。
+--------------------------------------------------------------------------------
+
 local TabBar = require("frontend.ui.components.tabbar")
 local Control = require("frontend.ui.components.control")
 local Status = require("frontend.ui.components.status")
@@ -7,6 +15,7 @@ local LogPanel = require("frontend.ui.components.log")
 local Page = {}
 Page.__index = Page
 
+--- 创建总览页及其组件实例。
 function Page.new()
     local self = setmetatable({}, Page)
     self.tabbar = TabBar.new()
@@ -18,6 +27,7 @@ function Page.new()
     return self
 end
 
+--- 用总览页 ViewModel 更新子组件属性。
 function Page:update(view)
     self.view = view
     self.tabbar:setProps({ page = "overview" })
@@ -27,6 +37,7 @@ function Page:update(view)
     self.log:setProps({ log = view.logs })
 end
 
+--- 根据终端尺寸计算总览页各组件矩形。
 function Page:layout(width, height)
     local bodyY = 2
     local bodyH = math.max(3, height - 1)

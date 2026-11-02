@@ -1,6 +1,15 @@
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/ui/components/settings.lua
+--
+-- 定位：运行设置卡片组件。
+-- 功能：显示开机自启状态与路径提示，并产生自启切换动作。
+-- 边界：不直接修改 .shrc 或设置状态。
+--------------------------------------------------------------------------------
+
 local Component = require("frontend.ui.base")
 local Settings = {}
 
+--- 创建运行设置卡片组件。
 function Settings.new()
     local self = Component.new("settings", {})
     self.fingerprint = Settings.fingerprint
@@ -8,6 +17,7 @@ function Settings.new()
     return self
 end
 
+--- 生成自启状态和尺寸的渲染指纹。
 function Settings:fingerprint(context)
     local s = self.props.settings or {}
     return table.concat({
@@ -16,6 +26,7 @@ function Settings:fingerprint(context)
     }, "\x1f")
 end
 
+--- 绘制开机自启开关与路径提示。
 function Settings:render(context)
     local p = context.painter
     local r = self.rect

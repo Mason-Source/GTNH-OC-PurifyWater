@@ -1,5 +1,11 @@
--- 开机自启块的文件读写与解析：$HOME/.shrc 标记块。
--- 全工程唯一接触 .shrc 的模块；真源 = 标记块是否存在且指向当前 main.lua。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/autostart_store.lua
+--
+-- 定位：OC .shrc 开机自启块的持久化适配器。
+-- 功能：读取、写入和删除带固定标记的启动命令，并识别路径失效与手动重复启动。
+-- 边界：全工程唯一接触 .shrc 的模块；不修改业务状态。
+--------------------------------------------------------------------------------
+
 local storage = require("services.storage")
 
 local store = {}
@@ -70,6 +76,7 @@ local function findManualLine(lines, target)
     return nil
 end
 
+--- 解析 .shrc 自启块并返回启用、失效、路径和手动重复行信息。
 function store.read()
     local path = shrcPath()
     local text = storage.readText(path)
@@ -88,6 +95,7 @@ function store.read()
     }
 end
 
+--- 追加或替换指向当前 main.lua 的自启标记块。
 function store.enable()
     local path = shrcPath()
     local kept = extractBlocks(splitLines(storage.readText(path)))
@@ -101,6 +109,7 @@ function store.enable()
     return true, path
 end
 
+--- 从 .shrc 删除本工程的自启标记块。
 function store.disable()
     local path = shrcPath()
     if not storage.exists(path) then return true, path end
@@ -113,7 +122,9 @@ function store.disable()
     return true, path
 end
 
+--- 返回当前环境的 .shrc 路径。
 function store.path() return shrcPath() end
+--- 返回当前应用应写入自启块的主程序路径。
 function store.target() return mainPath() end
 
 return store

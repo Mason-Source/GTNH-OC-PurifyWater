@@ -1,5 +1,11 @@
--- 调度状态机：建议发布门槛、贪心计划、批量开关命令、漂移与生命周期。
--- 只读内存做裁决；组件调用仅限最终 setWorkAllowed。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/schedule_service.lua
+--
+-- 定位：系统调度状态机。
+-- 功能：发布建议、计算贪心计划、批量下发开关、检测人工漂移，并管理启动、暂停和停机生命周期。
+-- 边界：只读内存裁决；组件调用仅限最终 setWorkAllowed 和退出全关。
+--------------------------------------------------------------------------------
+
 local constants = require("shared.constants")
 local state = require("services.state")
 local log = require("services.log")
@@ -15,7 +21,6 @@ local produce_service = require("services.produce_service")
 local service = {}
 local seenRevision = -1
 local suggestionKey = nil
-local suggestionPublished = false
 local planKey = nil
 local forcePlan = false
 local retryAt = 0
@@ -48,13 +53,14 @@ local function topologyKey()
 end
 
 
+--- 汇总各启用等级的制作就绪布尔值；状态细节由 produce_runtime 记录。
 local function produceReadiness()
     local ready = {}
     local levels = data().produce.levels or {}
     for level = 1, constants.LEVEL_COUNT do
         local product = levels[level] or {}
         if product.enabled == true then
-            ready[level] = produce_service.canEnable(level)
+            ready[level] = produce_service.canEnable(level) == "ready"
         else
             ready[level] = false
         end
@@ -62,15 +68,31 @@ local function produceReadiness()
     return ready
 end
 
+--- 判断计算建议并行所需的外部观测是否已经建立。
+local function suggestionInputsReady(snapshot)
+    return snapshot.facts.hardware.value ~= nil
+        and snapshot.power.observedAt ~= nil
+end
+
+--- 在输入指纹变化时重算建议并行；首个有效结果只建立基线，不报变动警告。
 local function publishSuggestionIfChanged(force)
     local snapshot = data()
+    if not suggestionInputsReady(snapshot) then return false end
+
     local key = suggest.inputKey(snapshot)
     if not force and suggestionKey == key then return false end
+
+    local firstPublish = suggestionKey == nil
     suggestionKey = key
     local result = suggest.compute(snapshot)
-    local firstPublish = not suggestionPublished
-    suggestionPublished = true
+
+    if firstPublish then
+        snapshot.plan.suggest = suggest.copy(result.values)
+        state.bump()
+        return true
+    end
     if suggest.equals(snapshot.plan.suggest, result.values) then return false end
+
     local changes = {}
     for level = 1, constants.LEVEL_COUNT do
         local before = tonumber((snapshot.plan.suggest or {})[level]) or 0
@@ -82,7 +104,7 @@ local function publishSuggestionIfChanged(force)
     end
     snapshot.plan.suggest = suggest.copy(result.values)
     state.bump()
-    if not firstPublish and #changes > 0 then
+    if #changes > 0 then
         log.warn("建议并行变动：" .. table.concat(changes, "，"))
     end
     return true
@@ -98,6 +120,7 @@ local function clearPlan()
     forcePlan = false
 end
 
+--- 切换会话状态、清空计划并排队执行全关。
 local function queueShutdown(reason, awaiting)
     local snapshot = data()
     if awaiting then control.awaitUser(snapshot, reason) else control.stop(snapshot, reason) end
@@ -136,6 +159,7 @@ local function hardStop(reason)
     queueShutdown(reason, false)
 end
 
+--- 检查运行中必须持续成立的安全条件；失效时立即停机或等待处理。
 local function checkHardConditions()
     local snapshot = data()
     if not control.isRunning(snapshot) then return false end
@@ -171,6 +195,7 @@ local function finishPending()
     retryAt = 0
 end
 
+--- 分批下发开关命令；失败项保留到退避时间后重试。
 local function executePending(now)
     if pendingCommands == nil then return false end
     local failed, failedLevels = {}, {}
@@ -208,6 +233,7 @@ local function executePending(now)
     return true
 end
 
+--- 识别下发后被人工改动的等级开关，并暂停调度。
 local function checkSwitchDrift()
     if not control.isRunning(data()) then return false end
     if lastApplyAt <= 0 or pendingCommands ~= nil then return false end
@@ -227,10 +253,10 @@ local function checkSwitchDrift()
     return false
 end
 
+--- 重置调度缓存和学习状态，准备从停机态开始。
 function service.load()
     seenRevision = -1
     suggestionKey = nil
-    suggestionPublished = false
     planKey = nil
     forcePlan = false
     retryAt = 0
@@ -243,6 +269,7 @@ function service.load()
     learning.resetAll()
 end
 
+--- 返回调度状态机下一次需要推进的时间。
 function service.nextDue(now)
     if pendingCommands ~= nil then
         if retryAt > now then return retryAt end
@@ -252,6 +279,7 @@ function service.nextDue(now)
     return math.huge
 end
 
+--- 推进建议发布、计划计算、开关下发或漂移检查中的一步。
 function service.step(now)
     seenRevision = state.revision()
     if pendingCommands ~= nil and pendingShutdown then return executePending(now) end
@@ -307,6 +335,7 @@ function service.step(now)
     return checkSwitchDrift()
 end
 
+--- 校验启动条件并进入自动调度运行态。
 function service.start(reason)
     local snapshot = data()
     if pendingShutdown then
@@ -317,9 +346,9 @@ function service.start(reason)
         retryAt = 0
         log.warn("用户启动：已取消未完成的停机下发")
     end
-    if control.isRunning(snapshot) then return true, nil end
-    local ok, err = control.canStart(snapshot)
-    if not ok then return false, err end
+    if control.isRunning(snapshot) then return true, nil, "ready" end
+    local status, statusReason = control.canStart(snapshot)
+    if status ~= "ready" then return false, statusReason, status end
     publishSuggestionIfChanged(false)
     control.start(snapshot, reason or "手动")
     learning.resetAll()
@@ -333,9 +362,10 @@ function service.start(reason)
     retryAt = 0
     state.bump()
     log.system("系统启动：" .. tostring(reason or "手动"))
-    return true, nil
+    return true, nil, "ready"
 end
 
+--- 立即停止调度并同步下发全关命令。
 function service.shutdownNow(reason)
     local snapshot = data()
     control.stop(snapshot, reason or "程序退出")
@@ -367,17 +397,20 @@ function service.shutdownNow(reason)
     log.system(string.format("全关下发完成：%d 台", #commands))
     return true, nil
 end
+--- 请求正常停机并排队关闭全部机器。
 function service.stop(reason)
     if not control.isRunning(data()) then return true, nil end
     queueShutdown(reason or "手动", false)
     return true, nil
 end
 
+--- 处理 system_toggle 启动或停机命令。
 function service.handle(name, action)
     if name ~= "system_toggle" then return false end
     local reason = tostring((action and action.reason) or "手动")
     if control.isRunning(data()) then
-        return true, service.stop(reason)
+        local ok, err = service.stop(reason)
+        return true, ok, err, "ready"
     end
     return true, service.start(reason)
 end

@@ -1,4 +1,11 @@
--- ReadModel -> OverviewView：同步完成格式化、比例和语义状态构造。
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/model/overview.lua
+--
+-- 定位：总览页的 ViewModel 构造器。
+-- 功能：同步生成状态、控制面板、等级行、周期进度、图表和日志视图。
+-- 边界：只格式化读模型，不写业务状态，不做 GPU 绘制。
+--------------------------------------------------------------------------------
+
 local constants = require("shared.constants")
 local util = require("shared.util")
 local logs_model = require("frontend.model.logs")
@@ -22,6 +29,7 @@ local function hostText(switch)
     return "已关闭", "danger"
 end
 
+--- 把只读快照转换为总览页 ViewModel。
 function overview.build(read)
     local system = read.system or {}
     local hardware = read.hardware or {}

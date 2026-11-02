@@ -40,7 +40,7 @@ end
 return bootstrap
 
 core/locate.lua
-1135
+1147
 local locate = {}
 local function isAppDir(dir)
     if type(dir) ~= "string" or dir == "" then return false end
@@ -49,7 +49,9 @@ local function isAppDir(dir)
     return fs.exists(dir .. "/core/bootstrap.lua") == true
 end
 function locate.appDir(hint, selfSource)
-    if isAppDir(hint) then return hint end
+    if isAppDir(hint) then
+        return hint
+    end
     local selfDir = type(selfSource) == "string" and selfSource:match("^(.*)[/\\][^/\\]*$") or nil
     local candidates = {}
     if selfDir then
@@ -741,7 +743,7 @@ end
 return Page
 
 frontend/theme/dark.lua
-1560
+1754
 return {
     id = "dark",
     label = "深色",
@@ -749,6 +751,12 @@ return {
         canvas = 0x0d1117,
         surface = { base = "canvas" },
         surfaceAlt = { base = "canvas", color = 0x64748b, alpha = 0.14 },
+        menu = "surfaceAlt",
+        menuMuted = "muted",
+        menuChip = "chip",
+        menuChipActive = "chipActive",
+        menuChipText = "text",
+        menuChipActiveText = "accent",
         text = 0xe5e7eb,
         muted = 0x94a3b8,
         accent = 0x38bdf8,
@@ -785,39 +793,45 @@ return {
 }
 
 frontend/theme/light.lua
-1594
+1912
 return {
     id = "light",
     label = "浅色",
     color = {
-        canvas = 0xe8edf3,
-        surface = { base = "canvas", color = 0xffffff, alpha = 0.28 },
-        surfaceAlt = { base = "surface", color = 0x64748b, alpha = 0.10 },
-        text = 0x3b3b3b,
-        muted = 0x616161,
-        accent = 0x005fb8,
-        success = 0x2ea043,
-        warning = 0xbf8803,
-        danger = 0xc72e0f,
-        disabled = 0x8b949e,
-        border = 0xd0d7de,
-        borderFocus = 0x005fb8,
-        chartGrid = 0xd0d7de,
-        chartAxis = 0x6e7681,
-        barTrack = 0xcfe8d5,
-        barFill = 0x2ea043,
-        barEmpty = 0xf4d7d7,
-        cycleTrack = 0xd8e2ef,
-        cycleFill = 0x005fb8,
-        chip = { base = "surface", color = 0x475569, alpha = 0.10 },
-        chipActive = { base = "surface", color = 0x475569, alpha = 0.20 },
-        chartChip = { base = "surface", color = 0x64748b, alpha = 0.07 },
-        chartChipActive = { base = "surface", color = 0x475569, alpha = 0.22 },
-        chipDisabled = { base = "surface", color = 0x475569, alpha = 0.05 },
-        cellSelected = { base = "surface", color = 0x475569, alpha = 0.18 },
-        chipWarm = { base = "surface", color = 0xbf8803, alpha = 0.10 },
-        chipCool = { base = "surface", color = 0x005fb8, alpha = 0.11 },
-        chipDanger = { base = "surface", color = 0xc72e0f, alpha = 0.10 },
+        canvas = 0xC6CDD4,
+        surface = "canvas",
+        surfaceAlt = "canvas",
+        menu = 0x8E9AA8,
+        menuMuted = 0x1F2933,
+        menuChip = { base = "menu", color = 0xFFFFFF, alpha = 0.22 },
+        menuChipActive = { base = "menu", color = 0xFFFFFF, alpha = 0.38 },
+        menuChipText = 0x15191E,
+        menuChipActiveText = 0x063A62,
+        text = 0x15191E,
+        muted = 0x3F4852,
+        disabled = 0x535C66,
+        accent = 0x063A62,
+        success = 0x143F1E,
+        warning = 0x4F3500,
+        danger = 0x6E1919,
+        border = 0x7A838D,
+        borderFocus = 0x063A62,
+        chartGrid = 0x929BA5,
+        chartAxis = 0x535C66,
+        barTrack = { base = "surface", color = 0x143F1E, alpha = 0.24 },
+        barFill = 0x143F1E,
+        barEmpty = { base = "surface", color = 0x64748B, alpha = 0.10 },
+        cycleTrack = { base = "surface", color = 0x64748B, alpha = 0.16 },
+        cycleFill = 0x063A62,
+        chip = { base = "surface", color = 0x475569, alpha = 0.30 },
+        chipActive = { base = "surface", color = 0x315A7F, alpha = 0.34 },
+        chartChip = { base = "surface", color = 0x64748B, alpha = 0.16 },
+        chartChipActive = { base = "surface", color = 0x475569, alpha = 0.30 },
+        chipDisabled = { base = "surface", color = 0x64748B, alpha = 0.10 },
+        cellSelected = { base = "surface", color = 0x315A7F, alpha = 0.24 },
+        chipWarm = { base = "surface", color = 0x4F3500, alpha = 0.20 },
+        chipCool = { base = "surface", color = 0x063A62, alpha = 0.20 },
+        chipDanger = { base = "surface", color = 0x6E1919, alpha = 0.18 },
     },
     log = {
         error = "danger",
@@ -825,7 +839,7 @@ return {
         system = "text",
         diag = "disabled",
     },
-    series = { 0x005fb8, 0x2ea043, 0xbf8803, 0x7e22ce, 0xc72e0f, 0x0f766e, 0xa16207, 0xbe185d },
+    series = { 0x063A62, 0x143F1E, 0x4F3500, 0x4C2E6F, 0x6E1919, 0x07574F, 0x6A4200, 0x7A2348 },
 }
 
 frontend/theme/registry.lua
@@ -1299,7 +1313,7 @@ end
 return LogPanel
 
 frontend/ui/components/status.lua
-12324
+12354
 local Component = require("frontend.ui.base")
 local constants = require("shared.constants")
 local util = require("shared.util")
@@ -1523,8 +1537,8 @@ function Status:render(context)
     local parallelRightW = math.max(1, parallelValueSpace - parallelLeftW)
     local rightEdge = cols[3].x + cols[3].w
     local rightX = rightEdge - parallelW
-    local barX = inner.x
-    local barW = math.max(0, rightX - barX - 1)
+    local levelBarX = inner.x
+    local levelBarW = math.max(0, rightX - levelBarX - 1)
     for level = 1, 8 do
         local row = self.props.levels[level]
         local y = top + (level - 1) * rowH
@@ -1552,8 +1566,8 @@ function Status:render(context)
         p:textRight(rightX, y, parallelW, p:truncate(successValue, successRoom),
             "accent", "surface")
         if rowH == 2 then
-            if barW > 0 then
-                p:bar({ x = barX, y = y + 1, w = barW, h = 1 }, row.ratio or 0)
+            if levelBarW > 0 then
+                p:bar({ x = levelBarX, y = y + 1, w = levelBarW, h = 1 }, row.ratio or 0)
             end
             local leftX = rightX + parallelLabelW
             local slashX = leftX + parallelLeftW
@@ -1572,7 +1586,7 @@ end
 return Status
 
 frontend/ui/components/tabbar.lua
-1446
+1562
 local Component = require("frontend.ui.base")
 local TabBar = {}
 function TabBar.new()
@@ -1591,7 +1605,7 @@ function TabBar:render(context)
     local p = context.painter
     local r = self.rect
     local page = self.props.page or "overview"
-    p:fill(r, "surfaceAlt")
+    p:fill(r, "menu")
     local x = r.x + 1
     local tabs = { { key = "overview", label = "总览" } }
     if not context.readOnly then tabs[#tabs + 1] = { key = "config", label = "配置" } end
@@ -1600,14 +1614,16 @@ function TabBar:render(context)
         local width = p:measure(text)
         local active = page == tab.key
         local chip = { x = x, y = r.y, w = width, h = 1 }
-        p:button(chip, text, active)
+        p:button(chip, text, false, false,
+            active and "menuChipActiveText" or "menuChipText",
+            active and "menuChipActive" or "menuChip")
         context:hit({ type = "page", page = tab.key }, chip)
         x = x + width + 1
     end
     local hint = context.readOnly and "镜像端 · 只读 · Q 退出" or "X 启停 · R 刷新 · T 切页 · Q 退出"
     local hintW = p:measure(hint)
     if x + 2 + hintW <= r.x + r.w then
-        p:textRight(r.x, r.y, r.w - 1, hint, "muted", "surfaceAlt")
+        p:textRight(r.x, r.y, r.w - 1, hint, "menuMuted", "menu")
     end
 end
 return TabBar

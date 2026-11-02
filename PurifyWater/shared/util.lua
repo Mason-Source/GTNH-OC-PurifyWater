@@ -1,4 +1,11 @@
--- 纯工具；不做 IO 或组件调用。
+--------------------------------------------------------------------------------
+-- PurifyWater/shared/util.lua
+--
+-- 定位：跨层复用的无状态工具库。
+-- 功能：提供数值约束、数字格式化、游戏时间换算、体积显示和短地址处理。
+-- 边界：保持纯函数，不访问 IO、OC 组件或运行期状态。
+--------------------------------------------------------------------------------
+
 local util = {}
 
 local SHORT_UNITS = {
@@ -12,13 +19,14 @@ local SHORT_UNITS = {
 local GAME_TICKS_PER_HOUR = 1000
 local REAL_TICKS_PER_SECOND = 20
 
+--- 把数值限制在闭区间 [minimum, maximum] 内。
 function util.clamp(value, minimum, maximum)
     return math.min(maximum, math.max(minimum, value))
 end
 
 --- 千分位：1234567 -> "1,234,567"
--- @param value number|nil
--- @return string
+---@param value number|nil
+---@return string
 function util.formatNumber(value)
     if type(value) ~= "number" then return tostring(value) end
     local text = tostring(math.floor(value))
@@ -35,8 +43,8 @@ function util.formatNumber(value)
 end
 
 --- V1 同款短单位：1234567 -> "1.23M"（K / M / G / T / P）
--- @param value number|nil
--- @return string
+---@param value number|nil
+---@return string
 function util.formatShortNumber(value)
     if type(value) ~= "number" then return tostring(value) end
     for _, unit in ipairs(SHORT_UNITS) do
@@ -48,9 +56,9 @@ function util.formatShortNumber(value)
 end
 
 --- OC 的 uptime 秒 -> Minecraft 游戏时。
--- computer.uptime() 已按 20 tick/秒折算为真实秒；Minecraft 1 游戏时 = 1000 tick。
--- @param realSeconds number|nil
--- @return number
+--- computer.uptime() 已按 20 tick/秒折算为真实秒；Minecraft 1 游戏时 = 1000 tick。
+---@param realSeconds number|nil
+---@return number
 function util.realSecondsToGameHours(realSeconds)
     return (tonumber(realSeconds) or 0) * REAL_TICKS_PER_SECOND / GAME_TICKS_PER_HOUR
 end
@@ -60,6 +68,7 @@ function util.formatVolume(value)
     return util.formatShortNumber(tonumber(value) or 0) .. "L"
 end
 
+--- 返回组件地址的前八个字符。
 function util.shortAddress(address)
     return tostring(address or ""):sub(1, 8)
 end

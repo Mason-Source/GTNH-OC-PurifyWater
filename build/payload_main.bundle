@@ -1528,7 +1528,7 @@ end
 return kernel
 
 core/locate.lua
-1135
+1147
 local locate = {}
 local function isAppDir(dir)
     if type(dir) ~= "string" or dir == "" then return false end
@@ -1537,7 +1537,9 @@ local function isAppDir(dir)
     return fs.exists(dir .. "/core/bootstrap.lua") == true
 end
 function locate.appDir(hint, selfSource)
-    if isAppDir(hint) then return hint end
+    if isAppDir(hint) then
+        return hint
+    end
     local selfDir = type(selfSource) == "string" and selfSource:match("^(.*)[/\\][^/\\]*$") or nil
     local candidates = {}
     if selfDir then
@@ -2362,7 +2364,7 @@ end
 return Page
 
 frontend/theme/dark.lua
-1560
+1754
 return {
     id = "dark",
     label = "深色",
@@ -2370,6 +2372,12 @@ return {
         canvas = 0x0d1117,
         surface = { base = "canvas" },
         surfaceAlt = { base = "canvas", color = 0x64748b, alpha = 0.14 },
+        menu = "surfaceAlt",
+        menuMuted = "muted",
+        menuChip = "chip",
+        menuChipActive = "chipActive",
+        menuChipText = "text",
+        menuChipActiveText = "accent",
         text = 0xe5e7eb,
         muted = 0x94a3b8,
         accent = 0x38bdf8,
@@ -2406,39 +2414,45 @@ return {
 }
 
 frontend/theme/light.lua
-1594
+1912
 return {
     id = "light",
     label = "浅色",
     color = {
-        canvas = 0xe8edf3,
-        surface = { base = "canvas", color = 0xffffff, alpha = 0.28 },
-        surfaceAlt = { base = "surface", color = 0x64748b, alpha = 0.10 },
-        text = 0x3b3b3b,
-        muted = 0x616161,
-        accent = 0x005fb8,
-        success = 0x2ea043,
-        warning = 0xbf8803,
-        danger = 0xc72e0f,
-        disabled = 0x8b949e,
-        border = 0xd0d7de,
-        borderFocus = 0x005fb8,
-        chartGrid = 0xd0d7de,
-        chartAxis = 0x6e7681,
-        barTrack = 0xcfe8d5,
-        barFill = 0x2ea043,
-        barEmpty = 0xf4d7d7,
-        cycleTrack = 0xd8e2ef,
-        cycleFill = 0x005fb8,
-        chip = { base = "surface", color = 0x475569, alpha = 0.10 },
-        chipActive = { base = "surface", color = 0x475569, alpha = 0.20 },
-        chartChip = { base = "surface", color = 0x64748b, alpha = 0.07 },
-        chartChipActive = { base = "surface", color = 0x475569, alpha = 0.22 },
-        chipDisabled = { base = "surface", color = 0x475569, alpha = 0.05 },
-        cellSelected = { base = "surface", color = 0x475569, alpha = 0.18 },
-        chipWarm = { base = "surface", color = 0xbf8803, alpha = 0.10 },
-        chipCool = { base = "surface", color = 0x005fb8, alpha = 0.11 },
-        chipDanger = { base = "surface", color = 0xc72e0f, alpha = 0.10 },
+        canvas = 0xC6CDD4,
+        surface = "canvas",
+        surfaceAlt = "canvas",
+        menu = 0x8E9AA8,
+        menuMuted = 0x1F2933,
+        menuChip = { base = "menu", color = 0xFFFFFF, alpha = 0.22 },
+        menuChipActive = { base = "menu", color = 0xFFFFFF, alpha = 0.38 },
+        menuChipText = 0x15191E,
+        menuChipActiveText = 0x063A62,
+        text = 0x15191E,
+        muted = 0x3F4852,
+        disabled = 0x535C66,
+        accent = 0x063A62,
+        success = 0x143F1E,
+        warning = 0x4F3500,
+        danger = 0x6E1919,
+        border = 0x7A838D,
+        borderFocus = 0x063A62,
+        chartGrid = 0x929BA5,
+        chartAxis = 0x535C66,
+        barTrack = { base = "surface", color = 0x143F1E, alpha = 0.24 },
+        barFill = 0x143F1E,
+        barEmpty = { base = "surface", color = 0x64748B, alpha = 0.10 },
+        cycleTrack = { base = "surface", color = 0x64748B, alpha = 0.16 },
+        cycleFill = 0x063A62,
+        chip = { base = "surface", color = 0x475569, alpha = 0.30 },
+        chipActive = { base = "surface", color = 0x315A7F, alpha = 0.34 },
+        chartChip = { base = "surface", color = 0x64748B, alpha = 0.16 },
+        chartChipActive = { base = "surface", color = 0x475569, alpha = 0.30 },
+        chipDisabled = { base = "surface", color = 0x64748B, alpha = 0.10 },
+        cellSelected = { base = "surface", color = 0x315A7F, alpha = 0.24 },
+        chipWarm = { base = "surface", color = 0x4F3500, alpha = 0.20 },
+        chipCool = { base = "surface", color = 0x063A62, alpha = 0.20 },
+        chipDanger = { base = "surface", color = 0x6E1919, alpha = 0.18 },
     },
     log = {
         error = "danger",
@@ -2446,7 +2460,7 @@ return {
         system = "text",
         diag = "disabled",
     },
-    series = { 0x005fb8, 0x2ea043, 0xbf8803, 0x7e22ce, 0xc72e0f, 0x0f766e, 0xa16207, 0xbe185d },
+    series = { 0x063A62, 0x143F1E, 0x4F3500, 0x4C2E6F, 0x6E1919, 0x07574F, 0x6A4200, 0x7A2348 },
 }
 
 frontend/theme/registry.lua
@@ -3415,7 +3429,7 @@ end
 return Settings
 
 frontend/ui/components/status.lua
-12324
+12354
 local Component = require("frontend.ui.base")
 local constants = require("shared.constants")
 local util = require("shared.util")
@@ -3639,8 +3653,8 @@ function Status:render(context)
     local parallelRightW = math.max(1, parallelValueSpace - parallelLeftW)
     local rightEdge = cols[3].x + cols[3].w
     local rightX = rightEdge - parallelW
-    local barX = inner.x
-    local barW = math.max(0, rightX - barX - 1)
+    local levelBarX = inner.x
+    local levelBarW = math.max(0, rightX - levelBarX - 1)
     for level = 1, 8 do
         local row = self.props.levels[level]
         local y = top + (level - 1) * rowH
@@ -3668,8 +3682,8 @@ function Status:render(context)
         p:textRight(rightX, y, parallelW, p:truncate(successValue, successRoom),
             "accent", "surface")
         if rowH == 2 then
-            if barW > 0 then
-                p:bar({ x = barX, y = y + 1, w = barW, h = 1 }, row.ratio or 0)
+            if levelBarW > 0 then
+                p:bar({ x = levelBarX, y = y + 1, w = levelBarW, h = 1 }, row.ratio or 0)
             end
             local leftX = rightX + parallelLabelW
             local slashX = leftX + parallelLeftW
@@ -3688,7 +3702,7 @@ end
 return Status
 
 frontend/ui/components/tabbar.lua
-1446
+1562
 local Component = require("frontend.ui.base")
 local TabBar = {}
 function TabBar.new()
@@ -3707,7 +3721,7 @@ function TabBar:render(context)
     local p = context.painter
     local r = self.rect
     local page = self.props.page or "overview"
-    p:fill(r, "surfaceAlt")
+    p:fill(r, "menu")
     local x = r.x + 1
     local tabs = { { key = "overview", label = "总览" } }
     if not context.readOnly then tabs[#tabs + 1] = { key = "config", label = "配置" } end
@@ -3716,14 +3730,16 @@ function TabBar:render(context)
         local width = p:measure(text)
         local active = page == tab.key
         local chip = { x = x, y = r.y, w = width, h = 1 }
-        p:button(chip, text, active)
+        p:button(chip, text, false, false,
+            active and "menuChipActiveText" or "menuChipText",
+            active and "menuChipActive" or "menuChip")
         context:hit({ type = "page", page = tab.key }, chip)
         x = x + width + 1
     end
     local hint = context.readOnly and "镜像端 · 只读 · Q 退出" or "X 启停 · R 刷新 · T 切页 · Q 退出"
     local hintW = p:measure(hint)
     if x + 2 + hintW <= r.x + r.w then
-        p:textRight(r.x, r.y, r.w - 1, hint, "muted", "surfaceAlt")
+        p:textRight(r.x, r.y, r.w - 1, hint, "menuMuted", "menu")
     end
 end
 return TabBar
@@ -4002,7 +4018,7 @@ end
 return Renderer
 
 hardware/device.lua
-2727
+2946
 local component = require("component")
 local clock = require("services.clock")
 local log = require("services.log")
@@ -4041,23 +4057,25 @@ function device.list()
     return out
 end
 function device.typeOf(address)
-    if not address then return nil end
+    if not address then return nil, "地址为空" end
     local ok, kind = pcall(component.type, address)
-    if ok and type(kind) == "string" then return kind end
-    return nil
+    if not ok then return nil, tostring(kind) end
+    if type(kind) == "string" then return kind end
+    return nil, "组件类型无效"
 end
 function device.name(address)
-    local value = device.invoke(address, "getName")
+    local value, reason = device.invoke(address, "getName")
     if type(value) == "string" and value ~= "" then return value end
-    return nil
+    return nil, tostring(reason or "组件名称为空")
 end
 function device.coordinates(address)
-    if not address then return nil, nil, nil end
+    if not address then return nil, nil, nil, "地址为空" end
     local ok, x, y, z = pcall(component.invoke, address, "getCoordinates")
-    if ok and type(x) == "number" and type(y) == "number" and type(z) == "number" then
+    if not ok then return nil, nil, nil, tostring(x) end
+    if type(x) == "number" and type(y) == "number" and type(z) == "number" then
         return x, y, z
     end
-    return nil, nil, nil
+    return nil, nil, nil, "组件坐标无效"
 end
 function device.invoke(address, method, ...)
     if not address then return nil, "地址为空" end
@@ -4800,7 +4818,7 @@ end
 return transposer
 
 main.lua
-6717
+7134
 local selfPath = (debug.getinfo(1, "S").source or ""):gsub("^@", "")
 local selfDir = selfPath:match("^(.*)[/\\][^/\\]*$")
 local locateChunk = assert(loadfile((selfDir or ".") .. "/core/locate.lua"), "cannot load core/locate.lua")
@@ -4869,9 +4887,15 @@ local function run()
             produce_service.requestRefresh()
             return true
         end
-        local recognized, ok, err = schedule_service.handle(name, action)
+        local recognized, ok, err, status = schedule_service.handle(name, action)
         if recognized then
-            if ok == false and err and err ~= "" then log.warn("操作未完成：" .. tostring(err)) end
+            if ok == false and err and err ~= "" then
+                if status == "pending" then
+                    log.system("操作等待初始化：" .. tostring(err))
+                else
+                    log.warn("操作未完成：" .. tostring(err))
+                end
+            end
             return ok
         end
         recognized, ok, err = produce_service.handle(name, action)
@@ -4889,8 +4913,15 @@ local function run()
             if ok == false and err and err ~= "" then log.warn("操作未完成：" .. tostring(err)) end
             return ok
         end
-        ok, err = config_service.handle(name, action)
-        if ok == false and err and err ~= "" then log.warn("操作未完成：" .. tostring(err)) end
+        local configStatus
+        ok, err, configStatus = config_service.handle(name, action)
+        if ok == false and err and err ~= "" then
+            if configStatus == "pending" then
+                log.system("操作等待初始化：" .. tostring(err))
+            else
+                log.warn("操作未完成：" .. tostring(err))
+            end
+        end
         return ok
     end)
     local uiReadyLogged = false
@@ -5138,7 +5169,7 @@ end
 return clock
 
 services/config_service.lua
-12182
+12833
 local CONFIG = require("shared.config")
 local constants = require("shared.constants")
 local state = require("services.state")
@@ -5256,13 +5287,20 @@ function config_service.load()
     log.system("配置已载入")
     return true, settings.path()
 end
-local function commit(values, message)
+local function commit(values, message, severity)
     local ok, err = settings.setMany(values)
     if not ok then return false, "写配置失败（settings.txt）：" .. tostring(err) end
     local snapshot = settings.load() or {}
     applySnapshot(snapshot)
     state.bump()
-    log.system(message or "配置已更新")
+    local text = message or "配置已更新"
+    if severity == "warn" then
+        log.warn(text)
+    elseif severity == "error" then
+        log.error(text)
+    else
+        log.system(text)
+    end
     return true, ""
 end
 function config_service.toggleEnabled(level)
@@ -5333,16 +5371,25 @@ function config_service.setNetStrength(value)
     end
     return commit({ net_strength = value }, "无线范围：" .. tostring(value))
 end
-function config_service.setProduceEnabled(level, enabled)
-    level = tonumber(level)
-    if not level or level < 1 or level > constants.LEVEL_COUNT then return false, "等级无效" end
+function config_service.setProduceEnabled(level, enabled, reason, severity)
+    local levelNumber = tonumber(level)
+    if not levelNumber or levelNumber < 1 or levelNumber > constants.LEVEL_COUNT then
+        return false, "等级无效"
+    end
     if type(enabled) ~= "boolean" then return false, "开关值无效" end
     if enabled then
-        local ready, reason = require("services.produce_service").canEnable(level)
-        if not ready then return false, reason end
+        local status, why = require("services.produce_service").canEnable(levelNumber)
+        if status ~= "ready" then return false, why or "制作链路尚未就绪", status end
     end
-    return commit({ [produceKey(level)] = enabled and "true" or "false" },
-        string.format("%s 制作自动化：%s", constants.levelCode(level), enabled and "启用" or "停用"))
+    if not enabled and reason ~= nil and reason ~= "" then
+        local ok, err = commit({ [produceKey(levelNumber)] = "false" },
+            string.format("%s 制作自动化已自动关闭：%s",
+                constants.levelCode(levelNumber), tostring(reason)), severity or "warn")
+        return ok, err, "ready"
+    end
+    local ok, err = commit({ [produceKey(levelNumber)] = enabled and "true" or "false" },
+        string.format("%s 制作自动化：%s", constants.levelCode(levelNumber), enabled and "启用" or "停用"))
+    return ok, err, "ready"
 end
 function config_service.toggleMode()
     local nextMode = state.get().settings.mode == "rate" and "threshold" or "rate"
@@ -5394,8 +5441,9 @@ end
 return config_service
 
 services/control.lua
-2054
+2919
 local constants = require("shared.constants")
+local facts = require("services.facts")
 local control = {}
 local function ensure(data)
     data.control = data.control or {}
@@ -5409,16 +5457,27 @@ local function baselineOf(data)
     return out
 end
 function control.canStart(data)
+    local hardwareStatus, hardwareReason = facts.status(data.facts.hardware)
+    if hardwareStatus == "pending" then return "pending", "正在完成首轮硬件扫描" end
+    if hardwareStatus == "error" then return "error", "硬件观测失败：" .. tostring(hardwareReason) end
     local hardware = data.facts.hardware
-    if not hardware or hardware.value == nil then return false, "正在完成首轮硬件扫描" end
     if #(hardware.missing or {}) > 0 then
-        return false, "硬件缺失：" .. table.concat(hardware.missing or {}, "、")
+        return "invalid", "硬件缺失：" .. table.concat(hardware.missing or {}, "、")
     end
-    if not data.facts.water or data.facts.water.value == nil then
-        return false, "正在等待首轮水位观测"
+    if data.power.observedAt == nil then
+        if data.power.error then
+            return "error", "能源观测失败：" .. tostring(data.power.error)
+        end
+        return "pending", "正在读取能源仓功率"
     end
-    if data.facts.host.switch.value == false then return false, "净水主机未开机" end
-    return true, nil
+    local waterStatus, waterReason = facts.status(data.facts.water)
+    if waterStatus == "pending" then return "pending", "正在等待首轮水位观测" end
+    if waterStatus == "error" then return "error", "水位观测失败：" .. tostring(waterReason) end
+    local hostStatus, hostReason = facts.status(data.facts.host.switch)
+    if hostStatus == "pending" then return "pending", "正在等待主机开关观测" end
+    if hostStatus == "error" then return "error", "主机开关观测失败：" .. tostring(hostReason) end
+    if data.facts.host.switch.value == false then return "invalid", "净水主机未开机" end
+    return "ready"
 end
 function control.isRunning(data)
     return data.control and data.control.session == "running"
@@ -5455,14 +5514,28 @@ end
 return control
 
 services/facts.lua
-538
+1013
 local clock = require("services.clock")
 local state = require("services.state")
 local facts = {}
 function facts.publish(slot, value)
     slot.value = value
+    slot.error = nil
     slot.observedAt = clock.uptime()
     state.bump()
+end
+function facts.fail(slot, err)
+    local text = tostring(err or "观测失败")
+    local changed = slot.error ~= text
+    slot.error = text
+    if changed then state.bump() end
+    return changed
+end
+function facts.status(slot)
+    if not slot then return "pending", "事实槽不存在" end
+    if slot.value ~= nil then return "ready" end
+    if slot.error ~= nil then return "error", tostring(slot.error) end
+    return "pending", "尚未观测"
 end
 function facts.age(slot)
     if not slot or not slot.observedAt or slot.observedAt == 0 then return nil end
@@ -5475,11 +5548,12 @@ end
 return facts
 
 services/hardware_service.lua
-14594
+16349
 local clock = require("services.clock")
 local constants = require("shared.constants")
 local config = require("shared.config")
 local state = require("services.state")
+local facts = require("services.facts")
 local log = require("services.log")
 local device = require("hardware.device")
 local machines = require("hardware.machines")
@@ -5489,6 +5563,7 @@ local fluid = require("hardware.fluid")
 local host_cycle = require("services.host_cycle")
 local hardware_store = require("services.hardware_store")
 local learning_service = require("services.learning_service")
+local util = require("shared.util")
 local service = {}
 local due = {
     scan = 0,
@@ -5517,11 +5592,11 @@ local INTERVAL = {
     water = config.INTERVAL.WATER or 5,
 }
 local function factOf(address)
-    local facts = state.get().facts.machines
-    local fact = facts[address]
+    local machineFacts = state.get().facts.machines
+    local fact = machineFacts[address]
     if not fact then
         fact = { address = address }
-        facts[address] = fact
+        machineFacts[address] = fact
     end
     return fact
 end
@@ -5579,17 +5654,15 @@ local function publishRegistry(devices)
         list[#list + 1] = { address = address, kind = kind }
         if kind == "fluid_interface" or kind == "me_interface" then me = true end
     end
-    data.facts.hardware.value = list
     data.facts.hardware.summary = summary
     data.facts.hardware.me = me
-    data.facts.hardware.observedAt = clock.uptime()
     local missing = {}
     if summary.host == 0 then missing[#missing + 1] = "净水厂主机" end
     if not me then missing[#missing + 1] = "ME网络接口" end
     if not summary.energy then missing[#missing + 1] = "能量仓" end
     data.facts.hardware.missing = missing
     rebuildLevels()
-    state.bump()
+    facts.publish(data.facts.hardware, list)
 end
 local function finishScan(now, devices)
     local lines = machines.topologyLines()
@@ -5660,7 +5733,11 @@ local function stepScan(now)
         scanState.pending = task
     end
     if task.phase == "name" then
-        local name = device.name(task.address)
+        local name, nameErr = device.name(task.address)
+        if not name and nameErr then
+            log.diag(string.format("机器名称读取失败 %s：%s",
+                util.shortAddress(task.address), tostring(nameErr)))
+        end
         if name then
             local entry
             if machines.isRegistered(task.address) then
@@ -5675,36 +5752,53 @@ local function stepScan(now)
         end
         return completeScanTask(scanState)
     end
-    local x, y, z = device.coordinates(task.address)
+    local x, y, z, coordErr = device.coordinates(task.address)
     if x ~= nil and y ~= nil and z ~= nil then
         machines.update(task.address, nil, x, y, z)
+    elseif coordErr then
+        log.diag(string.format("机器坐标读取失败 %s：%s",
+            util.shortAddress(task.address), tostring(coordErr)))
     end
     return completeScanTask(scanState)
 end
 local function stepEnergy(now)
     local hatch = machines.energy()
-    local power = 0
-    if hatch then
-        local stored = device.invoke(hatch.address, "getEUMaxStored")
-        power = energy.powerOf(hatch, type(stored) == "number" and stored or nil)
-    end
     local data = state.get()
-    local before = data.power.max
-    data.power.max = power
-    data.power.available = math.floor(power * (data.settings.energyFactor or 100) / 100)
-    data.power.observedAt = clock.uptime()
-    if before ~= power then state.bump() end
+    local power
+    local reason
+    if hatch then
+        local stored, err = device.invoke(hatch.address, "getEUMaxStored")
+        if type(stored) == "number" then
+            power = energy.powerOf(hatch, stored)
+        else
+            reason = tostring(err or "能源存量不是数值")
+        end
+    else
+        reason = "能量仓不存在"
+    end
+    if power ~= nil then
+        local before = data.power.max
+        local firstObservation = data.power.observedAt == nil
+        local hadError = data.power.error ~= nil
+        data.power.max = power
+        data.power.available = math.floor(power * (data.settings.energyFactor or 100) / 100)
+        data.power.observedAt = clock.uptime()
+        data.power.error = nil
+        if before ~= power or firstObservation or hadError then state.bump() end
+    elseif data.power.error ~= reason then
+        data.power.error = reason
+        state.bump()
+    end
     due.energy = now + INTERVAL.energy
     return false
 end
 local function stepWater(now)
-    local levels, err = fluid.readAll(state.get().facts.hardware.value or {})
-    if levels then
-        state.get().facts.water.value = levels
-        state.get().facts.water.observedAt = clock.uptime()
-        state.bump()
-    elseif err then
-        log.warn("水位读取失败：" .. tostring(err))
+    local data = state.get()
+    local levels, err = fluid.readAll(data.facts.hardware.value or {})
+    if levels ~= nil then
+        facts.publish(data.facts.water, levels)
+    elseif facts.fail(data.facts.water, err or "水位读取失败") then
+        log.warn("水位读取失败：" .. tostring(err or "未知错误"))
     end
     due.water = now + INTERVAL.water
     return false
@@ -5713,15 +5807,14 @@ local function stepHostSwitch(now)
     local host = machines.of(constants.HOST_LEVEL)[1]
     local fact = state.get().facts.host.switch
     if host then
-        local value = probes.switch(host.address)
+        local value, err = probes.switch(host.address)
         if value ~= nil then
-            fact.value = value
-            fact.observedAt = clock.uptime()
-            state.bump()
+            facts.publish(fact, value)
+        elseif facts.fail(fact, err or "主机开关读取失败") then
+            log.warn("主机开关读取失败：" .. tostring(err or "未知错误"))
         end
-    else
-        fact.value = nil
-        fact.observedAt = clock.uptime()
+    elseif facts.fail(fact, "净水主机不存在") then
+        log.warn("主机开关读取失败：净水主机不存在")
     end
     due.hostSwitch = now + INTERVAL.hostSwitch
     return false
@@ -5733,19 +5826,23 @@ local function stepHostProgress(now)
         due.hostProgress = now + INTERVAL.hostProgress
         return false
     end
+    local data = state.get()
     if not hostProgressState then
-        local value = probes.progress(host.address)
+        local value, err = probes.progress(host.address)
         if value == nil then
+            facts.fail(data.facts.host.progress, err or "主机进度读取失败")
             due.hostProgress = now + INTERVAL.hostProgress
             return false
         end
         hostProgressState = { progress = value }
         return true
     end
-    local maxProgress = probes.progressMax(host.address)
+    local maxProgress, maxErr = probes.progressMax(host.address)
+    if maxProgress == nil then
+        facts.fail(data.facts.host.progressMax, maxErr or "主机总进度读取失败")
+    end
     local started = host_cycle.observe(hostProgressState.progress, maxProgress)
     hostProgressState = nil
-    state.bump()
     if started then
         activeRequested = true
         due.active = now
@@ -5781,11 +5878,16 @@ local function stepPlantSwitch(now)
     local fact = factOf(machine.address)
     fact.level = level
     local previous = fact.switch
-    local value = probes.switch(machine.address)
-    fact.switch = value
-    fact.switchObservedAt = clock.uptime()
-    if previous ~= nil and value ~= nil and previous ~= value then
-        learning_service.clearLevel(level)
+    local value, err = probes.switch(machine.address)
+    if value ~= nil then
+        fact.switch = value
+        fact.switchErr = nil
+        fact.switchObservedAt = clock.uptime()
+        if previous ~= nil and previous ~= value then
+            learning_service.clearLevel(level)
+        end
+    else
+        fact.switchErr = tostring(err or "机器开关读取失败")
     end
     return true
 end
@@ -5803,10 +5905,11 @@ local function stepPlantSample(now)
     local fact = factOf(machine.address)
     fact.level = level
     if fact.active == true then
-        local info = probes.sensor(machine.address)
+        local info, err = probes.sensor(machine.address)
         if info then
             fact.parallel = info.parallel
             fact.success = info.success
+            fact.sampleErr = nil
             fact.sampleObservedAt = clock.uptime()
             local seq = host_cycle.seq()
             if fact.active == true and seq > 0 and seq == plantSampleState.sampleSeq
@@ -5814,6 +5917,8 @@ local function stepPlantSample(now)
                 fact.learnedCycle = seq
                 learning_service.observe(level, machine.address, info.parallel, info.success, seq)
             end
+        else
+            fact.sampleErr = tostring(err or "传感器读取失败")
         end
     end
     return true
@@ -5835,8 +5940,14 @@ local function stepActive()
     end
     local fact = factOf(machine.address)
     fact.level = level
-    fact.active = probes.active(machine.address)
-    fact.activeObservedAt = clock.uptime()
+    local value, err = probes.active(machine.address)
+    if value ~= nil then
+        fact.active = value
+        fact.activeErr = nil
+        fact.activeObservedAt = clock.uptime()
+    else
+        fact.activeErr = tostring(err or "机器运行状态读取失败")
+    end
     return true
 end
 local PENDING = {
@@ -6071,8 +6182,9 @@ function service.capacity() return CAPACITY end
 return service
 
 services/host_cycle.lua
-1222
+1142
 local state = require("services.state")
+local facts = require("services.facts")
 local host_cycle = {}
 local armed = false
 function host_cycle.observe(progress, maxProgress)
@@ -6080,11 +6192,10 @@ function host_cycle.observe(progress, maxProgress)
     local data = state.get()
     local cycle = data.facts.host.cycle
     local previous = cycle.progress
-    data.facts.host.progress.value = progress
-    data.facts.host.progress.observedAt = require("services.clock").uptime()
+    local progressFact = data.facts.host.progress
+    facts.publish(progressFact, progress)
     if type(maxProgress) == "number" then
-        data.facts.host.progressMax.value = maxProgress
-        data.facts.host.progressMax.observedAt = data.facts.host.progress.observedAt
+        facts.publish(data.facts.host.progressMax, maxProgress)
     end
     if previous == nil then
         armed = progress <= 1
@@ -6098,7 +6209,7 @@ function host_cycle.observe(progress, maxProgress)
     if not started then return false end
     armed = false
     cycle.seq = (cycle.seq or 0) + 1
-    cycle.detectedAt = data.facts.host.progress.observedAt
+    cycle.detectedAt = progressFact.observedAt
     return true, cycle.seq
 end
 function host_cycle.seq()
@@ -6475,7 +6586,7 @@ end
 return service
 
 services/produce_runtime.lua
-10413
+13000
 local CONFIG = require("shared.config")
 local constants = require("shared.constants")
 local state = require("services.state")
@@ -6490,6 +6601,7 @@ local util = require("shared.util")
 local produce = require("business.produce")
 local machine = require("business.produce.machine")
 local produce_service = require("services.produce_service")
+local config_service = require("services.config_service")
 local runtime = {}
 local function data()
     return state.get()
@@ -6512,9 +6624,12 @@ local function entryActive(entry)
     end
     return false
 end
-local function machineActive(address)
+local function machineStatus(address)
     local fact = data().facts.machines[address]
-    return fact ~= nil and fact.active == true
+    if not fact then return "pending", "机器状态尚未建立" end
+    if fact.active ~= nil then return "ready", fact.active end
+    if fact.activeErr then return "error", tostring(fact.activeErr) end
+    return "pending", "机器运行状态尚未建立"
 end
 local function transferCode(raw, fallback)
     local text = tostring(raw or ""):lower()
@@ -6586,11 +6701,20 @@ local function executeCommand(task, command)
     }
     return result
 end
-local function canRun(task)
+local function taskStillValid(task)
     if task.cycleSeq ~= data().facts.host.cycle.seq then return false, "周期已变化" end
     if not entryActive(task.entry) then return false, "绑定已失效" end
-    if not machineActive(task.machine) then return false, "机器未运行" end
-    return produce_service.canRunBinding(task.entry)
+    local product = data().produce.levels[task.level] or {}
+    if product.enabled ~= true then return false, "制作自动化未启用" end
+    local activeStatus, activeValue = machineStatus(task.machine)
+    if activeStatus == "pending" then
+        return false, "机器运行状态尚未建立", "pending"
+    elseif activeStatus == "error" then
+        return false, "机器运行状态读取失败：" .. tostring(activeValue), "error"
+    elseif activeValue ~= true then
+        return false, "机器未运行", "inactive"
+    end
+    return true
 end
 local function remove(id)
     store().tasks[id] = nil
@@ -6671,6 +6795,26 @@ local function addTask(entry, method, seq, now)
     task.createdAt = now
     store().tasks[id] = task
 end
+local function cancelLevelTasks(level)
+    for id, task in pairs(store().tasks or {}) do
+        if task.level == level then remove(id) end
+    end
+end
+local function disableLevel(level, status, reason)
+    local product = data().produce.levels[level]
+    if not product or product.enabled ~= true then return false end
+    cancelLevelTasks(level)
+    local severity = status == "error" and "error" or "warn"
+    local ok, err = config_service.setProduceEnabled(level, false, reason, severity)
+    if not ok then
+        product.enabled = false
+        state.bump()
+        log.error(string.format("%s 制作自动化自动关闭失败：%s；原因：%s",
+            constants.levelCode(level), tostring(err), tostring(reason)))
+        return false
+    end
+    return true
+end
 local function spawnCycle(seq, now)
     if seq <= 0 or not control.isRunning(data()) then return end
     local progress = tonumber(data().facts.host.progress.value)
@@ -6679,12 +6823,28 @@ local function spawnCycle(seq, now)
         and progress / maxProgress > (CONFIG.PRODUCE.CYCLE_CUTOFF or 0.9) then
         return
     end
+    local ready = {}
+    for level = 1, constants.LEVEL_COUNT do
+        local product = data().produce.levels[level] or {}
+        if product.enabled == true then
+            local status, reason = produce_service.canEnable(level)
+            ready[level] = status == "ready"
+            if status ~= "ready" and status ~= "pending" then
+                disableLevel(level, status, reason)
+            end
+        end
+    end
     for _, entry in ipairs(data().produce.bindings or {}) do
         local method = produce.method(entry.level)
         local product = data().produce.levels[entry.level] or {}
-        if method and product.enabled == true and machineActive(entry.machine) then
-            local ok = produce_service.canRunBinding(entry)
-            if ok then addTask(entry, method, seq, now) end
+        if ready[entry.level] and product.enabled == true and method then
+            local activeStatus, activeValue = machineStatus(entry.machine)
+            if activeStatus == "ready" then
+                if activeValue == true then addTask(entry, method, seq, now) end
+            elseif activeStatus == "error" then
+                disableLevel(entry.level, "error",
+                    "机器运行状态读取失败：" .. tostring(activeValue))
+            end
         end
     end
 end
@@ -6720,9 +6880,19 @@ function runtime.step(now)
     end
     local task = pickDue(now)
     if not task then return false end
-    local ok = canRun(task)
-    if not ok then
+    local taskValid, taskReason, taskFailure = taskStillValid(task)
+    if not taskValid then
         remove(task.id)
+        if taskFailure == "error" then disableLevel(task.level, "error", taskReason) end
+        return true
+    end
+    local status, reason = produce_service.canEnable(task.level)
+    if status == "pending" then
+        remove(task.id)
+        return true
+    elseif status ~= "ready" then
+        remove(task.id)
+        disableLevel(task.level, status, reason)
         return true
     end
     local method = produce.method(task.level)
@@ -6754,7 +6924,7 @@ end
 return runtime
 
 services/produce_service.lua
-30035
+30786
 local config = require("shared.config")
 local constants = require("shared.constants")
 local state = require("services.state")
@@ -6766,7 +6936,6 @@ local produce_store = require("services.produce_store")
 local layout = require("business.produce.layout")
 local produce_registry = require("business.produce")
 local util = require("shared.util")
-local control = require("services.control")
 local service = {}
 local INTERVAL = {
     scan = (config.PRODUCE and config.PRODUCE.SCAN) or 10,
@@ -7008,7 +7177,7 @@ local function reconcilePresence(devices)
 end
 local function queueRefreshProperties()
     for _, entry in ipairs(produce().bindings) do
-        if produce().online[entry.transposer] == true then
+        if produce().online and produce().online[entry.transposer] == true then
             queueRate(entry, "refresh")
         end
     end
@@ -7079,6 +7248,7 @@ local function commitBinding(level, machine, address, rate)
     end
     old.bindings = active
     old.candidates = candidates
+    old.online = old.online or {}
     old.online[address] = true
     old.binding = nil
     state.bump()
@@ -7295,15 +7465,20 @@ local function stepRate(task)
     end
     rate, err = transposer.rate(entry.transposer)
     if type(rate) == "number" and rate > 0 then
-        if entry.rate ~= rate then
-            entry.rate = rate
-            state.bump()
-            persist()
-        end
+        local rateChanged = entry.rate ~= rate
+        local hadError = entry.rateErr ~= nil
+        entry.rate = rate
+        entry.rateErr = nil
+        if rateChanged then persist() end
+        if rateChanged or hadError then state.bump() end
     else
+        local text = tostring(err or "速率无效")
+        if entry.rateErr ~= text then
+            entry.rateErr = text
+            state.bump()
+        end
         log.warn(string.format("%s 刷新转运速率失败 %s：%s",
-            constants.levelCode(entry.level), util.shortAddress(entry.transposer),
-            tostring(err or "速率无效")))
+            constants.levelCode(entry.level), util.shortAddress(entry.transposer), text))
     end
     if task.mode ~= "restore" then queueConfigure(entry, "force") end
     finishCurrent()
@@ -7325,7 +7500,7 @@ function service.load()
     local data = produce()
     data.bindings = active
     data.candidates = candidates
-    data.online = {}
+    data.online = nil
     data.binding = nil
     for _, problem in ipairs(problems or {}) do log.warn("制作配置读取异常：" .. tostring(problem)) end
     due.scan = 0
@@ -7432,47 +7607,70 @@ function service.selectBindCandidate(machine, address)
     return true, nil
 end
 function service.canEnable(level)
-    level = tonumber(level)
-    if not level or not layout.implemented(level) then
-        return false, constants.levelCode(level or 0) .. " 制作自动化尚未实现"
+    local levelNumber = tonumber(level)
+    if not levelNumber or not layout.implemented(levelNumber) then
+        return "invalid", constants.levelCode(levelNumber or 0) .. " 制作自动化尚未实现"
     end
-    local list = machines.of(level)
-    if #list == 0 then return false, constants.levelCode(level) .. " 没有已部署机器" end
-    local unbound, missing, offline, unconfigured, materialBlocked = 0, 0, 0, 0, 0
+    local snapshot = state.get()
+    if snapshot.facts.hardware.value == nil then
+        return "pending", "硬件状态尚未建立"
+    end
+    local online = produce().online
+    if online == nil then
+        return "pending", "转运器在线状态尚未建立"
+    end
+    local list = machines.of(levelNumber)
+    if #list == 0 then return "invalid", constants.levelCode(levelNumber) .. " 没有已部署机器" end
+    local unbound, missing, offline = 0, 0, 0
+    local invalidConfig, materialBlocked = 0, 0
+    local pendingConfig, ratePending, rateErrors = 0, 0, 0
+    local rateError
     for _, machine in ipairs(list) do
         local entry = findAnyByMachine(machine.address)
         if not entry then
             unbound = unbound + 1
         else
             if entry.miss then missing = missing + 1 end
-            if produce().online[entry.transposer] ~= true then offline = offline + 1 end
-            if entry.sides == nil or entry.sideFail or entry.slots == nil or entry.slots.ready ~= true then
-                unconfigured = unconfigured + 1
+            if online[entry.transposer] ~= true then offline = offline + 1 end
+            if entry.sideFail then
+                invalidConfig = invalidConfig + 1
+            elseif entry.sides == nil or entry.slots == nil then
+                pendingConfig = pendingConfig + 1
+            elseif entry.slots.ready ~= true then
+                invalidConfig = invalidConfig + 1
             elseif entry.forceOff == true then
                 materialBlocked = materialBlocked + 1
             end
+            local rate = tonumber(entry.rate)
+            if not rate or rate <= 0 then
+                if entry.rateErr then
+                    rateErrors = rateErrors + 1
+                    rateError = rateError or tostring(entry.rateErr)
+                else
+                    ratePending = ratePending + 1
+                end
+            end
         end
     end
-    if unbound > 0 then return false, string.format("还有 %d 台机器未绑定转运器", unbound) end
-    if missing > 0 then return false, string.format("有 %d 台转运器缺失", missing) end
-    if offline > 0 then return false, string.format("有 %d 台转运器离线", offline) end
-    if unconfigured > 0 then return false, string.format("有 %d 台机器侧位或槽位尚未就绪", unconfigured) end
-    if materialBlocked > 0 then return false, string.format("有 %d 台机器原料不足", materialBlocked) end
-    return true, nil
-end
-function service.canRunBinding(entry)
-    if not control.isRunning(state.get()) then return false, "调度未运行" end
-    if not entry or findActive(entry.machine) ~= entry then return false, "绑定已失效" end
-    local product = state.get().produce.levels[entry.level] or {}
-    if product.enabled ~= true then return false, "制作自动化未启用" end
-    local levelReady, levelReason = service.canEnable(entry.level)
-    if not levelReady then return false, levelReason end
-    if produce().online[entry.transposer] ~= true then return false, "转运器离线" end
-    if not entry.sides or not entry.slots or entry.slots.ready ~= true then return false, "侧位或槽位未就绪" end
-    if entry.forceOff == true then return false, tostring(entry.forceReason or "原料不足") end
-    local rate = tonumber(entry.rate)
-    if not rate or rate <= 0 then return false, "转运速率未知" end
-    return true, nil
+    if unbound > 0 then return "invalid", string.format("还有 %d 台机器未绑定转运器", unbound) end
+    if missing > 0 then return "invalid", string.format("有 %d 台转运器缺失", missing) end
+    if offline > 0 then return "invalid", string.format("有 %d 台转运器离线", offline) end
+    if invalidConfig > 0 then
+        return "invalid", string.format("有 %d 台机器侧位或槽位未就绪", invalidConfig)
+    end
+    if materialBlocked > 0 then
+        return "invalid", string.format("有 %d 台机器原料不足", materialBlocked)
+    end
+    if rateErrors > 0 then
+        return "error", string.format("有 %d 台机器转运速率读取失败：%s", rateErrors, tostring(rateError))
+    end
+    if pendingConfig > 0 or ratePending > 0 then
+        if pendingConfig > 0 then
+            return "pending", string.format("有 %d 台机器正在建立侧位或槽位", pendingConfig)
+        end
+        return "pending", string.format("有 %d 台机器转运速率尚未读取", ratePending)
+    end
+    return "ready"
 end
 function service.unbind(machine)
     if type(machine) ~= "string" then return false, "机器无效" end
@@ -7504,7 +7702,7 @@ function service.unbind(machine)
     if not ok then return false, "写绑定表失败（data/produce.txt）" end
     produce().bindings = active
     produce().candidates = candidates
-    produce().online[removedAddress] = nil
+    if produce().online then produce().online[removedAddress] = nil end
     if produce().binding and produce().binding["machine"] == machine then produce().binding = nil end
     if current and current["entry"] and current["entry"]["machine"] == machine then current.cancelled = true end
     state.bump()
@@ -7740,7 +7938,7 @@ end
 return produce_store
 
 services/read_model.lua
-10316
+10059
 local constants = require("shared.constants")
 local log = require("services.log")
 local state = require("services.state")
@@ -7750,6 +7948,7 @@ local layout = require("business.produce.layout")
 local util = require("shared.util")
 local plan_model = require("business.plan")
 local learning_service = require("services.learning_service")
+local produce_service = require("services.produce_service")
 local history_service = require("services.history_service")
 local read_model = {}
 local function factValue(slot)
@@ -7775,7 +7974,7 @@ end
 local function machineView(data, address, name, present, x, y, z)
     local entry = bindingFor(data, address)
     local online
-    if entry then online = data.produce.online[entry.transposer] end
+    if entry and data.produce.online then online = data.produce.online[entry.transposer] end
     local sideState = sideStateOf(entry)
     local text
     if type(x) == "number" and type(y) == "number" and type(z) == "number" then
@@ -7831,31 +8030,24 @@ local function buildProduceLevels(data)
             if machine.transposerOnline == true then online = online + 1 end
         end
         local unbound = #list - bound
-        local unavailable = bound - online
-        local unconfigured = #list - configured
-        local reason
-        if #list == 0 then
-            reason = "无机器"
-        elseif unbound > 0 then
-            reason = string.format("还有 %d 台未绑定", unbound)
-        elseif unavailable > 0 then
-            reason = string.format("有 %d 台转运器未就绪", unavailable)
-        elseif unconfigured > 0 then
-            reason = string.format("有 %d 台侧位未就绪", unconfigured)
-        end
+        local status, reason = produce_service.canEnable(level)
         product.machines = list
         product.count = #list
         product.bound = bound
         product.unbound = unbound
         product.configured = #list > 0 and configured == #list
         product.online = #list > 0 and online == #list
-        product.ready = product.implemented and #list > 0
-            and unbound == 0 and unavailable == 0 and unconfigured == 0
+        product.status = status
+        product.ready = status == "ready"
         product.reason = reason
         if not product.enabled then
             product.state = "未启用"
-        elseif product.ready then
+        elseif status == "ready" then
             product.state = "已就绪"
+        elseif status == "pending" then
+            product.state = "初始化中"
+        elseif status == "error" then
+            product.state = "读取错误"
         else
             product.state = "未就绪"
         end
@@ -7996,7 +8188,7 @@ end
 return read_model
 
 services/schedule_service.lua
-12425
+12758
 local constants = require("shared.constants")
 local state = require("services.state")
 local log = require("services.log")
@@ -8011,7 +8203,6 @@ local produce_service = require("services.produce_service")
 local service = {}
 local seenRevision = -1
 local suggestionKey = nil
-local suggestionPublished = false
 local planKey = nil
 local forcePlan = false
 local retryAt = 0
@@ -8045,21 +8236,30 @@ local function produceReadiness()
     for level = 1, constants.LEVEL_COUNT do
         local product = levels[level] or {}
         if product.enabled == true then
-            ready[level] = produce_service.canEnable(level)
+            ready[level] = produce_service.canEnable(level) == "ready"
         else
             ready[level] = false
         end
     end
     return ready
 end
+local function suggestionInputsReady(snapshot)
+    return snapshot.facts.hardware.value ~= nil
+        and snapshot.power.observedAt ~= nil
+end
 local function publishSuggestionIfChanged(force)
     local snapshot = data()
+    if not suggestionInputsReady(snapshot) then return false end
     local key = suggest.inputKey(snapshot)
     if not force and suggestionKey == key then return false end
+    local firstPublish = suggestionKey == nil
     suggestionKey = key
     local result = suggest.compute(snapshot)
-    local firstPublish = not suggestionPublished
-    suggestionPublished = true
+    if firstPublish then
+        snapshot.plan.suggest = suggest.copy(result.values)
+        state.bump()
+        return true
+    end
     if suggest.equals(snapshot.plan.suggest, result.values) then return false end
     local changes = {}
     for level = 1, constants.LEVEL_COUNT do
@@ -8072,7 +8272,7 @@ local function publishSuggestionIfChanged(force)
     end
     snapshot.plan.suggest = suggest.copy(result.values)
     state.bump()
-    if not firstPublish and #changes > 0 then
+    if #changes > 0 then
         log.warn("建议并行变动：" .. table.concat(changes, "，"))
     end
     return true
@@ -8209,7 +8409,6 @@ end
 function service.load()
     seenRevision = -1
     suggestionKey = nil
-    suggestionPublished = false
     planKey = nil
     forcePlan = false
     retryAt = 0
@@ -8288,9 +8487,9 @@ function service.start(reason)
         retryAt = 0
         log.warn("用户启动：已取消未完成的停机下发")
     end
-    if control.isRunning(snapshot) then return true, nil end
-    local ok, err = control.canStart(snapshot)
-    if not ok then return false, err end
+    if control.isRunning(snapshot) then return true, nil, "ready" end
+    local status, statusReason = control.canStart(snapshot)
+    if status ~= "ready" then return false, statusReason, status end
     publishSuggestionIfChanged(false)
     control.start(snapshot, reason or "手动")
     learning.resetAll()
@@ -8304,7 +8503,7 @@ function service.start(reason)
     retryAt = 0
     state.bump()
     log.system("系统启动：" .. tostring(reason or "手动"))
-    return true, nil
+    return true, nil, "ready"
 end
 function service.shutdownNow(reason)
     local snapshot = data()
@@ -8345,7 +8544,8 @@ function service.handle(name, action)
     if name ~= "system_toggle" then return false end
     local reason = tostring((action and action.reason) or "手动")
     if control.isRunning(data()) then
-        return true, service.stop(reason)
+        local ok, err = service.stop(reason)
+        return true, ok, err, "ready"
     end
     return true, service.start(reason)
 end
@@ -8394,7 +8594,7 @@ end
 return settings
 
 services/state.lua
-2490
+2491
 local state = {}
 local data = {
     revision = 0,
@@ -8462,7 +8662,7 @@ local data = {
         binding = nil,
         bindings = {},
         candidates = {},
-        online = {},
+        online = nil,
     },
     output = {
         history = { capacity = 80, interval = 30, head = 0, count = 0, values = {} },

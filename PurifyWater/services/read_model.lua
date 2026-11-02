@@ -1,4 +1,11 @@
--- 前端唯一读模型：只提供结构化状态，不包含文案、颜色或布局。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/read_model.lua
+--
+-- 定位：前端和镜像端的唯一只读模型。
+-- 功能：从内存状态构造结构化快照，并复用业务层状态生成等级 readiness。
+-- 边界：不包含文案、颜色或布局；不修改源状态，不访问组件。
+--------------------------------------------------------------------------------
+
 local constants = require("shared.constants")
 local log = require("services.log")
 local state = require("services.state")
@@ -8,6 +15,7 @@ local layout = require("business.produce.layout")
 local util = require("shared.util")
 local plan_model = require("business.plan")
 local learning_service = require("services.learning_service")
+local produce_service = require("services.produce_service")
 local history_service = require("services.history_service")
 
 local read_model = {}
@@ -35,10 +43,11 @@ local function sideStateOf(entry)
     return "自动配置中"
 end
 
+--- 构造单台机器的展示模型，并合并绑定、在线和侧位状态。
 local function machineView(data, address, name, present, x, y, z)
     local entry = bindingFor(data, address)
     local online
-    if entry then online = data.produce.online[entry.transposer] end
+    if entry and data.produce.online then online = data.produce.online[entry.transposer] end
     local sideState = sideStateOf(entry)
     local text
     if type(x) == "number" and type(y) == "number" and type(z) == "number" then
@@ -63,6 +72,7 @@ local function machineView(data, address, name, present, x, y, z)
     }
 end
 
+--- 构造制作等级模型；就绪状态直接复用 produce_service.canEnable。
 local function buildProduceLevels(data)
     local out = {}
     for level = 1, constants.LEVEL_COUNT do
@@ -98,18 +108,7 @@ local function buildProduceLevels(data)
         end
 
         local unbound = #list - bound
-        local unavailable = bound - online
-        local unconfigured = #list - configured
-        local reason
-        if #list == 0 then
-            reason = "无机器"
-        elseif unbound > 0 then
-            reason = string.format("还有 %d 台未绑定", unbound)
-        elseif unavailable > 0 then
-            reason = string.format("有 %d 台转运器未就绪", unavailable)
-        elseif unconfigured > 0 then
-            reason = string.format("有 %d 台侧位未就绪", unconfigured)
-        end
+        local status, reason = produce_service.canEnable(level)
 
         product.machines = list
         product.count = #list
@@ -117,13 +116,17 @@ local function buildProduceLevels(data)
         product.unbound = unbound
         product.configured = #list > 0 and configured == #list
         product.online = #list > 0 and online == #list
-        product.ready = product.implemented and #list > 0
-            and unbound == 0 and unavailable == 0 and unconfigured == 0
+        product.status = status
+        product.ready = status == "ready"
         product.reason = reason
         if not product.enabled then
             product.state = "未启用"
-        elseif product.ready then
+        elseif status == "ready" then
             product.state = "已就绪"
+        elseif status == "pending" then
+            product.state = "初始化中"
+        elseif status == "error" then
+            product.state = "读取错误"
         else
             product.state = "未就绪"
         end
@@ -131,10 +134,12 @@ local function buildProduceLevels(data)
     end
     return out
 end
+--- 返回当前源状态 revision。
 function read_model.revision()
     return tostring(state.revision()) .. ":" .. tostring(log.revision())
 end
 
+--- 构造供前端和无线镜像消费的只读结构快照。
 function read_model.snapshot()
     local data = state.get()
     local hardware = factValue(data.facts.hardware)

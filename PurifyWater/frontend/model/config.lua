@@ -1,4 +1,11 @@
--- ReadModel -> ConfigView：配置表、全局字段与选项键盘的数据来源。
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/model/config.lua
+--
+-- 定位：配置页的 ViewModel 构造器。
+-- 功能：把读模型转换为配置表格、收集方式、运行参数、主题和自启信息。
+-- 边界：只格式化视图数据，不持久化设置、不修改 app 状态。
+--------------------------------------------------------------------------------
+
 local constants = require("shared.constants")
 local util = require("shared.util")
 
@@ -10,6 +17,7 @@ local function numberText(value)
     return string.format("%g", value)
 end
 
+--- 把只读快照转换为配置页 ViewModel。
 function config.build(read)
     local settings = read.settings or {}
     local system = read.system or {}

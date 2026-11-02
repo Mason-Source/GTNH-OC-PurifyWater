@@ -1,5 +1,11 @@
--- 转运器绑定、存在性扫描、missing 对账、侧位自动配置状态机。
--- 唯一写 produce 状态；每步最多一次组件调用。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/produce_service.lua
+--
+-- 定位：制作自动化绑定与侧位配置状态机。
+-- 功能：扫描转运器、维护绑定与缺失对账、自动识别侧位和槽位、刷新速率并支撑启停判断。
+-- 边界：是 produce 配置数据的唯一写者；具体制作流程由 produce_runtime 执行。
+--------------------------------------------------------------------------------
+
 local config = require("shared.config")
 local constants = require("shared.constants")
 local state = require("services.state")
@@ -11,7 +17,6 @@ local produce_store = require("services.produce_store")
 local layout = require("business.produce.layout")
 local produce_registry = require("business.produce")
 local util = require("shared.util")
-local control = require("services.control")
 
 local service = {}
 local INTERVAL = {
@@ -79,6 +84,7 @@ local function bindingLess(a, b)
     return tostring(a.machine) < tostring(b.machine)
 end
 
+--- 保存当前绑定和候选表，并记录写入失败。
 local function persist()
     local ok, err = produce_store.save(produce().bindings, produce().candidates)
     if not ok then log.error("制作配置保存失败：" .. tostring(err)) end
@@ -94,6 +100,7 @@ local function keyBusy(key)
     return queued[key] == true
 end
 
+--- 把组件任务加入串行队列；同一 key 不允许并发。
 local function enqueue(task)
     if task.key and keyBusy(task.key) then return false end
     if task.key then queued[task.key] = true end
@@ -145,6 +152,7 @@ local function finishCurrent()
     end
 end
 
+--- 排队执行侧位/槽位配置，并合并同机器的重复请求。
 local function queueConfigure(entry, mode)
     if not entry then return false end
     local key = "configure:" .. tostring(entry.machine)
@@ -180,6 +188,7 @@ local function bindingAddressBound(address)
     return findAnyByTransposer(address) ~= nil
 end
 
+--- 排队读取转运速率，并区分绑定、刷新和恢复场景。
 local function queueRate(entry, mode)
     if not entry then return false end
     mode = mode or "restore"
@@ -197,6 +206,7 @@ local function queueRate(entry, mode)
     return enqueue({ kind = "rate", key = key, mode = mode, entry = entry })
 end
 
+--- 根据最新组件列表维护在线表、missing 计数和自动恢复。
 local function reconcilePresence(devices)
     local data = produce()
     local oldOnline = data.online or {}
@@ -283,7 +293,7 @@ end
 
 local function queueRefreshProperties()
     for _, entry in ipairs(produce().bindings) do
-        if produce().online[entry.transposer] == true then
+        if produce().online and produce().online[entry.transposer] == true then
             queueRate(entry, "refresh")
         end
     end
@@ -307,6 +317,7 @@ local function startBindingRate(level, machine, address)
     })
 end
 
+--- 扫描未被占用的转运器，生成当前机器的候选列表。
 local function stepCandidates(task)
     local item = produce().binding
     if not item or item.level ~= task.level or item.machine ~= task.machine then
@@ -325,6 +336,7 @@ local function stepCandidates(task)
     finishCurrent()
 end
 
+--- 校验转运器唯一性，持久化绑定并启动侧位配置。
 local function commitBinding(level, machine, address, rate)
     local other = findAnyByTransposer(address)
     if other and other.machine ~= machine then
@@ -362,6 +374,7 @@ local function commitBinding(level, machine, address, rate)
 
     old.bindings = active
     old.candidates = candidates
+    old.online = old.online or {}
     old.online[address] = true
     old.binding = nil
     state.bump()
@@ -376,6 +389,7 @@ local function cacheItemSlots(level)
     return level ~= constants.T6_LEVEL
 end
 
+--- 根据当前六面数据重建槽位缓存并检查原料是否充足。
 local function refreshSlots(entry, faces)
     local fluids, items = layout.requirements(entry.level)
     if not fluids then
@@ -424,6 +438,7 @@ local function refreshSlots(entry, faces)
     return available, missing
 end
 
+--- 根据任务模式分类侧位或仅刷新槽位，并在成功后持久化。
 local function applyConfig(task)
     local entry = task.entry
     if findActive(entry.machine) ~= entry then return end
@@ -513,6 +528,7 @@ local function applyConfig(task)
     end
     state.bump()
 end
+--- 逐面读取流体罐和物品槽，保证每次只执行一个组件调用。
 local function advanceConfig(task)
     local entry = task.entry
     if not entry or findActive(entry.machine) ~= entry then
@@ -556,6 +572,7 @@ local function advanceConfig(task)
     end
 end
 
+--- 读取并校验转运速率，完成绑定提交、刷新或恢复流程。
 local function stepRate(task)
     local rate, err
     if task.mode == "binding" then
@@ -595,20 +612,26 @@ local function stepRate(task)
     end
     rate, err = transposer.rate(entry.transposer)
     if type(rate) == "number" and rate > 0 then
-        if entry.rate ~= rate then
-            entry.rate = rate
-            state.bump()
-            persist()
-        end
+        local rateChanged = entry.rate ~= rate
+        local hadError = entry.rateErr ~= nil
+        entry.rate = rate
+        entry.rateErr = nil
+        if rateChanged then persist() end
+        if rateChanged or hadError then state.bump() end
     else
+        local text = tostring(err or "速率无效")
+        if entry.rateErr ~= text then
+            entry.rateErr = text
+            state.bump()
+        end
         log.warn(string.format("%s 刷新转运速率失败 %s：%s",
-            constants.levelCode(entry.level), util.shortAddress(entry.transposer),
-            tostring(err or "速率无效")))
+            constants.levelCode(entry.level), util.shortAddress(entry.transposer), text))
     end
     if task.mode ~= "restore" then queueConfigure(entry, "force") end
     finishCurrent()
 end
 
+--- 分派当前制作配置队列任务。
 local function runCurrent(task)
     if task.kind == "rate" then
         stepRate(task)
@@ -621,28 +644,32 @@ local function runCurrent(task)
     end
     return false
 end
+--- 从 data/produce.txt 恢复绑定与候选表。
 function service.load()
     local active, candidates, problems = produce_store.load()
     local data = produce()
     data.bindings = active
     data.candidates = candidates
-    data.online = {}
+    data.online = nil
     data.binding = nil
     for _, problem in ipairs(problems or {}) do log.warn("制作配置读取异常：" .. tostring(problem)) end
     due.scan = 0
     state.bump()
 end
 
+--- 请求立即重新扫描转运器并刷新属性。
 function service.requestRefresh()
     refreshRequested = true
     due.scan = 0
 end
 
+--- 返回制作配置状态机下一次需要推进的时间。
 function service.nextDue(now)
     if current or #queue > 0 or refreshRequested then return now end
     return due.scan
 end
 
+--- 至多执行一个制作配置或组件对账任务。
 function service.step(now)
     if current then return runCurrent(current) end
     if #queue > 0 then
@@ -661,6 +688,7 @@ function service.step(now)
     return false
 end
 
+--- 开始为指定等级机器选择未绑定转运器。
 function service.beginBind(level, machine)
     level = tonumber(level)
     if not level or level < 1 or level > constants.LEVEL_COUNT then return false, "等级无效" end
@@ -691,6 +719,7 @@ function service.beginBind(level, machine)
     return true, nil
 end
 
+--- 取消正在进行的转运器绑定选择。
 function service.cancelBind()
     if not produce().binding then return true, nil end
 
@@ -710,6 +739,7 @@ function service.cancelBind()
     return true, nil
 end
 
+--- 确认选中转运器，或选择空值解除现有绑定。
 function service.selectBindCandidate(machine, address)
     local item = produce().binding
     if not item or item.machine ~= machine then return false, "绑定选择已失效，请重新打开" end
@@ -744,52 +774,87 @@ function service.selectBindCandidate(machine, address)
     return true, nil
 end
 
+--- 检查等级制作就绪状态。
+--- 返回 `ready`、`pending`、`error` 或 `invalid`，并附带可展示原因。
+---@param level number|string 等级。
+---@return string status 就绪状态。
+---@return string|nil reason 非 ready 状态的原因。
 function service.canEnable(level)
-    level = tonumber(level)
-    if not level or not layout.implemented(level) then
-        return false, constants.levelCode(level or 0) .. " 制作自动化尚未实现"
+    local levelNumber = tonumber(level)
+    if not levelNumber or not layout.implemented(levelNumber) then
+        return "invalid", constants.levelCode(levelNumber or 0) .. " 制作自动化尚未实现"
     end
-    local list = machines.of(level)
-    if #list == 0 then return false, constants.levelCode(level) .. " 没有已部署机器" end
 
-    local unbound, missing, offline, unconfigured, materialBlocked = 0, 0, 0, 0, 0
+    local snapshot = state.get()
+    if snapshot.facts.hardware.value == nil then
+        return "pending", "硬件状态尚未建立"
+    end
+
+    local online = produce().online
+    if online == nil then
+        return "pending", "转运器在线状态尚未建立"
+    end
+
+    local list = machines.of(levelNumber)
+    if #list == 0 then return "invalid", constants.levelCode(levelNumber) .. " 没有已部署机器" end
+
+    local unbound, missing, offline = 0, 0, 0
+    local invalidConfig, materialBlocked = 0, 0
+    local pendingConfig, ratePending, rateErrors = 0, 0, 0
+    local rateError
+
     for _, machine in ipairs(list) do
         local entry = findAnyByMachine(machine.address)
         if not entry then
             unbound = unbound + 1
         else
             if entry.miss then missing = missing + 1 end
-            if produce().online[entry.transposer] ~= true then offline = offline + 1 end
-            if entry.sides == nil or entry.sideFail or entry.slots == nil or entry.slots.ready ~= true then
-                unconfigured = unconfigured + 1
+            if online[entry.transposer] ~= true then offline = offline + 1 end
+
+            if entry.sideFail then
+                invalidConfig = invalidConfig + 1
+            elseif entry.sides == nil or entry.slots == nil then
+                pendingConfig = pendingConfig + 1
+            elseif entry.slots.ready ~= true then
+                invalidConfig = invalidConfig + 1
             elseif entry.forceOff == true then
                 materialBlocked = materialBlocked + 1
             end
+
+            local rate = tonumber(entry.rate)
+            if not rate or rate <= 0 then
+                if entry.rateErr then
+                    rateErrors = rateErrors + 1
+                    rateError = rateError or tostring(entry.rateErr)
+                else
+                    ratePending = ratePending + 1
+                end
+            end
         end
     end
-    if unbound > 0 then return false, string.format("还有 %d 台机器未绑定转运器", unbound) end
-    if missing > 0 then return false, string.format("有 %d 台转运器缺失", missing) end
-    if offline > 0 then return false, string.format("有 %d 台转运器离线", offline) end
-    if unconfigured > 0 then return false, string.format("有 %d 台机器侧位或槽位尚未就绪", unconfigured) end
-    if materialBlocked > 0 then return false, string.format("有 %d 台机器原料不足", materialBlocked) end
-    return true, nil
+
+    if unbound > 0 then return "invalid", string.format("还有 %d 台机器未绑定转运器", unbound) end
+    if missing > 0 then return "invalid", string.format("有 %d 台转运器缺失", missing) end
+    if offline > 0 then return "invalid", string.format("有 %d 台转运器离线", offline) end
+    if invalidConfig > 0 then
+        return "invalid", string.format("有 %d 台机器侧位或槽位未就绪", invalidConfig)
+    end
+    if materialBlocked > 0 then
+        return "invalid", string.format("有 %d 台机器原料不足", materialBlocked)
+    end
+    if rateErrors > 0 then
+        return "error", string.format("有 %d 台机器转运速率读取失败：%s", rateErrors, tostring(rateError))
+    end
+    if pendingConfig > 0 or ratePending > 0 then
+        if pendingConfig > 0 then
+            return "pending", string.format("有 %d 台机器正在建立侧位或槽位", pendingConfig)
+        end
+        return "pending", string.format("有 %d 台机器转运速率尚未读取", ratePending)
+    end
+    return "ready"
 end
 
-function service.canRunBinding(entry)
-    if not control.isRunning(state.get()) then return false, "调度未运行" end
-    if not entry or findActive(entry.machine) ~= entry then return false, "绑定已失效" end
-    local product = state.get().produce.levels[entry.level] or {}
-    if product.enabled ~= true then return false, "制作自动化未启用" end
-    local levelReady, levelReason = service.canEnable(entry.level)
-    if not levelReady then return false, levelReason end
-    if produce().online[entry.transposer] ~= true then return false, "转运器离线" end
-    if not entry.sides or not entry.slots or entry.slots.ready ~= true then return false, "侧位或槽位未就绪" end
-    if entry.forceOff == true then return false, tostring(entry.forceReason or "原料不足") end
-    local rate = tonumber(entry.rate)
-    if not rate or rate <= 0 then return false, "转运速率未知" end
-    return true, nil
-end
-
+--- 解除机器绑定并同步停用对应制作自动化。
 function service.unbind(machine)
     if type(machine) ~= "string" then return false, "机器无效" end
     local active, candidates = {}, {}
@@ -822,7 +887,7 @@ function service.unbind(machine)
     if not ok then return false, "写绑定表失败（data/produce.txt）" end
     produce().bindings = active
     produce().candidates = candidates
-    produce().online[removedAddress] = nil
+    if produce().online then produce().online[removedAddress] = nil end
     if produce().binding and produce().binding["machine"] == machine then produce().binding = nil end
     if current and current["entry"] and current["entry"]["machine"] == machine then current.cancelled = true end
     state.bump()
@@ -831,6 +896,7 @@ function service.unbind(machine)
     return true, nil
 end
 
+--- 根据转运失败类型决定保留侧位还是重新诊断。
 function service.onTransferFailure(machine, failure)
     local entry = findActive(machine)
     if not entry then return false, "该机器未绑定转运器" end
@@ -844,6 +910,7 @@ function service.onTransferFailure(machine, failure)
     return true, nil
 end
 
+--- 处理制作绑定、取消、选择和解除命令。
 function service.handle(name, action)
     action = action or {}
     if name == "produce_bind_begin" then

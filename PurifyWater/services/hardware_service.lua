@@ -1,8 +1,16 @@
--- 设备扫描与观测状态机：每个步骤最多一个组件调用，完成后统一发布事实。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/hardware_service.lua
+--
+-- 定位：硬件扫描与观测状态机。
+-- 功能：逐步骤完成组件发现、机器登记、能源、水位、主机和 T1-T8 状态采集，并统一发布成功值或错误。
+-- 边界：每个服务步骤最多一次组件调用；保留旧值供上层降级使用，不生成控制计划或修改用户配置。
+--------------------------------------------------------------------------------
+
 local clock = require("services.clock")
 local constants = require("shared.constants")
 local config = require("shared.config")
 local state = require("services.state")
+local facts = require("services.facts")
 local log = require("services.log")
 local device = require("hardware.device")
 local machines = require("hardware.machines")
@@ -12,6 +20,7 @@ local fluid = require("hardware.fluid")
 local host_cycle = require("services.host_cycle")
 local hardware_store = require("services.hardware_store")
 local learning_service = require("services.learning_service")
+local util = require("shared.util")
 
 local service = {}
 local due = {
@@ -42,16 +51,18 @@ local INTERVAL = {
     water = config.INTERVAL.WATER or 5,
 }
 
+--- 取得机器事实槽；switch/active/sample 的旧值保留，*Err 只记录最近一次读取失败。
 local function factOf(address)
-    local facts = state.get().facts.machines
-    local fact = facts[address]
+    local machineFacts = state.get().facts.machines
+    local fact = machineFacts[address]
     if not fact then
         fact = { address = address }
-        facts[address] = fact
+        machineFacts[address] = fact
     end
     return fact
 end
 
+--- 把单机事实聚合为等级级开关、活跃数、并行和成功率。
 local function rebuildLevels()
     local data = state.get()
     for level = 1, constants.LEVEL_COUNT do
@@ -98,6 +109,7 @@ local function rebuildLevels()
     end
 end
 
+--- 发布组件清单、机器摘要和缺失项，并推进 revision。
 local function publishRegistry(devices)
     local data = state.get()
     local summary = machines.summary()
@@ -107,10 +119,8 @@ local function publishRegistry(devices)
         list[#list + 1] = { address = address, kind = kind }
         if kind == "fluid_interface" or kind == "me_interface" then me = true end
     end
-    data.facts.hardware.value = list
     data.facts.hardware.summary = summary
     data.facts.hardware.me = me
-    data.facts.hardware.observedAt = clock.uptime()
 
     local missing = {}
     if summary.host == 0 then missing[#missing + 1] = "净水厂主机" end
@@ -119,9 +129,10 @@ local function publishRegistry(devices)
     data.facts.hardware.missing = missing
 
     rebuildLevels()
-    state.bump()
+    facts.publish(data.facts.hardware, list)
 end
 
+--- 完成一次扫描对账，持久化拓扑并发布硬件登记事实。
 local function finishScan(now, devices)
     local lines = machines.topologyLines()
     local changed = machines.consumeChanged()
@@ -152,6 +163,7 @@ local function completeScanTask(scanStateArg)
     return scanStateArg.index <= #scanStateArg.candidates
 end
 
+--- 推进一次设备发现、命名和坐标补全任务。
 local function stepScan(now)
     if not scanState then
         local devices = device.list()
@@ -198,7 +210,11 @@ local function stepScan(now)
     end
 
     if task.phase == "name" then
-        local name = device.name(task.address)
+        local name, nameErr = device.name(task.address)
+        if not name and nameErr then
+            log.diag(string.format("机器名称读取失败 %s：%s",
+                util.shortAddress(task.address), tostring(nameErr)))
+        end
         if name then
             local entry
             if machines.isRegistered(task.address) then
@@ -214,60 +230,83 @@ local function stepScan(now)
         return completeScanTask(scanState)
     end
 
-    local x, y, z = device.coordinates(task.address)
+    local x, y, z, coordErr = device.coordinates(task.address)
     if x ~= nil and y ~= nil and z ~= nil then
         machines.update(task.address, nil, x, y, z)
+    elseif coordErr then
+        log.diag(string.format("机器坐标读取失败 %s：%s",
+            util.shortAddress(task.address), tostring(coordErr)))
     end
     return completeScanTask(scanState)
 end
+--- 读取能源仓功率；失败时保留上一次有效功率并记录错误。
 local function stepEnergy(now)
     local hatch = machines.energy()
-    local power = 0
-    if hatch then
-        local stored = device.invoke(hatch.address, "getEUMaxStored")
-        power = energy.powerOf(hatch, type(stored) == "number" and stored or nil)
-    end
     local data = state.get()
-    local before = data.power.max
-    data.power.max = power
-    data.power.available = math.floor(power * (data.settings.energyFactor or 100) / 100)
-    data.power.observedAt = clock.uptime()
-    if before ~= power then state.bump() end
+    local power
+    local reason
+
+    if hatch then
+        local stored, err = device.invoke(hatch.address, "getEUMaxStored")
+        if type(stored) == "number" then
+            power = energy.powerOf(hatch, stored)
+        else
+            reason = tostring(err or "能源存量不是数值")
+        end
+    else
+        reason = "能量仓不存在"
+    end
+
+    if power ~= nil then
+        local before = data.power.max
+        local firstObservation = data.power.observedAt == nil
+        local hadError = data.power.error ~= nil
+        data.power.max = power
+        data.power.available = math.floor(power * (data.settings.energyFactor or 100) / 100)
+        data.power.observedAt = clock.uptime()
+        data.power.error = nil
+        if before ~= power or firstObservation or hadError then state.bump() end
+    elseif data.power.error ~= reason then
+        data.power.error = reason
+        state.bump()
+    end
+
     due.energy = now + INTERVAL.energy
     return false
 end
 
+--- 读取并发布 T1-T8 水位；失败时保留旧水位。
 local function stepWater(now)
-    local levels, err = fluid.readAll(state.get().facts.hardware.value or {})
-    if levels then
-        state.get().facts.water.value = levels
-        state.get().facts.water.observedAt = clock.uptime()
-        state.bump()
-    elseif err then
-        log.warn("水位读取失败：" .. tostring(err))
+    local data = state.get()
+    local levels, err = fluid.readAll(data.facts.hardware.value or {})
+    if levels ~= nil then
+        facts.publish(data.facts.water, levels)
+    elseif facts.fail(data.facts.water, err or "水位读取失败") then
+        log.warn("水位读取失败：" .. tostring(err or "未知错误"))
     end
     due.water = now + INTERVAL.water
     return false
 end
 
+--- 读取并发布主机开关；失败时保留旧值。
 local function stepHostSwitch(now)
     local host = machines.of(constants.HOST_LEVEL)[1]
     local fact = state.get().facts.host.switch
     if host then
-        local value = probes.switch(host.address)
+        local value, err = probes.switch(host.address)
         if value ~= nil then
-            fact.value = value
-            fact.observedAt = clock.uptime()
-            state.bump()
+            facts.publish(fact, value)
+        elseif facts.fail(fact, err or "主机开关读取失败") then
+            log.warn("主机开关读取失败：" .. tostring(err or "未知错误"))
         end
-    else
-        fact.value = nil
-        fact.observedAt = clock.uptime()
+    elseif facts.fail(fact, "净水主机不存在") then
+        log.warn("主机开关读取失败：净水主机不存在")
     end
     due.hostSwitch = now + INTERVAL.hostSwitch
     return false
 end
 
+--- 用前后两次进度读取完成主机周期边沿检测。
 local function stepHostProgress(now)
     local host = machines.of(constants.HOST_LEVEL)[1]
     if not host then
@@ -276,9 +315,11 @@ local function stepHostProgress(now)
         return false
     end
 
+    local data = state.get()
     if not hostProgressState then
-        local value = probes.progress(host.address)
+        local value, err = probes.progress(host.address)
         if value == nil then
+            facts.fail(data.facts.host.progress, err or "主机进度读取失败")
             due.hostProgress = now + INTERVAL.hostProgress
             return false
         end
@@ -286,10 +327,12 @@ local function stepHostProgress(now)
         return true
     end
 
-    local maxProgress = probes.progressMax(host.address)
+    local maxProgress, maxErr = probes.progressMax(host.address)
+    if maxProgress == nil then
+        facts.fail(data.facts.host.progressMax, maxErr or "主机总进度读取失败")
+    end
     local started = host_cycle.observe(hostProgressState.progress, maxProgress)
     hostProgressState = nil
-    state.bump()
     if started then
         activeRequested = true
         due.active = now
@@ -315,6 +358,7 @@ local function nextMachine(scan)
     end
 end
 
+--- 逐台读取 T1-T8 开关；失败时保留旧值并记录错误。
 local function stepPlantSwitch(now)
     plantSwitchState = plantSwitchState or newPlantScan()
     local machine, level = nextMachine(plantSwitchState)
@@ -328,15 +372,21 @@ local function stepPlantSwitch(now)
     local fact = factOf(machine.address)
     fact.level = level
     local previous = fact.switch
-    local value = probes.switch(machine.address)
-    fact.switch = value
-    fact.switchObservedAt = clock.uptime()
-    if previous ~= nil and value ~= nil and previous ~= value then
-        learning_service.clearLevel(level)
+    local value, err = probes.switch(machine.address)
+    if value ~= nil then
+        fact.switch = value
+        fact.switchErr = nil
+        fact.switchObservedAt = clock.uptime()
+        if previous ~= nil and previous ~= value then
+            learning_service.clearLevel(level)
+        end
+    else
+        fact.switchErr = tostring(err or "机器开关读取失败")
     end
     return true
 end
 
+--- 逐台读取活跃机器传感器，并提交本周期学习样本。
 local function stepPlantSample(now)
     plantSampleState = plantSampleState or newPlantScan()
     if plantSampleState.sampleSeq == nil then plantSampleState.sampleSeq = host_cycle.seq() end
@@ -352,10 +402,11 @@ local function stepPlantSample(now)
     local fact = factOf(machine.address)
     fact.level = level
     if fact.active == true then
-        local info = probes.sensor(machine.address)
+        local info, err = probes.sensor(machine.address)
         if info then
             fact.parallel = info.parallel
             fact.success = info.success
+            fact.sampleErr = nil
             fact.sampleObservedAt = clock.uptime()
             local seq = host_cycle.seq()
             if fact.active == true and seq > 0 and seq == plantSampleState.sampleSeq
@@ -363,11 +414,14 @@ local function stepPlantSample(now)
                 fact.learnedCycle = seq
                 learning_service.observe(level, machine.address, info.parallel, info.success, seq)
             end
+        else
+            fact.sampleErr = tostring(err or "传感器读取失败")
         end
     end
     return true
 end
 
+--- 按需逐台刷新 T1-T8 的活跃状态。
 local function stepActive()
     if not activeRequested then
         due.active = math.huge
@@ -385,8 +439,14 @@ local function stepActive()
     end
     local fact = factOf(machine.address)
     fact.level = level
-    fact.active = probes.active(machine.address)
-    fact.activeObservedAt = clock.uptime()
+    local value, err = probes.active(machine.address)
+    if value ~= nil then
+        fact.active = value
+        fact.activeErr = nil
+        fact.activeObservedAt = clock.uptime()
+    else
+        fact.activeErr = tostring(err or "机器运行状态读取失败")
+    end
     return true
 end
 
@@ -398,6 +458,7 @@ local PENDING = {
     { key = "hostProgress", state = function() return hostProgressState end, run = stepHostProgress },
 }
 
+--- 返回硬件状态机下一次需要推进的时间。
 function service.nextDue(now)
     for _, item in ipairs(PENDING) do
         if item.state() then return now end
@@ -409,6 +470,7 @@ function service.nextDue(now)
     return best
 end
 
+--- 至多执行一个硬件扫描或观测步骤。
 function service.step(now)
     for _, item in ipairs(PENDING) do
         if item.state() then return item.run(now) end
@@ -430,12 +492,14 @@ function service.step(now)
     return false
 end
 
+--- 请求立即重新扫描并刷新全部硬件属性。
 function service.requestRefresh()
     scanState = nil
     forceRefresh = true
     due.scan = 0
 end
 
+--- 从硬件登记文件恢复机器表并重建等级聚合。
 function service.load()
     machines.load(hardware_store.loadLines())
     machines.consumeChanged()

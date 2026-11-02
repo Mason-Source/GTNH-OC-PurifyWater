@@ -1,4 +1,11 @@
--- T7 脱气：控制信号解析后按需投料。
+--------------------------------------------------------------------------------
+-- PurifyWater/business/produce/t7.lua
+--
+-- 定位：T7 脱气制作自动化。
+-- 功能：解析控制信号位，按需向脱气机投放冷却液、惰性气体、超导粗胚和熔融中子。
+-- 边界：只定义信号映射与转运需求，不直接访问组件。
+--------------------------------------------------------------------------------
+
 local resources = require("shared.resources")
 local machine = require("business.produce.machine")
 local flow = require("business.produce.flow")
@@ -34,9 +41,14 @@ local t7 = {
     initial = "sensor",
 }
 
+--- 返回 T7 可能投放的全部流体候选。
 function t7.requiredFluids() return FLUIDS end
+--- 返回 T7 自动转运的最低速率要求。
 function t7.minTransferRate() return 200000 end
 
+--- 将脱气控制信号解码为需要投放的流体列表。
+--- 信号位定义：bit0=是否投气，bit1=超导粗胚，bit2=熔融中子，
+--- bit1-2 组合选择氦/氖/氪/氙；0=只投冷却液，>=8=无需投料。
 function t7.demand(signal)
     local n = tonumber(signal)
     if n == nil then return nil, "读不到控制信号", nil end
@@ -55,6 +67,7 @@ function t7.demand(signal)
     return out, nil, n
 end
 
+--- 创建以控制信号读取为起点的 T7 任务。
 function t7.build()
     return { state = "sensor", index = 1 }
 end

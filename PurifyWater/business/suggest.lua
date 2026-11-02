@@ -1,4 +1,11 @@
--- 双模式建议并行：纯计算，只读传入的内存快照，不写状态、不碰组件。
+--------------------------------------------------------------------------------
+-- PurifyWater/business/suggest.lua
+--
+-- 定位：速率模式下的并行建议计算器。
+-- 功能：根据权重、成功率、回流、T6/T7 参数和能源预算计算各等级建议并行。
+-- 边界：只读快照并返回计算值；不持久化、不下发开关、不访问组件。
+--------------------------------------------------------------------------------
+
 local CONFIG = require("shared.config")
 local constants = require("shared.constants")
 
@@ -32,6 +39,7 @@ local function refluxOf(snapshot, level)
 end
 suggest.refluxOf = refluxOf
 
+--- 返回考虑回流奖励与 T6 双锂选项后的有效成功率。
 function suggest.successOf(snapshot, level)
     local success = constants.RATE_SUCCESS[level] or 0
     if level == constants.T6_LEVEL and snapshot.settings.t6DualLithium == true then
@@ -155,6 +163,7 @@ local function rateValues(snapshot)
     }
 end
 
+--- 按当前调度模式计算 T1-T8 的建议每机并行及元数据。
 function suggest.compute(snapshot)
     local mode = snapshot.settings.mode == "rate" and "rate" or "threshold"
     local values, meta
@@ -168,6 +177,7 @@ function suggest.compute(snapshot)
     return meta
 end
 
+--- 生成建议计算的稳定输入指纹，用于跳过高成本重算。
 function suggest.inputKey(snapshot)
     local mode = snapshot.settings.mode == "rate" and "rate" or "threshold"
     local parts = {
@@ -191,6 +201,7 @@ function suggest.inputKey(snapshot)
     return table.concat(parts, "|")
 end
 
+--- 比较两组 T1-T8 建议并行是否完全一致。
 function suggest.equals(a, b)
     for level = 1, constants.LEVEL_COUNT do
         if (tonumber((a or {})[level]) or 0) ~= (tonumber((b or {})[level]) or 0) then
@@ -200,6 +211,7 @@ function suggest.equals(a, b)
     return true
 end
 
+--- 复制并向下取整规范化 T1-T8 建议并行。
 function suggest.copy(values)
     local out = {}
     for level = 1, constants.LEVEL_COUNT do

@@ -1,4 +1,11 @@
--- T6 紫外处理：按请求签名顺序更换 9 种透镜。
+--------------------------------------------------------------------------------
+-- PurifyWater/business/produce/t6.lua
+--
+-- 定位：T6 紫外处理制作自动化。
+-- 功能：读取当前透镜请求，按固定顺序更换九种透镜，并回收目标侧残留。
+-- 边界：只定义透镜顺序与状态迁移；组件读写由制作运行时执行。
+--------------------------------------------------------------------------------
+
 local resources = require("shared.resources")
 local machine = require("business.produce.machine")
 
@@ -25,8 +32,10 @@ local t6 = {
     initial = "recover_read",
 }
 
+--- 返回 T6 当前可能使用的八种可更换透镜。
 function t6.requiredItems() return REQUIRED end
 
+--- 创建从残留回收开始的 T6 透镜更换任务。
 function t6.build()
     return {
         state = "recover_read",

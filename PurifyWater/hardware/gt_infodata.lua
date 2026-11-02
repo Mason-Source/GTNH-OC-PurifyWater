@@ -1,5 +1,10 @@
--- GT getSensorInformation 文本解析：提取 parallel/success 等字段。
--- 兼容未本地化 key、中文标签和英文标签；解析器不访问组件。
+--------------------------------------------------------------------------------
+-- PurifyWater/hardware/gt_infodata.lua
+--
+-- 定位：GT getSensorInformation 文本解析器。
+-- 功能：兼容未本地化 key、中英文标签和颜色码，提取并行、成功率、pH、温度、透镜请求和控制信号。
+-- 边界：纯文本解析，不访问组件；缺失字段返回 nil，不伪造默认值。
+--------------------------------------------------------------------------------
 
 local gtInfodata = {}
 
@@ -30,25 +35,25 @@ local FIELDS = {
 -- 文本预处理
 
 --- 去掉 Minecraft 颜色/样式转义码（§a、§l 等）
--- @param line string
--- @return string
+---@param line string
+---@return string
 function gtInfodata.stripColors(line)
     return (tostring(line):gsub("§.", ""))
 end
 
 --- 去掉行号前缀（1 = / 2: / 3) 等）
--- 数字后必须紧跟分隔符（= : ： ) .）才算行号，避免误伤 70%/坐标。
--- @param line string
--- @return string
+--- 数字后必须紧跟分隔符（= : ： ) .）才算行号，避免误伤 70%/坐标。
+---@param line string
+---@return string
 function gtInfodata.stripIndex(line)
     return (tostring(line):gsub("^%s*%d+%s*[=:：%)%.]%s*", "", 1))
 end
 
 --- 拆分为键与值
--- ① 键\参数 ② 无参数键（整行只有字母/数字/点/下划线）③ 其余文本返回 key=nil。
--- @param line string 原始行
--- @return string|nil key
--- @return string rest 去色码、去行号后的剩余部分（多参数用 " / " 连接）
+--- ① 键\参数 ② 无参数键（整行只有字母/数字/点/下划线）③ 其余文本返回 key=nil。
+---@param line string 原始行
+---@return string|nil key
+---@return string rest 去色码、去行号后的剩余部分（多参数用 " / " 连接）
 function gtInfodata.splitLine(line)
     local clean = gtInfodata.stripIndex(gtInfodata.stripColors(line))
     local key, rest = clean:match("^([%w%._]+)\\+(.*)$")
@@ -66,11 +71,11 @@ end
 -- 数值提取
 
 --- 从文本里取第一个**完整**数字（支持 3000000 / 3,000,000 / 5.63e14 / 70% 几种形态）
--- 【先去千位分隔符】`3,000,000` 不去掉的话只能读到第一个 `3`。
---   只删"夹在两位数字之间的逗号"，所以 `22,8,14` 这类坐标不会被粘成一团
---   （而且这类行不会带出任何数值）
--- @param text string|nil
--- @return number|nil
+--- 【先去千位分隔符】`3,000,000` 不去掉的话只能读到第一个 `3`。
+---   只删"夹在两位数字之间的逗号"，所以 `22,8,14` 这类坐标不会被粘成一团
+---   （而且这类行不会带出任何数值）
+---@param text string|nil
+---@return number|nil
 function gtInfodata.firstNumber(text)
     if type(text) ~= "string" then return nil end
     local cleaned = text:gsub("(%d),(%d)", "%1%2")
@@ -82,14 +87,14 @@ function gtInfodata.firstNumber(text)
 end
 
 --- 取"某个位置之后，第一个**带颜色码**的数字"
--- 本模块唯一的数值取法：**关键字之后，第一个带颜色码的数字**就是目标值
---   （实测 GT 把"值"染色、标签用别的颜色：`3 = 当前并行：§e3000000`）。
--- 颜色码不写死 §e（`…recipesDone.fmt\§a0§r` 是绿色，同样是值）；标签也可能自带颜色
---   （`§b成功几率§7: §e70%`），第一个色码段里没数字就继续往后看。
--- 入参必须是**带色码的原始行**；已去色码的字符串这里什么也找不到。
--- @param text string 原始行
--- @param fromPos number|nil 从哪个字节位置开始找（一般是关键字结束处）；默认 1
--- @return number|nil
+--- 本模块唯一的数值取法：**关键字之后，第一个带颜色码的数字**就是目标值
+---   （实测 GT 把"值"染色、标签用别的颜色：`3 = 当前并行：§e3000000`）。
+--- 颜色码不写死 §e（`…recipesDone.fmt\§a0§r` 是绿色，同样是值）；标签也可能自带颜色
+---   （`§b成功几率§7: §e70%`），第一个色码段里没数字就继续往后看。
+--- 入参必须是**带色码的原始行**；已去色码的字符串这里什么也找不到。
+---@param text string 原始行
+---@param fromPos number|nil 从哪个字节位置开始找（一般是关键字结束处）；默认 1
+---@return number|nil
 function gtInfodata.coloredNumber(text, fromPos)
     if type(text) ~= "string" then return nil end
     local i = fromPos or 1
@@ -108,10 +113,10 @@ end
 -- 本地化文本形态的辅助（B/C 两种形态走这里）
 
 --- 找字段标签，返回第一个命中位置（小写行上，字节位置可回原行用）。
--- @param lowerLine string 已小写化的行（传原行的小写，位置才对得上 raw）
--- @param labels table 标签表
--- @return number|nil 位置（字节下标）
--- @return number|nil 标签字节长度
+---@param lowerLine string 已小写化的行（传原行的小写，位置才对得上 raw）
+---@param labels table 标签表
+---@return number|nil 位置（字节下标）
+---@return number|nil 标签字节长度
 local function matchLabel(lowerLine, labels)
     for _, label in ipairs(labels or {}) do
         local needle = label:lower()
@@ -122,9 +127,9 @@ local function matchLabel(lowerLine, labels)
 end
 
 --- 该行是否命中字段的"排除词"（只在标签匹配路径上用）
--- @param lowerLine string
--- @param field table
--- @return boolean
+---@param lowerLine string
+---@param field table
+---@return boolean
 local function excluded(lowerLine, field)
     for _, token in ipairs(field.exclude or {}) do
         if lowerLine:find(token:lower(), 1, true) then return true end
@@ -133,11 +138,11 @@ local function excluded(lowerLine, field)
 end
 
 --- 找字段：键优先，标签兜底；返回原行上的取值起点。
--- @param raw string 原始行（带色码）
--- @param plain string 去色码后的行
--- @param key string|nil splitLine 得到的键（nil = 这行不是键值形态）
--- @return table|nil field
--- @return number from 取值的起点（字节位置，在 raw 上）
+---@param raw string 原始行（带色码）
+---@param plain string 去色码后的行
+---@param key string|nil splitLine 得到的键（nil = 这行不是键值形态）
+---@return table|nil field
+---@return number|nil from 取值的起点（字节位置，在 raw 上）；未命中时为 nil。
 local function findField(raw, plain, key)
     if key then
         local lowerKey = key:lower()
@@ -165,9 +170,9 @@ local function findField(raw, plain, key)
 end
 
 --- 取关键字之后的数值：优先带色码的数字；整行无色码则取第一个完整数字。
--- @param raw string 原始行
--- @param from number 关键字结束位置
--- @return number|nil
+---@param raw string 原始行
+---@param from number 关键字结束位置
+---@return number|nil
 local function valueAt(raw, from)
     local num = gtInfodata.coloredNumber(raw, from)
     if num ~= nil then return num end
@@ -251,10 +256,10 @@ function gtInfodata.temperature(lines)
 end
 
 --- T6 当前请求透镜：返回去色码、去行号、压缩空白后的整行签名
--- 2.8.4: `Current lens requested: Dilithium Lens`
--- 2.9.0: `GT5U.infodata.purification_unit_uv_treatment.lens_requested\\琥珀透镜`
--- @param lines table|string
--- @return string|nil
+--- 2.8.4: `Current lens requested: Dilithium Lens`
+--- 2.9.0: `GT5U.infodata.purification_unit_uv_treatment.lens_requested\\琥珀透镜`
+---@param lines table|string
+---@return string|nil
 function gtInfodata.lensRequest(lines)
     for _, raw in ipairs(toLines(lines)) do
         local plain = gtInfodata.stripIndex(gtInfodata.stripColors(raw))
@@ -283,21 +288,21 @@ function gtInfodata.controlSignal(lines)
 end
 
 --- 写入字段值（包一层规避 LuaLS 对动态键的窄表检查）。
--- @param info table
--- @param name string
--- @param value any
+---@param info table
+---@param name string
+---@param value any
 local function put(info, name, value)
     info[name] = value
 end
 
 -- 整段解析
 
---- 解析整段传感器文本（三种形态，见文件头）
--- @param lines table getSensorInformation() 的返回值（字符串数组；也接受带 \n 的字符串）
--- @return table {
---     parallel    = number|nil  真实并行（机器停着时可能是 1，调用方需自己闸门）
---     success     = number|nil  成功率（原始值，可能是 0~1 或 0~100）
---   }
+--- 解析整段传感器文本。
+--- 兼容键值行、本地化标签行和带颜色码的纯文本行。
+---@param lines string[]|string getSensorInformation() 的返回值；也接受换行字符串。
+---@return table info 结构为 `{ parallel: number|nil, success: number|nil }`。
+--- parallel 为真实并行；机器停止时可能读到 1，调用方仍需自行门控。
+--- success 为原始成功率，可能是 0-1 或 0-100。
 function gtInfodata.parse(lines)
     local info = {
         parallel = nil,
@@ -316,6 +321,7 @@ function gtInfodata.parse(lines)
 
         -- ② 取关键字后的数字；纯文本行忽略
         if field then
+            ---@cast from number
             local num = valueAt(raw, from)
             if num ~= nil then put(info, field.name, num) end
         end
@@ -325,10 +331,12 @@ end
 
 gtInfodata.common = gtInfodata.parse
 
+--- 返回传感器文本中的当前并行数。
 function gtInfodata.parallel(lines)
     return gtInfodata.common(lines).parallel
 end
 
+--- 返回传感器文本中的成功率原始值。
 function gtInfodata.success(lines)
     return gtInfodata.common(lines).success
 end

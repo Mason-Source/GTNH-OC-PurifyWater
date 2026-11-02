@@ -1,8 +1,17 @@
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/ui/components/config_table.lua
+--
+-- 定位：配置页主表格与数字键盘组件。
+-- 功能：绘制等级参数、收集/制作状态、全局参数编辑键盘和制作绑定面板。
+-- 边界：只发出前端动作；不校验或持久化配置，不执行绑定。
+--------------------------------------------------------------------------------
+
 local Component = require("frontend.ui.base")
 local config_constants = require("shared.constants")
 local util = require("shared.util")
 local ConfigTable = {}
 
+--- 创建配置表格与键盘组件。
 function ConfigTable.new()
     local self = Component.new("config_table", {})
     self.fingerprint = ConfigTable.fingerprint
@@ -10,6 +19,7 @@ function ConfigTable.new()
     return self
 end
 
+--- 生成配置内容、编辑状态和绑定面板的渲染指纹。
 function ConfigTable:fingerprint(context)
     local parts = {
         self.key, self.rect.x, self.rect.y, self.rect.w, self.rect.h, context.themeId,
@@ -422,6 +432,7 @@ local function drawKeyboard(self, context, top, height)
         drawOptions(context, r.x + 2, y + 1, w, options)
     end
 end
+--- 绘制配置表格、数字键盘或制作绑定面板。
 function ConfigTable:render(context)
     local p = context.painter
     local r = self.rect

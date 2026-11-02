@@ -1,4 +1,11 @@
--- 制作任务运行时：周期登记、门控、单步状态推进；每步最多一次组件调用。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/produce_runtime.lua
+--
+-- 定位：制作任务的运行时执行器。
+-- 功能：按周期生成任务，校验安全条件，单步推进状态机，并把命令映射为硬件读写。
+-- 边界：每个步骤最多一次组件调用；不定义具体等级配方，不写绑定配置；失效时通过 config_service 撤销自动化。
+--------------------------------------------------------------------------------
+
 local CONFIG = require("shared.config")
 local constants = require("shared.constants")
 local state = require("services.state")
@@ -13,6 +20,7 @@ local util = require("shared.util")
 local produce = require("business.produce")
 local machine = require("business.produce.machine")
 local produce_service = require("services.produce_service")
+local config_service = require("services.config_service")
 
 local runtime = {}
 
@@ -41,9 +49,13 @@ local function entryActive(entry)
     return false
 end
 
-local function machineActive(address)
+--- 返回机器运行状态：ready 时第二值为 boolean，pending/error 时为原因。
+local function machineStatus(address)
     local fact = data().facts.machines[address]
-    return fact ~= nil and fact.active == true
+    if not fact then return "pending", "机器状态尚未建立" end
+    if fact.active ~= nil then return "ready", fact.active end
+    if fact.activeErr then return "error", tostring(fact.activeErr) end
+    return "pending", "机器运行状态尚未建立"
 end
 
 local function transferCode(raw, fallback)
@@ -56,11 +68,13 @@ local function transferCode(raw, fallback)
     return fallback
 end
 
+--- 根据绑定转运速率计算单次转运量上限。
 local function chunkLimit(task)
     local rate = tonumber(task.entry.rate) or 0
     return math.max(1, math.floor(rate * (CONFIG.PRODUCE.CHUNK_RATIO or 0.05)))
 end
 
+--- 同步执行一条状态机命令，并规范化为事件结果。
 local function executeCommandNow(task, command)
     if command.kind == "sensor" then
         local info, err = probes.sensor(task.machine)
@@ -102,6 +116,7 @@ local function executeCommandNow(task, command)
     return { ok = false, err = "未知制作命令：" .. tostring(command.kind), code = "COMMAND_INVALID" }
 end
 
+--- 在命令执行前后记录耗时和最近结果。
 local function executeCommand(task, command)
     local startedAt = clock.uptime()
     local result = executeCommandNow(task, command)
@@ -123,11 +138,22 @@ local function executeCommand(task, command)
     }
     return result
 end
-local function canRun(task)
+--- 检查不涉及配置就绪的任务生命周期条件。
+local function taskStillValid(task)
     if task.cycleSeq ~= data().facts.host.cycle.seq then return false, "周期已变化" end
     if not entryActive(task.entry) then return false, "绑定已失效" end
-    if not machineActive(task.machine) then return false, "机器未运行" end
-    return produce_service.canRunBinding(task.entry)
+    local product = data().produce.levels[task.level] or {}
+    if product.enabled ~= true then return false, "制作自动化未启用" end
+
+    local activeStatus, activeValue = machineStatus(task.machine)
+    if activeStatus == "pending" then
+        return false, "机器运行状态尚未建立", "pending"
+    elseif activeStatus == "error" then
+        return false, "机器运行状态读取失败：" .. tostring(activeValue), "error"
+    elseif activeValue ~= true then
+        return false, "机器未运行", "inactive"
+    end
+    return true
 end
 
 local function remove(id)
@@ -188,6 +214,7 @@ local function cancelAll()
     store().tasks = {}
 end
 
+--- 按等级优先级和到期时间选择下一个任务。
 local function pickDue(now)
     local picked
     for _, task in pairs(store().tasks) do
@@ -218,6 +245,32 @@ local function addTask(entry, method, seq, now)
     store().tasks[id] = task
 end
 
+--- 取消指定等级的全部制作任务，用于自动关闭该等级自动化。
+local function cancelLevelTasks(level)
+    for id, task in pairs(store().tasks or {}) do
+        if task.level == level then remove(id) end
+    end
+end
+
+--- 自动撤销等级自动化；reason 同时作为用户可见日志。
+local function disableLevel(level, status, reason)
+    local product = data().produce.levels[level]
+    if not product or product.enabled ~= true then return false end
+
+    cancelLevelTasks(level)
+    local severity = status == "error" and "error" or "warn"
+    local ok, err = config_service.setProduceEnabled(level, false, reason, severity)
+    if not ok then
+        product.enabled = false
+        state.bump()
+        log.error(string.format("%s 制作自动化自动关闭失败：%s；原因：%s",
+            constants.levelCode(level), tostring(err), tostring(reason)))
+        return false
+    end
+    return true
+end
+
+--- 在新主机周期为所有就绪且已启用的绑定创建制作任务。
 local function spawnCycle(seq, now)
     if seq <= 0 or not control.isRunning(data()) then return end
     local progress = tonumber(data().facts.host.progress.value)
@@ -226,21 +279,40 @@ local function spawnCycle(seq, now)
         and progress / maxProgress > (CONFIG.PRODUCE.CYCLE_CUTOFF or 0.9) then
         return
     end
+    local ready = {}
+    for level = 1, constants.LEVEL_COUNT do
+        local product = data().produce.levels[level] or {}
+        if product.enabled == true then
+            local status, reason = produce_service.canEnable(level)
+            ready[level] = status == "ready"
+            if status ~= "ready" and status ~= "pending" then
+                disableLevel(level, status, reason)
+            end
+        end
+    end
+
     for _, entry in ipairs(data().produce.bindings or {}) do
         local method = produce.method(entry.level)
         local product = data().produce.levels[entry.level] or {}
-        if method and product.enabled == true and machineActive(entry.machine) then
-            local ok = produce_service.canRunBinding(entry)
-            if ok then addTask(entry, method, seq, now) end
+        if ready[entry.level] and product.enabled == true and method then
+            local activeStatus, activeValue = machineStatus(entry.machine)
+            if activeStatus == "ready" then
+                if activeValue == true then addTask(entry, method, seq, now) end
+            elseif activeStatus == "error" then
+                disableLevel(entry.level, "error",
+                    "机器运行状态读取失败：" .. tostring(activeValue))
+            end
         end
     end
 end
 
+--- 清空临时制作任务并同步当前主机周期。
 function runtime.load()
     store().tasks = {}
     store().activeCycle = data().facts.host.cycle.seq or 0
 end
 
+--- 返回制作任务或周期切换的下一次处理时间。
 function runtime.nextDue(now)
     local slot = store()
     if not control.isRunning(data()) then
@@ -255,6 +327,7 @@ function runtime.nextDue(now)
     return best
 end
 
+--- 至多推进一个制作任务步骤，或响应周期切换。
 function runtime.step(now)
     local seq = data().facts.host.cycle.seq or 0
     local slot = store()
@@ -271,9 +344,20 @@ function runtime.step(now)
 
     local task = pickDue(now)
     if not task then return false end
-    local ok = canRun(task)
-    if not ok then
+    local taskValid, taskReason, taskFailure = taskStillValid(task)
+    if not taskValid then
         remove(task.id)
+        if taskFailure == "error" then disableLevel(task.level, "error", taskReason) end
+        return true
+    end
+
+    local status, reason = produce_service.canEnable(task.level)
+    if status == "pending" then
+        remove(task.id)
+        return true
+    elseif status ~= "ready" then
+        remove(task.id)
+        disableLevel(task.level, status, reason)
         return true
     end
 

@@ -1,4 +1,11 @@
--- 流体/物品转运子流程：只生成命令和消费命令结果，不直接调用组件。
+--------------------------------------------------------------------------------
+-- PurifyWater/business/produce/flow.lua
+--
+-- 定位：制作状态机中的流体和物品转运子流程。
+-- 功能：按任务累计用量、选择来源槽位、生成单次转运命令，并将命令结果转换回状态机事件。
+-- 边界：只生成命令和消费结果，不直接调用组件；每次推进由运行时执行至多一次外部调用。
+--------------------------------------------------------------------------------
+
 local machine = require("business.produce.machine")
 
 local flow = {}
@@ -53,6 +60,7 @@ local function fatal(code)
     return code == "ENERGY" or code == "SIDE_MISSING"
 end
 
+--- 推进一次流体转运子流程，返回状态机动作或完成标志。
 function flow.fluid(key, task, event, spec, amount, target, env, nextState)
     local io = task[key]
     if not io then
@@ -115,6 +123,7 @@ function flow.fluid(key, task, event, spec, amount, target, env, nextState)
     }, nextState or task.state)
 end
 
+--- 推进一次物品转运子流程，返回状态机动作或完成标志。
 function flow.item(key, task, event, item, amount, target, nextState)
     local io = task[key]
     if not io then

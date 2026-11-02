@@ -1,4 +1,11 @@
--- 转运器原语：整面读取、速率、单次转运；不持有业务状态。
+--------------------------------------------------------------------------------
+-- PurifyWater/hardware/transposer.lua
+--
+-- 定位：转运器原语封装。
+-- 功能：读取整面流体罐与物品槽，查询转运速率，并执行单次流体或物品转运。
+-- 边界：不持有业务状态，不判断生产配方，不重试或选择资源。
+--------------------------------------------------------------------------------
+
 local device = require("hardware.device")
 
 local transposer = {}
@@ -40,7 +47,11 @@ local function allTankEntries(all)
     return out
 end
 
--- 该面全部流体罐；没有流体容器返回 nil + 原因。
+--- 读取某面全部流体罐；没有流体容器时返回 nil 和原因。
+---@param address string 转运器地址。
+---@param side number 面编号。
+---@return table|nil containers 罐位列表。
+---@return string|nil reason 失败原因。
 function transposer.containers(address, side)
     local all, err = device.invoke(address, "getFluidInTank", side)
     local out = allTankEntries(all)
@@ -70,7 +81,12 @@ local function allStacksEntries(value)
     return out
 end
 
--- 该面非空物品槽；空库存返回 {}，无物品库存返回 nil + 原因。
+--- 读取某面全部非空物品槽。
+--- 空库存返回空表；不可读取时返回 nil 和原因。
+---@param address string 转运器地址。
+---@param side number 面编号。
+---@return table|nil stacks 槽位列表。
+---@return string|nil reason 失败原因。
 function transposer.items(address, side)
     local value, err = device.invoke(address, "getAllStacks", side)
     local out = allStacksEntries(value)
@@ -78,14 +94,26 @@ function transposer.items(address, side)
     return nil, tostring(err or "无物品库存")
 end
 
--- 转运器流体速率（L/s）。只在绑定时或显式刷新时读取。
+--- 读取转运器流体速率（L/s）。
+--- 只在绑定时或显式刷新时调用。
+---@param address string 转运器地址。
+---@return number|nil rate 每秒可转运量。
+---@return string|nil reason 失败原因。
 function transposer.rate(address)
     local value, err = device.invoke(address, "getFluidTransferRate")
     if type(value) == "number" then return value, nil end
     return nil, tostring(err or "读不到转运速率")
 end
 
--- 流体转运；sourceTank 对外 1 基，实机调用传 0 基。
+--- 执行一次流体转运。
+--- `sourceTank` 对外使用 1 基编号，调用实机 API 时转换为 0 基。
+---@param address string 转运器地址。
+---@param from number 来源面。
+---@param to number 目标面。
+---@param amount number 请求转运量。
+---@param sourceTank number 来源罐编号。
+---@return boolean ok 是否成功。
+---@return number|string movedOrReason 实际转运量或失败原因。
 function transposer.transferFluid(address, from, to, amount, sourceTank)
     local moved, _, second = device.invoke(address, "transferFluid", from, to, amount,
         math.max(0, (tonumber(sourceTank) or 1) - 1))
@@ -93,7 +121,14 @@ function transposer.transferFluid(address, from, to, amount, sourceTank)
     return false, tostring(second or "转运失败")
 end
 
--- 物品转运；sourceSlot 对外 1 基。
+--- 执行一次物品转运。
+---@param address string 转运器地址。
+---@param from number 来源面。
+---@param to number 目标面。
+---@param count number 请求转运数量。
+---@param sourceSlot number 来源槽位。
+---@return boolean ok 是否成功。
+---@return number|string movedOrReason 实际转运数量或失败原因。
 function transposer.transferItem(address, from, to, count, sourceSlot)
     local moved, _, second = device.invoke(address, "transferItem", from, to, count, sourceSlot)
     if type(moved) == "number" then return true, moved end

@@ -1,4 +1,11 @@
--- 前端应用外壳：拉取读模型、构造页面 ViewModel、协调增量渲染。
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/app.lua
+--
+-- 定位：前端应用外壳与渲染协调器。
+-- 功能：启动页面和主题、拉取读模型、构造 ViewModel、处理分辨率、增量渲染和输入入口。
+-- 边界：不实现业务规则；只通过 actionHandler 发出命令。
+--------------------------------------------------------------------------------
+
 local component = require("component")
 local clock = require("services.clock")
 local config = require("shared.config")
@@ -60,6 +67,7 @@ local function applyResolution()
     end
 end
 
+--- 恢复到前端启动前的 GPU 分辨率。
 function app.restoreResolution()
     local base = app.baseResolution
     if not base or not component.gpu then return end
@@ -69,6 +77,7 @@ function app.restoreResolution()
     end
 end
 
+--- 更新视口并重新布局当前页面。
 function app.layout(width, height)
     app.viewport.width = width
     app.viewport.height = height
@@ -76,10 +85,12 @@ function app.layout(width, height)
     if app.renderer then app.renderer:invalidateAll() end
 end
 
+--- 设置前端快照读取函数；镜像端用它替代源状态。
 function app.setSnapshotReader(reader)
     app.snapshotReader = reader
 end
 
+--- 初始化 GPU、主题、页面、分辨率和渲染器。
 function app.boot(options)
     options = options or {}
     if options.readOnly then app.readOnly = true end
@@ -102,6 +113,7 @@ function app.boot(options)
     return true
 end
 
+--- 切换当前页面并清理跨页编辑状态。
 function app.setPage(name)
     if app.readOnly and name ~= "overview" then return false end
     local target = app.pages and app.pages[name]
@@ -118,11 +130,13 @@ function app.setPage(name)
     return true
 end
 
+--- 在总览页和配置页之间切换；只读模式不生效。
 function app.togglePage()
     if app.readOnly then return false end
     return app.setPage(app.pageName == "overview" and "config" or "overview")
 end
 
+--- 切换已注册主题并使整页失效。
 function app.setTheme(id)
     if not theme_registry.has(id) then return false end
     app.theme = theme_registry.set(id)
@@ -131,22 +145,27 @@ function app.setTheme(id)
     return true
 end
 
+--- 设置前端动作到业务命令的回调。
 function app.setActionHandler(handler)
     app.actionHandler = handler
 end
 
+--- 设置帧与输入性能观察回调。
 function app.setObserver(observer)
     app.observer = observer
 end
 
+--- 以输入原因为由请求一帧增量渲染。
 function app.frameInput()
     return app.frame("input")
 end
 
+--- 以数据变化为由请求一帧增量渲染。
 function app.frameData()
     return app.frame("data")
 end
 
+--- 读取快照、按需重建 ViewModel 并执行增量渲染。
 function app.frame(reason)
     if not app.booted then return 0 end
     local startedCpu = clock.cpuTime()
@@ -197,6 +216,7 @@ function app.frame(reason)
     return draws
 end
 
+--- 处理一个平台输入信号，并在需要时请求下一帧。
 function app.handle(signal)
     local startedCpu = clock.cpuTime()
     local startedReal = clock.realTime()

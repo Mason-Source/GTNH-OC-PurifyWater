@@ -1,4 +1,11 @@
--- 输入路由：平台信号 -> 页面/本地编辑状态/业务命令。
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/input.lua
+--
+-- 定位：平台输入信号到前端动作的路由器。
+-- 功能：处理键鼠/触摸信号，维护编辑状态，把页面操作转换为前端动作或业务命令。
+-- 边界：不直接访问硬件或业务服务，只调用 app 暴露的接口和 actionHandler。
+--------------------------------------------------------------------------------
+
 local CONFIG = require("shared.config")
 
 local input = {}
@@ -180,6 +187,7 @@ local function dispatch(app, action)
     return false
 end
 
+--- 把平台输入信号转换为页面切换、编辑或业务动作。
 function input.handle(app, signal)
     if not signal then return false end
     local name = signal[1]

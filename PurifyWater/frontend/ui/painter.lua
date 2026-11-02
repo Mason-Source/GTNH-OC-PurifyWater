@@ -1,10 +1,17 @@
--- GPU 绘制边界：统一解析主题角色、透明度合成、文本宽度和颜色状态。
--- OC GPU 本身没有 alpha；这里的 alpha 是前端相对 base 角色的 RGB 合成。
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/ui/painter.lua
+--
+-- 定位：OC GPU 的安全绘制边界。
+-- 功能：解析语义色和透明度、缓存前景/背景、处理 Unicode 宽度、截断、面板、进度条和按钮。
+-- 边界：OC GPU 没有 alpha；这里的透明度仅是与 base 角色预合成的视觉效果。
+--------------------------------------------------------------------------------
+
 local unicode = require("unicode")
 
 local Painter = {}
 Painter.__index = Painter
 
+--- 创建绑定 GPU 与主题的绘制器。
 function Painter.new(gpu, theme)
     return setmetatable({
         gpu = gpu,
@@ -14,15 +21,18 @@ function Painter.new(gpu, theme)
     }, Painter)
 end
 
+--- 更新绘制器使用的主题。
 function Painter:setTheme(theme)
     self.theme = theme
 end
 
+--- 清除缓存的前景与背景色，开始一轮绘制。
 function Painter:begin()
     self.fg = nil
     self.bg = nil
 end
 
+--- 在 RGB 空间中把 overlay 按 alpha 预合成到 base。
 local function blend(base, overlay, alpha)
     alpha = math.max(0, math.min(1, alpha))
     local br = math.floor(base / 0x10000) % 0x100
@@ -37,6 +47,7 @@ local function blend(base, overlay, alpha)
     return r * 0x10000 + g * 0x100 + b
 end
 
+--- 递归解析主题语义色，处理继承、透明度与循环引用。
 local function resolve(painter, role, fallback, seen)
     role = role or fallback or "text"
     if type(role) == "number" then return role end
@@ -67,10 +78,12 @@ local function resolve(painter, role, fallback, seen)
     return colors[fallback] or colors.text
 end
 
+--- 把语义色角色解析为 24 位 RGB 数值。
 function Painter:color(role, fallback)
     return resolve(self, role, fallback or "text")
 end
 
+--- 设置语义前景色，并跳过重复 GPU 调用。
 function Painter:setForeground(role)
     local color = self:color(role, "text")
     if self.fg ~= color then
@@ -79,6 +92,7 @@ function Painter:setForeground(role)
     end
 end
 
+--- 设置语义背景色，并跳过重复 GPU 调用。
 function Painter:setBackground(role)
     local color = self:color(role, "canvas")
     if self.bg ~= color then
@@ -87,19 +101,23 @@ function Painter:setBackground(role)
     end
 end
 
+--- 用指定背景角色填充矩形。
 function Painter:fill(rect, role)
     self:setBackground(role or "canvas")
     self.gpu.fill(rect.x, rect.y, rect.w, rect.h, " ")
 end
 
+--- 用画布角色清除矩形区域。
 function Painter:clear(rect)
     self:fill(rect, "canvas")
 end
 
+--- 返回文本的 Unicode 显示宽度。
 function Painter:measure(text)
     return unicode.wlen(tostring(text or ""))
 end
 
+--- 按显示宽度截断文本并添加省略号。
 function Painter:truncate(text, width)
     text = tostring(text or "")
     if width <= 0 then return "" end
@@ -114,6 +132,7 @@ function Painter:truncate(text, width)
     return out .. "…"
 end
 
+--- 在指定位置绘制可截断的文本。
 function Painter:text(x, y, text, foreground, background, width)
     text = tostring(text or "")
     if width then text = self:truncate(text, width) end
@@ -122,11 +141,13 @@ function Painter:text(x, y, text, foreground, background, width)
     self.gpu.set(x, y, text)
 end
 
+--- 使文本在指定宽度内右对齐。
 function Painter:textRight(x, y, width, text, foreground, background)
     local value = tostring(text or "")
     return self:text(x + width - self:measure(value), y, value, foreground, background)
 end
 
+--- 绘制带边框、底色和可选标题的面板。
 function Painter:panel(rect, title)
     if rect.w < 2 or rect.h < 2 then return end
     self:fill(rect, "surface")
@@ -146,6 +167,7 @@ function Painter:panel(rect, title)
     end
 end
 
+--- 绘制按比例填色的单行或多行进度条。
 function Painter:bar(rect, ratio, fillRole, trackRole, emptyRole)
     ratio = math.max(0, math.min(1, tonumber(ratio) or 0))
     local filled = math.floor(rect.w * ratio)
@@ -159,6 +181,7 @@ function Painter:bar(rect, ratio, fillRole, trackRole, emptyRole)
     end
 end
 
+--- 绘制带激活和禁用状态的按钮。
 function Painter:button(rect, text, active, disabled, foreground, background)
     local bg = disabled and "chipDisabled"
         or (active and "chipActive" or background or "chip")

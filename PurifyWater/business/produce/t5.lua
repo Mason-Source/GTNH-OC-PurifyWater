@@ -1,4 +1,11 @@
--- T5 等离子加热：每周期执行 3 次加热/冷却。
+--------------------------------------------------------------------------------
+-- PurifyWater/business/produce/t5.lua
+--
+-- 定位：T5 等离子加热制作自动化。
+-- 功能：每周期先降至安全温度，再执行三轮氦等离子加热和超级冷却液降温。
+-- 边界：只读取温度和生成转运命令，不直接操作设备。
+--------------------------------------------------------------------------------
+
 local resources = require("shared.resources")
 local machine = require("business.produce.machine")
 local flow = require("business.produce.flow")
@@ -18,8 +25,10 @@ local t5 = {
     initial = "init",
 }
 
+--- 返回 T5 所需的氦等离子与超级冷却液。
 function t5.requiredFluids() return { PLASMA, COOLANT } end
 
+--- 创建三轮加热/冷却的 T5 任务。
 function t5.build()
     return { state = "init", cycles = 0, temperature = 0 }
 end

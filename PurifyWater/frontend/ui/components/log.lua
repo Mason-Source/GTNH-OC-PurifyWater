@@ -1,7 +1,16 @@
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/ui/components/log.lua
+--
+-- 定位：日志面板组件。
+-- 功能：按宽度折行、保留可视尾部，并根据日志 kind 选择主题色。
+-- 边界：只显示已格式化日志，不读取或写入日志文件。
+--------------------------------------------------------------------------------
+
 local unicode = require("unicode")
 local Component = require("frontend.ui.base")
 local LogPanel = {}
 
+--- 创建日志面板组件。
 function LogPanel.new()
     local self = Component.new("log", { entries = {} })
     self.prepare = LogPanel.prepare
@@ -27,6 +36,7 @@ local function wrapLine(text, width)
     return lines
 end
 
+--- 在布局变化时更新日志折行缓存。
 function LogPanel:prepare()
     local width = math.max(1, self.rect.w - 4)
     local view = self.props.log or {}
@@ -53,6 +63,7 @@ function LogPanel:prepare()
     self._wrapped = wrapped
 end
 
+--- 生成日志内容和尺寸的渲染指纹。
 function LogPanel:fingerprint(context)
     self:prepare()
     return table.concat({
@@ -63,6 +74,7 @@ function LogPanel:fingerprint(context)
     }, "\x1f")
 end
 
+--- 绘制可视尾部日志。
 function LogPanel:render(context)
     local p = context.painter
     local r = self.rect

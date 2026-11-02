@@ -1,4 +1,11 @@
--- V1 风格水量监视：全部=变化量柱状图，Tn=单级水位曲线。
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/ui/components/chart.lua
+--
+-- 定位：水位历史图表组件。
+-- 功能：绘制全部等级的变化量柱状图，或单个 T1-T8 等级的水位曲线与时间轴。
+-- 边界：只消费历史 ViewModel，不采样或保存历史。
+--------------------------------------------------------------------------------
+
 local Component = require("frontend.ui.base")
 local constants = require("shared.constants")
 local util = require("shared.util")
@@ -11,6 +18,7 @@ local function gameHoursText(realMinutes)
     return math.max(1, hours)
 end
 
+--- 创建水位历史图表组件。
 function Chart.new()
     local self = Component.new("chart", { history = { count = 0, values = {} } })
     self.fingerprint = Chart.fingerprint
@@ -18,6 +26,7 @@ function Chart.new()
     return self
 end
 
+--- 生成图表内容与尺寸的渲染指纹。
 function Chart:fingerprint(context)
     local history = self.props.history or {}
     local values = history.values or {}
@@ -233,6 +242,7 @@ local function drawBars(self, context, r, history)
     gutter(self, context, r, y0 + h - 2, -bound, "warning")
 end
 
+--- 绘制全部等级柱状图或单级水位曲线。
 function Chart:render(context)
     local p = context.painter
     local r = self.rect

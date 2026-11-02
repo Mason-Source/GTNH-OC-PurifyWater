@@ -1,4 +1,11 @@
--- 固定等级与机器映射；运行期可调项放 config。
+--------------------------------------------------------------------------------
+-- PurifyWater/shared/constants.lua
+--
+-- 定位：游戏规则与固定业务映射的唯一常量源。
+-- 功能：定义版本、T0-T8 等级、机器名、电压、功率、产耗速率、成功率和并行上限。
+-- 边界：不包含用户可调项、运行期数据或 IO；版本号也仅在此处维护。
+--------------------------------------------------------------------------------
+
 local constants = {
     CODE_VERSION = "v6.0.2",
     LEVEL_COUNT = 8,
@@ -11,6 +18,7 @@ local constants = {
     T8_LEVEL = 8,
 }
 
+-- GTNH 机器注册名 -> 净水厂等级（0 为主机，1-8 为处理单元）。
 constants.MACHINE_NAMES = {
     ["multimachine.purificationplant"] = 0,
     ["multimachine.purificationunitclarifier"] = 1,
@@ -23,6 +31,7 @@ constants.MACHINE_NAMES = {
     ["multimachine.purificationunitextractor"] = 8,
 }
 
+-- 电压等级名称与每安培 EU/t；MAX 采用 GTNH 的实用上限。
 constants.VOLTAGE_TIERS = {
     { name = "ULV", eu = 8 }, { name = "LV", eu = 32 },
     { name = "MV",  eu = 128 }, { name = "HV", eu = 512 },
@@ -34,6 +43,7 @@ constants.VOLTAGE_TIERS = {
     { name = "MAX", eu = 2147483640 },
 }
 
+-- 默认启用回流数据收集的等级；用户设置可覆盖。
 constants.RATE_REFLUX_LEVELS = { [1] = true, [2] = true, [6] = true }
 constants.T7_BOOST_OPTIONS = { 1, 1.25, 1.5, 1.75, 2 }
 constants.PRODUCE_MISSING_SCANS = 3
@@ -41,6 +51,7 @@ constants.PRODUCE_MISSING_SCANS = 3
 constants.STOCK_PER_PARALLEL = 1000
 constants.OPEN_RESERVE_MULTIPLIER = 5
 
+-- 单台机器满并行时占用的 EU/t（按 T1-T8 索引）。
 constants.POWER_LEVELS = {
     [1] = 30720,
     [2] = 30720,
@@ -52,6 +63,7 @@ constants.POWER_LEVELS = {
     [8] = 7864320,
 }
 
+-- 速率模型的基准产水、耗水、回流和成功率参数（T1-T8 数组按等级索引）。
 constants.RATE_PRODUCE = 900
 constants.RATE_CONSUME = 1000
 constants.RATE_REFLUX = 90
@@ -61,6 +73,7 @@ constants.RATE_SUCCESS_DUAL_LITHIUM = 0.9
 constants.PARALLEL_CAP_T1 = 2386092
 constants.PARALLEL_CAP_OTHER = 2147483
 
+--- 返回指定等级单台机器允许的最大并行数。
 function constants.parallelCap(level)
     return level == 1 and constants.PARALLEL_CAP_T1 or constants.PARALLEL_CAP_OTHER
 end
@@ -77,10 +90,12 @@ constants.LEVEL_NAMES = {
     [8] = "T8萃取",
 }
 
+--- 返回等级的中文显示名。
 function constants.levelLabel(level)
     return constants.LEVEL_NAMES[level] or ("T" .. tostring(level))
 end
 
+--- 返回等级的 Tn 代码。
 function constants.levelCode(level)
     return "T" .. tostring(tonumber(level) or 0)
 end

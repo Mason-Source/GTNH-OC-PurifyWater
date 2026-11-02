@@ -1,4 +1,11 @@
--- T4 pH 调节：读 pH，补氢氧化钠粉或氢氯酸。
+--------------------------------------------------------------------------------
+-- PurifyWater/business/produce/t4.lua
+--
+-- 定位：T4 pH 调节制作自动化。
+-- 功能：读取 pH，按偏差计算氢氧化钠粉或氢氯酸用量并分步转运。
+-- 边界：只定义需求、估算与控制状态；实际读写由制作运行时执行。
+--------------------------------------------------------------------------------
+
 local resources = require("shared.resources")
 local machine = require("business.produce.machine")
 local flow = require("business.produce.flow")
@@ -18,10 +25,14 @@ local t4 = {
     initial = "sensor",
 }
 
+--- 返回 T4 pH 调节所需的氢氯酸。
 function t4.requiredFluids() return { ACID } end
+--- 返回 T4 pH 调节所需的氢氧化钠粉。
 function t4.requiredItems() return { ALKALINE } end
+--- 返回 T4 自动转运的最低速率要求。
 function t4.minTransferRate() return 50000 end
 
+--- 根据当前 pH 计算中和所需物品或流体用量。
 function t4.demand(ph)
     ph = tonumber(ph)
     if ph == nil then return nil, "读不到 pH", nil end
@@ -37,6 +48,7 @@ function t4.demand(ph)
     return { { fluid = ACID.id, amount = amount, label = ACID.label } }, nil, ph
 end
 
+--- 创建以 pH 传感器读取为起点的 T4 任务。
 function t4.build()
     return { state = "sensor" }
 end

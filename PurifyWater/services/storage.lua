@@ -1,12 +1,22 @@
+--------------------------------------------------------------------------------
+-- PurifyWater/services/storage.lua
+--
+-- 定位：应用根目录下的文件系统适配器。
+-- 功能：封装目录创建、文本/行读写、追加、替换、列表和删除操作。
+-- 边界：不解析文件内容，不决定文件名或数据格式。
+--------------------------------------------------------------------------------
+
 local filesystem = require("filesystem")
 
 local storage = {}
 local ROOT = "."
 
+--- 设置相对路径解析所使用的工作根目录。
 function storage.setRoot(dir)
     ROOT = tostring(dir or ".")
 end
 
+--- 返回当前工作根目录。
 function storage.root()
     return ROOT
 end
@@ -33,14 +43,17 @@ local function write(path, lines, mode)
     return true, full
 end
 
+--- 向文本文件追加若干行，必要时创建父目录。
 function storage.append(path, lines)
     return write(path, lines, "a")
 end
 
+--- 用若干行覆盖文本文件，必要时创建父目录。
 function storage.replace(path, lines)
     return write(path, lines, "w")
 end
 
+--- 读取完整文本；文件不存在时返回 nil。
 function storage.readText(path)
     local file = io.open(pathOf(path), "r")
     if not file then return nil end
@@ -49,6 +62,7 @@ function storage.readText(path)
     return text
 end
 
+--- 写入完整文本，必要时创建父目录。
 function storage.writeText(path, text)
     local full = pathOf(path)
     local dir = full:match("^(.*)[/\\][^/\\]*$")
@@ -63,6 +77,7 @@ function storage.writeText(path, text)
     return true, full
 end
 
+--- 读取非空文本行数组。
 function storage.readLines(path)
     local file = io.open(pathOf(path), "r")
     if not file then return {} end
@@ -74,10 +89,12 @@ function storage.readLines(path)
     return lines
 end
 
+--- 判断路径是否存在。
 function storage.exists(path)
     return filesystem.exists(pathOf(path)) == true
 end
 
+--- 列出指定前缀匹配的文件名。
 function storage.list(prefix)
     local out = {}
     local dir, namePrefix = prefix:match("^(.*/)([^/]+)$")
@@ -102,6 +119,7 @@ function storage.list(prefix)
     return out
 end
 
+--- 删除指定文件并返回操作结果。
 function storage.remove(path)
     local ok, result = pcall(filesystem.remove, pathOf(path))
     return ok and result == true

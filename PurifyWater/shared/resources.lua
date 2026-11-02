@@ -1,11 +1,9 @@
 --------------------------------------------------------------------------------
--- shared/resources.lua
---------------------------------------------------------------------------------
--- 【职责】物品 / 流体资源注册名、damage、显示名的唯一真源
--- 【不做什么】不含机器 / 组件、等级映射、数量、配方或业务逻辑
--- 【依赖】无
--- 【被谁用】hardware/fluid、business/produce/*
--- 【维护】GTNH 资源名或显示名变化时只改本文件；等级/机器/组件映射不在这里
+-- PurifyWater/shared/resources.lua
+--
+-- 定位：GTNH 流体与物品资源标识的唯一注册表。
+-- 功能：集中维护净化水、生产辅料、透镜和夸克催化剂的注册名、damage 与显示名。
+-- 边界：不含机器映射、数量、配方或业务逻辑；资源名变化时只修改本文件。
 --------------------------------------------------------------------------------
 
 local resources = {}
@@ -134,6 +132,7 @@ resources.ITEMS = {
     }
 }
 
+--- 返回指定等级净化水的 GTNH 流体注册名。
 function resources.purifiedWaterId(level)
     local item = resources.FLUIDS["PURIFIED_WATER_" .. tostring(level)]
     return item and item.id

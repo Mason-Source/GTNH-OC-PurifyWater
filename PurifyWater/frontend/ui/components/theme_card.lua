@@ -1,8 +1,17 @@
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/ui/components/theme_card.lua
+--
+-- 定位：主题选择卡片组件。
+-- 功能：列出注册主题并产生主题切换动作。
+-- 边界：只发动作，不持久化主题。
+--------------------------------------------------------------------------------
+
 local Component = require("frontend.ui.base")
 local theme_registry = require("frontend.theme.registry")
 
 local ThemeCard = {}
 
+--- 创建主题选择卡片组件。
 function ThemeCard.new()
     local self = Component.new("theme_card", {})
     self.fingerprint = ThemeCard.fingerprint
@@ -10,6 +19,7 @@ function ThemeCard.new()
     return self
 end
 
+--- 生成主题和尺寸的渲染指纹。
 function ThemeCard:fingerprint(context)
     return table.concat({
         self.key, self.rect.x, self.rect.y, self.rect.w, self.rect.h,
@@ -17,6 +27,7 @@ function ThemeCard:fingerprint(context)
     }, "\x1f")
 end
 
+--- 绘制全部主题按钮。
 function ThemeCard:render(context)
     local p = context.painter
     local r = self.rect

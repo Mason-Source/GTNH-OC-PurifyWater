@@ -1,8 +1,17 @@
+--------------------------------------------------------------------------------
+-- PurifyWater/frontend/ui/components/status.lua
+--
+-- 定位：等级状态总览与单级详情组件。
+-- 功能：绘制 T1-T8 开关、水量、并行、成功率、周期进度和机器明细。
+-- 边界：只展示 ViewModel，不读取硬件或业务状态。
+--------------------------------------------------------------------------------
+
 local Component = require("frontend.ui.base")
 local constants = require("shared.constants")
 local util = require("shared.util")
 local Status = {}
 
+--- 创建等级状态组件。
 function Status.new()
     local self = Component.new("status", { levels = {}, cycle = {} })
     self.fingerprint = Status.fingerprint
@@ -10,6 +19,7 @@ function Status.new()
     return self
 end
 
+--- 生成等级状态、详情层级和尺寸的渲染指纹。
 function Status:fingerprint(context)
     local cycle = self.props.cycle or {}
     local parts = {
@@ -199,6 +209,7 @@ local function detail(self, context)
 
     context:hit({ type = "detail_back" }, { x = r.x + 1, y = r.y + 1, w = r.w - 2, h = r.h - 2 })
 end
+--- 绘制等级总览或单级机器详情。
 function Status:render(context)
     local p = context.painter
     local r = self.rect
@@ -248,8 +259,8 @@ function Status:render(context)
     local parallelRightW = math.max(1, parallelValueSpace - parallelLeftW)
     local rightEdge = cols[3].x + cols[3].w
     local rightX = rightEdge - parallelW
-    local barX = inner.x
-    local barW = math.max(0, rightX - barX - 1)
+    local levelBarX = inner.x
+    local levelBarW = math.max(0, rightX - levelBarX - 1)
 
     for level = 1, 8 do
         local row = self.props.levels[level]
@@ -282,8 +293,8 @@ function Status:render(context)
             "accent", "surface")
 
         if rowH == 2 then
-            if barW > 0 then
-                p:bar({ x = barX, y = y + 1, w = barW, h = 1 }, row.ratio or 0)
+            if levelBarW > 0 then
+                p:bar({ x = levelBarX, y = y + 1, w = levelBarW, h = 1 }, row.ratio or 0)
             end
             local leftX = rightX + parallelLabelW
             local slashX = leftX + parallelLeftW

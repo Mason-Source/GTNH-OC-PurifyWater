@@ -1,4 +1,11 @@
--- 无线广播服务：每 10 秒编码一次只读快照，并按块逐个发送。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/net_service.lua
+--
+-- 定位：无线快照广播服务。
+-- 功能：发现网卡或隧道，按固定周期编码只读快照，并逐块广播到镜像端。
+-- 边界：只发不收；不改变业务状态，不阻塞主控等待接收方。
+--------------------------------------------------------------------------------
+
 local CONFIG = require("shared.config")
 local clock = require("services.clock")
 local log = require("services.log")
@@ -19,6 +26,7 @@ local INTERVAL = CONFIG.NET.INTERVAL or 10
 local PORT = CONFIG.NET.PORT or 4096
 local CHUNK = CONFIG.NET.CHUNK or 4000
 
+--- 注入返回只读快照的读取函数。
 function service.setSource(fn)
     source = fn
 end
@@ -32,6 +40,7 @@ local function setAvailable(value)
     end
 end
 
+--- 从设置初始化无线广播状态并重置发送进度。
 function service.load(now)
     local data = state.get()
     data.net.enabled = data.settings.netEnabled == true
@@ -76,6 +85,7 @@ local function fail(message)
     setAvailable(false)
 end
 
+--- 至多发送一个快照分块，或准备下一帧广播。
 function service.step(now)
     local data = state.get()
     if not data.net.enabled then pending = nil end
@@ -118,11 +128,13 @@ function service.step(now)
     return true
 end
 
+--- 返回无线广播下一次需要推进的时间。
 function service.nextDue(now)
     if pending then return now end
     return due
 end
 
+--- 持久化并切换无线广播开关。
 function service.toggle()
     local data = state.get()
     local nextValue = data.settings.netEnabled ~= true
@@ -137,6 +149,7 @@ function service.toggle()
     return true, ""
 end
 
+--- 处理 net_toggle 前端命令。
 function service.handle(name)
     if name ~= "net_toggle" then return false end
     local ok, err = service.toggle()

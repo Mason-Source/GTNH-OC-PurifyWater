@@ -1,4 +1,11 @@
--- 配置用例：校验、更新内存、写 settings.txt、推进 revision。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/config_service.lua
+--
+-- 定位：用户配置的校验、应用与持久化服务。
+-- 功能：补齐默认键，校验输入范围，更新内存设置，写入 settings.txt 并推进 revision。
+-- 边界：是 settings 运行期字段的主要写者；不直接操作硬件或执行调度。
+--------------------------------------------------------------------------------
+
 local CONFIG = require("shared.config")
 local constants = require("shared.constants")
 local state = require("services.state")
@@ -46,6 +53,7 @@ local function weightKey(level) return "weight." .. tostring(level) end
 local function refluxKey(level) return "reflux." .. tostring(level) end
 local function produceKey(level) return "produce_enabled." .. tostring(level) end
 
+--- 把持久化键值快照校验并应用到运行期设置和制作开关。
 local function applySnapshot(snapshot)
     local s = state.get().settings
     local net = state.get().net
@@ -77,6 +85,7 @@ local function applySnapshot(snapshot)
     net.strength = s.netStrength
 end
 
+--- 补齐缺失配置键，并返回合并后的键值快照。
 local function ensureKeys()
     local snapshot = settings.load() or {}
     local additions, missing = {}, 0
@@ -121,6 +130,7 @@ local function ensureKeys()
     return snapshot
 end
 
+--- 补齐默认配置键、载入并应用 settings.txt。
 function config_service.load()
     local snapshot, err = ensureKeys()
     if not snapshot then return false, err end
@@ -130,16 +140,25 @@ function config_service.load()
     return true, settings.path()
 end
 
-local function commit(values, message)
+--- 持久化配置变更，应用新快照并按指定级别记录结果。
+local function commit(values, message, severity)
     local ok, err = settings.setMany(values)
     if not ok then return false, "写配置失败（settings.txt）：" .. tostring(err) end
     local snapshot = settings.load() or {}
     applySnapshot(snapshot)
     state.bump()
-    log.system(message or "配置已更新")
+    local text = message or "配置已更新"
+    if severity == "warn" then
+        log.warn(text)
+    elseif severity == "error" then
+        log.error(text)
+    else
+        log.system(text)
+    end
     return true, ""
 end
 
+--- 切换指定等级是否参与阈值调度。
 function config_service.toggleEnabled(level)
     level = tonumber(level)
     if not level or level < 1 or level > constants.LEVEL_COUNT then return false, "等级无效" end
@@ -149,6 +168,7 @@ function config_service.toggleEnabled(level)
         string.format("%s 勾选：%s", constants.levelCode(level), nextValue and "开" or "关"))
 end
 
+--- 校验并保存指定等级的用户阈值。
 function config_service.setThreshold(level, liters)
     level = tonumber(level)
     liters = tonumber(liters)
@@ -160,6 +180,7 @@ function config_service.setThreshold(level, liters)
             util.formatNumber(math.floor(liters / 1000))))
 end
 
+--- 校验并保存指定等级的速率模式权重。
 function config_service.setWeight(level, weight)
     level = tonumber(level)
     weight = tonumber(weight)
@@ -170,6 +191,7 @@ function config_service.setWeight(level, weight)
         string.format("%s 权重：%d", constants.levelCode(level), weight))
 end
 
+--- 设置 T1 或 T2 的回流数据收集开关。
 function config_service.setReflux(level, enabled)
     level = tonumber(level)
     if level ~= 1 and level ~= 2 then return false, "回流数据收集只支持 T1/T2" end
@@ -178,17 +200,20 @@ function config_service.setReflux(level, enabled)
         string.format("%s 回流收集：%s", constants.levelCode(level), enabled and "开" or "关"))
 end
 
+--- 设置 T6 是否使用双锂收集方案。
 function config_service.setT6DualLithium(enabled)
     if type(enabled) ~= "boolean" then return false, "开关值无效" end
     return commit({ t6_dual_lithium = enabled and "true" or "false" },
         "T6 双锂收集：" .. (enabled and "双锂" or "标准"))
 end
 
+--- 设置 T7 允许的增产倍率。
 function config_service.setT7Boost(value)
     value = boost(value)
     return commit({ t7_boost = value }, "T7 增产倍率：×" .. tostring(value))
 end
 
+--- 校验并保存前端主题。
 function config_service.setTheme(value)
     local valid = nil
     for _, option in ipairs(CONFIG.UI.THEMES or {}) do
@@ -199,6 +224,7 @@ function config_service.setTheme(value)
     return commit({ theme = valid }, "主题：" .. label)
 end
 
+--- 设置能源仓可用功率的折算百分比。
 function config_service.setEnergyFactor(value)
     value = tonumber(value)
     if not value or value < CONFIG.ENERGY.FACTOR_MIN or value > CONFIG.ENERGY.FACTOR_MAX
@@ -208,6 +234,7 @@ function config_service.setEnergyFactor(value)
     return commit({ energy_factor = value }, "能源仓利用因子：" .. tostring(value) .. "%")
 end
 
+--- 设置无线广播范围参数。
 function config_service.setNetStrength(value)
     value = tonumber(value)
     if not value or value < 0 or value > CONFIG.NET.STRENGTH_MAX
@@ -217,34 +244,58 @@ function config_service.setNetStrength(value)
     return commit({ net_strength = value }, "无线范围：" .. tostring(value))
 end
 
-function config_service.setProduceEnabled(level, enabled)
-    level = tonumber(level)
-    if not level or level < 1 or level > constants.LEVEL_COUNT then return false, "等级无效" end
+--- 在校验制作链路就绪后启用或停用等级制作自动化。
+--- 停用时传入 reason，会把这次变更记录为自动关闭警告。
+---@param level number|string 等级。
+---@param enabled boolean 目标开关状态。
+---@param reason string|nil 自动关闭原因；用户手动操作时省略。
+---@param severity "warn"|"error"|nil 自动关闭日志级别，默认 warn。
+---@return boolean ok 是否成功。
+---@return string err 失败原因或空字符串。
+---@return string|nil status ready/pending/error/invalid。
+function config_service.setProduceEnabled(level, enabled, reason, severity)
+    local levelNumber = tonumber(level)
+    if not levelNumber or levelNumber < 1 or levelNumber > constants.LEVEL_COUNT then
+        return false, "等级无效"
+    end
     if type(enabled) ~= "boolean" then return false, "开关值无效" end
     if enabled then
-        local ready, reason = require("services.produce_service").canEnable(level)
-        if not ready then return false, reason end
+        local status, why = require("services.produce_service").canEnable(levelNumber)
+        if status ~= "ready" then return false, why or "制作链路尚未就绪", status end
     end
-    return commit({ [produceKey(level)] = enabled and "true" or "false" },
-        string.format("%s 制作自动化：%s", constants.levelCode(level), enabled and "启用" or "停用"))
+
+    if not enabled and reason ~= nil and reason ~= "" then
+        local ok, err = commit({ [produceKey(levelNumber)] = "false" },
+            string.format("%s 制作自动化已自动关闭：%s",
+                constants.levelCode(levelNumber), tostring(reason)), severity or "warn")
+        return ok, err, "ready"
+    end
+
+    local ok, err = commit({ [produceKey(levelNumber)] = enabled and "true" or "false" },
+        string.format("%s 制作自动化：%s", constants.levelCode(levelNumber), enabled and "启用" or "停用"))
+    return ok, err, "ready"
 end
 
+--- 在阈值调度与速率调度之间切换。
 function config_service.toggleMode()
     local nextMode = state.get().settings.mode == "rate" and "threshold" or "rate"
     return commit({ mode = nextMode }, "调度模式：" .. nextMode)
 end
 
+--- 切换高级水与低级水的调度优先方向。
 function config_service.togglePriority()
     local nextPriority = state.get().settings.priority == "high" and "low" or "high"
     return commit({ priority = nextPriority }, "优先级：" .. nextPriority)
 end
 
+--- 切换速率模式是否仍受水位阈值约束。
 function config_service.toggleEnforce()
     local nextValue = state.get().settings.enforceThreshold ~= true
     return commit({ enforce_threshold = nextValue and "true" or "false" },
         "阈值约束：" .. (nextValue and "开" or "关"))
 end
 
+--- 把前端配置动作路由到对应的校验与持久化方法。
 function config_service.handle(name, action)
     action = action or {}
     if name == "level_enabled_toggle" then

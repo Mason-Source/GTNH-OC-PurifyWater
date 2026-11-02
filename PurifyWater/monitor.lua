@@ -1,4 +1,11 @@
--- 镜像端入口：只收无线快照并显示 overview，不加载业务读写链。
+--------------------------------------------------------------------------------
+-- PurifyWater/monitor.lua
+--
+-- 定位：无线镜像端的只读入口。
+-- 功能：接收主控广播的分块快照，校验并重组后驱动只读总览界面。
+-- 边界：不加载业务写入链，不控制净水厂设备，不持久化配置。
+--------------------------------------------------------------------------------
+
 local selfPath = (debug.getinfo(1, "S").source or ""):gsub("^@", "")
 local selfDir = selfPath:match("^(.*)[/\\][^/\\]*$")
 local locateChunk = assert(loadfile((selfDir or ".") .. "/core/locate.lua"), "cannot load core/locate.lua")
@@ -40,6 +47,7 @@ app.setActionHandler(function(name)
 end)
 assert(app.boot({ readOnly = true }), "frontend boot failed")
 
+--- 返回首个可用的 modem 或 tunnel 组件地址。
 local function findModem()
     for address, kind in component.list() do
         if kind == "modem" or kind == "tunnel" then return address end
@@ -57,6 +65,7 @@ if not openOk then
     return
 end
 
+--- 绘制只读状态条，显示端口、快照年龄和数据版本。
 local function drawMirrorLine()
     local p = assert(app.painter, "painter missing")
     local width = app.viewport.width
@@ -76,6 +85,7 @@ local function drawMirrorLine()
     p:textRight(lineX, 1, room, p:truncate(text, room), role, "surfaceAlt")
 end
 
+--- 绘制等待主控广播时的全屏提示。
 local function drawWaiting()
     local p = assert(app.painter, "painter missing")
     local width, height = app.viewport.width, app.viewport.height
@@ -88,6 +98,7 @@ local function drawWaiting()
     drawMirrorLine()
 end
 
+--- 接收一个分块，重组完整快照，并在校验成功后替换当前镜像数据。
 local function accept(message)
     local frame, index, total, part = models.parseChunk(message)
     if not frame or not index or not total then return false end

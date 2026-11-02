@@ -1,4 +1,11 @@
--- data/produce.txt：制作自动化绑定表；兼容 V1 的 state/miss 与侧位字段。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/produce_store.lua
+--
+-- 定位：data/produce.txt 的读写适配器。
+-- 功能：解析和序列化机器与转运器绑定、速率、侧位及 missing 状态。
+-- 边界：不扫描组件，不决定绑定合法性。
+--------------------------------------------------------------------------------
+
 local constants = require("shared.constants")
 local storage = require("services.storage")
 
@@ -71,6 +78,7 @@ local function less(a, b)
     return tostring(a.machine) < tostring(b.machine)
 end
 
+--- 解析绑定表，返回有效绑定、missing 候选和格式问题。
 function produce_store.load()
     local active, candidates, problems = {}, {}, {}
     local seenMachine, seenTransposer = {}, {}
@@ -190,6 +198,7 @@ local function buildLines(active, candidates)
     return lines
 end
 
+--- 按稳定顺序序列化绑定；内容不变时不写盘。
 function produce_store.save(active, candidates)
     local lines = buildLines(active, candidates)
     local current = storage.readLines(PATH)
@@ -209,6 +218,7 @@ function produce_store.save(active, candidates)
     return true, true
 end
 
+--- 返回制作绑定文件路径。
 function produce_store.path()
     return PATH
 end

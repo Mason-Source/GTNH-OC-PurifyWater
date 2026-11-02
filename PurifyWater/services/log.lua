@@ -1,4 +1,11 @@
--- 正式运行日志：四级内存记录 + 独立 flush；200 行一卷，最多 10 卷。
+--------------------------------------------------------------------------------
+-- PurifyWater/services/log.lua
+--
+-- 定位：内存日志队列与轮转写盘核心。
+-- 功能：提供四级日志、最近记录视图、固定行块落盘和最多十卷的日志轮转。
+-- 边界：业务只入队；文件写入由 log.flush 执行，单条日志不直接写磁盘。
+--------------------------------------------------------------------------------
+
 local config = require("shared.config")
 local clock = require("services.clock")
 local storage = require("services.storage")
@@ -105,16 +112,25 @@ local function append(level, message)
     end
 end
 
+--- 追加一条 ERROR 级内存日志。
 function log.error(message) append("ERROR", message) end
+--- 追加一条 WARN 级内存日志。
 function log.warn(message) append("WARN", message) end
+--- 追加一条 SYSTEM 级内存日志。
 function log.system(message) append("SYSTEM", message) end
+--- 追加一条仅供诊断、默认不在前端显示的 DIAG 日志。
 function log.diag(message) append("DIAG", message) end
 
+--- 返回累计生成的日志条数。
 function log.count() return seq end
+--- 返回日志内容版本号。
 function log.revision() return seq end
+--- 返回最近一条日志的落盘文本行。
 function log.last() return lastLine end
+--- 返回尚未写入磁盘的日志条数。
 function log.pendingCount() return #pending end
 
+--- 返回最近日志记录的结构化副本。
 function log.entries()
     local out = {}
     for index = 1, #recent do
@@ -130,6 +146,7 @@ function log.entries()
     return out
 end
 
+--- 把待写队列按固定行块写入并轮转日志文件。
 function log.flush()
     if #pending == 0 then return true, activePath or "-" end
     local consumed = 0

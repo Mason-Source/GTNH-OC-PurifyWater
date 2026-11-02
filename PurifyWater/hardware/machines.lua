@@ -1,4 +1,11 @@
--- T0-8 设备注册表：已登记查存在性，未登记 gt_machine 补登记。
+--------------------------------------------------------------------------------
+-- PurifyWater/hardware/machines.lua
+--
+-- 定位：T0-T8 与能源仓的内存登记表。
+-- 功能：维护地址到机器条目的索引、等级分桶、坐标、存在性和拓扑文本，并支持扫描对账。
+-- 边界：不调用业务探针；只保存设备元数据，持久化由 hardware_store 负责。
+--------------------------------------------------------------------------------
+
 local constants = require("shared.constants")
 
 local machines = {}
@@ -84,6 +91,7 @@ local function parseLine(line)
     return level, address, name, x, y, z
 end
 
+--- 从硬件登记行重建内存机器注册表。
 function machines.load(lines)
     byAddress, reg, energyItem, changed = {}, { other = {} }, nil, false
     for level = 0, constants.LEVEL_COUNT do reg[level] = {} end
@@ -101,6 +109,7 @@ function machines.load(lines)
     changed = false
 end
 
+--- 返回仍缺少坐标的 T1-T8 机器地址。
 function machines.needsCoordinates()
     local out = {}
     for level = 1, constants.LEVEL_COUNT do
@@ -114,6 +123,7 @@ function machines.needsCoordinates()
     return out
 end
 
+--- 更新机器坐标并标记拓扑变化。
 function machines.setCoordinates(address, x, y, z)
     local entry = byAddress[address]
     if not entry or not wantsCoordinates(entry.level) then return false end
@@ -125,6 +135,7 @@ function machines.setCoordinates(address, x, y, z)
     return false
 end
 
+--- 对账组件列表，移除消失机器并返回待登记地址。
 function machines.prepareScan(devices)
     local removed = {}
     for address, entry in pairs(byAddress) do
@@ -151,6 +162,7 @@ function machines.prepareScan(devices)
     return candidates, removed
 end
 
+--- 根据机器名返回等级；能源仓仅接受首个实例。
 function machines.levelForName(name)
     local level = constants.MACHINE_NAMES[name]
     if level ~= nil then return level end
@@ -158,6 +170,7 @@ function machines.levelForName(name)
     return "?"
 end
 
+--- 更新已登记机器的名称、等级和坐标。
 function machines.update(address, name, x, y, z)
     local entry = byAddress[address]
     if not entry then return nil end
@@ -202,28 +215,34 @@ function machines.update(address, name, x, y, z)
     return entry
 end
 
+--- 登记一台新发现机器的元数据。
 function machines.add(address, name, x, y, z)
     if byAddress[address] then return byAddress[address] end
     local level = machines.levelForName(name)
     return register(level, address, name, x, y, z)
 end
 
+--- 判断地址是否已在机器注册表中。
 function machines.isRegistered(address)
     return byAddress[address] ~= nil
 end
 
+--- 返回指定等级或分桶的机器条目列表。
 function machines.of(level)
     return reg[level] or {}
 end
 
+--- 返回当前选定的能源仓条目。
 function machines.energy()
     return energyItem
 end
 
+--- 返回地址到机器条目的完整索引。
 function machines.all()
     return byAddress
 end
 
+--- 统计主机、T1-T8、能源仓和其他机器的存在情况。
 function machines.summary()
     local units, total = {}, 0
     for level = 1, constants.LEVEL_COUNT do
@@ -252,6 +271,7 @@ local function coordinatesText(entry)
     return x, y, z
 end
 
+--- 生成可持久化、顺序稳定的设备拓扑行。
 function machines.topologyLines()
     local lines = {}
     for level = 0, constants.LEVEL_COUNT do
@@ -270,12 +290,14 @@ function machines.topologyLines()
     return lines
 end
 
+--- 读取并清除拓扑变化标记。
 function machines.consumeChanged()
     local value = changed
     changed = false
     return value
 end
 
+--- 显式标记拓扑需要重新持久化。
 function machines.markChanged()
     changed = true
 end
