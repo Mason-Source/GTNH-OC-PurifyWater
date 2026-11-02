@@ -102,6 +102,7 @@ function overview.build(read)
             sampleRole = sampleRole,
             sampleStale = sampleStale,
             learned = learned,
+            suggest = suggest,
             suggestText = suggest and numberText(suggest) or "-",
             suggestRole = suggestRole,
             machines = source.machines or {},

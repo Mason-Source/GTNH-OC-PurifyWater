@@ -507,7 +507,7 @@ end
 return logs_model
 
 frontend/model/overview.lua
-8560
+8591
 local constants = require("shared.constants")
 local util = require("shared.util")
 local logs_model = require("frontend.model.logs")
@@ -595,6 +595,7 @@ function overview.build(read)
             sampleRole = sampleRole,
             sampleStale = sampleStale,
             learned = learned,
+            suggest = suggest,
             suggestText = suggest and numberText(suggest) or "-",
             suggestRole = suggestRole,
             machines = source.machines or {},
