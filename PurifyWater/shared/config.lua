@@ -12,17 +12,11 @@ local CONFIG = {
     LOOP_MIN_IDLE = 0.05,
     LOOP_MAX_IDLE = 1.0,
 
-    -- 硬件观测间隔；HOST_PROGRESS 仅为本地进度条刷新间隔，不触发组件调用。
+    -- 硬件与周期观测间隔。
     INTERVAL = {
         HARDWARE = 10,
-        HOST_PROGRESS = 3,
+        HOST_PROGRESS = 10,
         WATER = 5,
-    },
-
-    -- GT 进度值按游戏刻增长；uptime 每游戏刻增加 0.05 秒。
-    HOST_PROGRESS = {
-        TICKS_PER_SECOND = 20,
-        SAFETY_TICKS = 1,
     },
 
     -- 制作自动化扫描、单次转运比例和周期末截止比例。

@@ -10,7 +10,6 @@ local constants = require("shared.constants")
 local log = require("services.log")
 local state = require("services.state")
 local facts = require("services.facts")
-local host_cycle = require("services.host_cycle")
 local machines = require("hardware.machines")
 local layout = require("business.produce.layout")
 local util = require("shared.util")
@@ -188,7 +187,6 @@ function read_model.snapshot()
     end
 
     local entries = log.entries()
-    local cycleView = host_cycle.view()
     return {
         version = constants.CODE_VERSION,
         revision = read_model.revision(),
@@ -233,8 +231,8 @@ function read_model.snapshot()
         host = {
             switch = data.facts.host.switch.value,
             active = data.facts.host.active.value,
-            progress = cycleView.progress,
-            progressMax = cycleView.progressMax,
+            progress = data.facts.host.progress.value,
+            progressMax = data.facts.host.progressMax.value,
             cycleSeq = data.facts.host.cycle.seq,
         },
 

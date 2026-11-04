@@ -2114,18 +2114,14 @@ end
 return clock
 
 shared/config.lua
-1482
+1397
 local CONFIG = {
     LOOP_MIN_IDLE = 0.05,
     LOOP_MAX_IDLE = 1.0,
     INTERVAL = {
         HARDWARE = 10,
-        HOST_PROGRESS = 3,
+        HOST_PROGRESS = 10,
         WATER = 5,
-    },
-    HOST_PROGRESS = {
-        TICKS_PER_SECOND = 20,
-        SAFETY_TICKS = 1,
     },
     PRODUCE = {
         SCAN = 10,

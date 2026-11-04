@@ -45,11 +45,18 @@ local INTERVAL = {
     scan = config.INTERVAL.HARDWARE or 10,
     energy = config.INTERVAL.HARDWARE or 10,
     hostSwitch = config.INTERVAL.HARDWARE or 10,
-    hostProgress = config.INTERVAL.HOST_PROGRESS or 3,
+    hostProgress = config.INTERVAL.HOST_PROGRESS or 10,
     plantSwitch = config.INTERVAL.HARDWARE or 10,
     plantSample = config.INTERVAL.HARDWARE or 10,
     water = config.INTERVAL.WATER or 5,
 }
+
+--- 强制触发一次 OpenOS host yield，用于隔离 direct 组件调用。
+local function yieldOnce()
+    --- OpenOS 提供 os.sleep；标准 Lua 5.3 类型定义没有该字段。
+    ---@diagnostic disable-next-line: undefined-field
+    os.sleep(0)
+end
 
 --- 取得机器事实槽；switch/active/sample 的旧值保留，*Err 只记录最近一次读取失败。
 local function factOf(address)
@@ -149,7 +156,6 @@ local function finishScan(now, devices)
     due.plantSwitch = now
     due.plantSample = now
     due.water = now
-    if host_cycle.needsSample(now) then due.hostProgress = now end
     if activeRequested then due.active = now end
     return false
 end
@@ -294,14 +300,9 @@ local function stepHostSwitch(now)
     local host = machines.of(constants.HOST_LEVEL)[1]
     local fact = state.get().facts.host.switch
     if host then
-        local previous = fact.value
         local value, err = probes.switch(host.address)
         if value ~= nil then
             facts.publish(fact, value)
-            if value ~= previous then
-                local changed = host_cycle.setRunning(value, now)
-                if changed and value then due.hostProgress = now end
-            end
         elseif facts.fail(fact, err or "主机开关读取失败") then
             log.warn("主机开关读取失败：" .. tostring(err or "未知错误"))
         end
@@ -312,56 +313,78 @@ local function stepHostSwitch(now)
     return false
 end
 
---- 条件采样真实进度，其余时间仅推进本地 uptime 进度时钟。
+--- 每 10 秒成对读取主机进度；两次 direct 调用前后都主动 yield。
 local function stepHostProgress(now)
     local host = machines.of(constants.HOST_LEVEL)[1]
     if not host then
         hostProgressState = nil
-        due.hostProgress = math.huge
+        due.hostProgress = now + INTERVAL.hostProgress
         return false
     end
 
     local data = state.get()
     if not hostProgressState then
-        if host_cycle.needsSample(now) then
-            hostProgressState = { phase = "progress" }
-            return true
-        end
-
-        local started = host_cycle.tick(now)
-        if started then
-            activeRequested = true
-            due.active = now
-        end
-        due.hostProgress = host_cycle.nextDue(now)
-        return false
-    end
-
-    if hostProgressState.phase == "progress" then
-        local value, err = probes.progress(host.address)
-        if value == nil then
-            facts.fail(data.facts.host.progress, err or "主机进度读取失败")
-            host_cycle.sampleFailed()
-            hostProgressState = nil
-            due.hostProgress = host_cycle.nextDue(now)
-            return false
-        end
-        hostProgressState = { phase = "max", progress = value }
+        hostProgressState = { phase = "before_progress" }
         return true
     end
 
-    local maxProgress, maxErr = probes.progressMax(host.address)
-    if maxProgress == nil then
-        facts.fail(data.facts.host.progressMax, maxErr or "主机总进度读取失败")
-        maxProgress = data.facts.host.progressMax.value
+    local phase = hostProgressState.phase
+    if phase == "before_progress" then
+        yieldOnce()
+        hostProgressState.phase = "progress"
+        return true
     end
-    local started = host_cycle.observe(hostProgressState.progress, maxProgress, now)
+
+    if phase == "progress" then
+        local value, err = probes.progress(host.address)
+        hostProgressState = {
+            phase = "after_progress",
+            progress = value,
+            progressErr = err,
+        }
+        return true
+    end
+
+    if phase == "after_progress" then
+        yieldOnce()
+        if hostProgressState.progress == nil then
+            facts.fail(data.facts.host.progress,
+                hostProgressState.progressErr or "主机进度读取失败")
+            hostProgressState = nil
+            due.hostProgress = clock.uptime() + INTERVAL.hostProgress
+            return false
+        end
+        hostProgressState.phase = "max"
+        return true
+    end
+
+    if phase == "max" then
+        local maxProgress, maxErr = probes.progressMax(host.address)
+        hostProgressState.maxProgress = maxProgress
+        hostProgressState.maxErr = maxErr
+        hostProgressState.phase = "after_max"
+        return true
+    end
+
+    if phase == "after_max" then
+        yieldOnce()
+        if hostProgressState.maxProgress == nil then
+            facts.fail(data.facts.host.progressMax,
+                hostProgressState.maxErr or "主机总进度读取失败")
+        end
+        local started = host_cycle.observe(
+            hostProgressState.progress, hostProgressState.maxProgress)
+        hostProgressState = nil
+        if started then
+            activeRequested = true
+            due.active = clock.uptime()
+        end
+        due.hostProgress = clock.uptime() + INTERVAL.hostProgress
+        return false
+    end
+
     hostProgressState = nil
-    if started then
-        activeRequested = true
-        due.active = now
-    end
-    due.hostProgress = host_cycle.nextDue(now)
+    due.hostProgress = clock.uptime() + INTERVAL.hostProgress
     return false
 end
 local function newPlantScan()
@@ -499,7 +522,7 @@ function service.step(now)
         if item.state() then return item.run(now) end
     end
 
-    local order = { "scan", "active", "plantSwitch", "plantSample", "hostSwitch", "hostProgress", "energy", "water" }
+    local order = { "scan", "active", "plantSwitch", "plantSample", "hostProgress", "hostSwitch", "energy", "water" }
     for _, key in ipairs(order) do
         if due[key] <= now then
             if key == "scan" then return stepScan(now) end
@@ -519,7 +542,6 @@ end
 function service.requestRefresh()
     scanState = nil
     forceRefresh = true
-    host_cycle.requestSample()
     due.scan = 0
 end
 
@@ -528,8 +550,6 @@ function service.load()
     machines.load(hardware_store.loadLines())
     machines.consumeChanged()
     rebuildLevels()
-    host_cycle.requestSample()
-    due.hostProgress = 0
 end
 
 return service

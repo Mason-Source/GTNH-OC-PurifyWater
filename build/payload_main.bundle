@@ -5640,7 +5640,7 @@ end
 return facts
 
 services/hardware_service.lua
-17262
+17531
 local clock = require("services.clock")
 local constants = require("shared.constants")
 local config = require("shared.config")
@@ -5678,11 +5678,14 @@ local INTERVAL = {
     scan = config.INTERVAL.HARDWARE or 10,
     energy = config.INTERVAL.HARDWARE or 10,
     hostSwitch = config.INTERVAL.HARDWARE or 10,
-    hostProgress = config.INTERVAL.HOST_PROGRESS or 3,
+    hostProgress = config.INTERVAL.HOST_PROGRESS or 10,
     plantSwitch = config.INTERVAL.HARDWARE or 10,
     plantSample = config.INTERVAL.HARDWARE or 10,
     water = config.INTERVAL.WATER or 5,
 }
+local function yieldOnce()
+    os.sleep(0)
+end
 local function factOf(address)
     local machineFacts = state.get().facts.machines
     local fact = machineFacts[address]
@@ -5772,7 +5775,6 @@ local function finishScan(now, devices)
     due.plantSwitch = now
     due.plantSample = now
     due.water = now
-    if host_cycle.needsSample(now) then due.hostProgress = now end
     if activeRequested then due.active = now end
     return false
 end
@@ -5900,14 +5902,9 @@ local function stepHostSwitch(now)
     local host = machines.of(constants.HOST_LEVEL)[1]
     local fact = state.get().facts.host.switch
     if host then
-        local previous = fact.value
         local value, err = probes.switch(host.address)
         if value ~= nil then
             facts.publish(fact, value)
-            if value ~= previous then
-                local changed = host_cycle.setRunning(value, now)
-                if changed and value then due.hostProgress = now end
-            end
         elseif facts.fail(fact, err or "主机开关读取失败") then
             log.warn("主机开关读取失败：" .. tostring(err or "未知错误"))
         end
@@ -5921,47 +5918,66 @@ local function stepHostProgress(now)
     local host = machines.of(constants.HOST_LEVEL)[1]
     if not host then
         hostProgressState = nil
-        due.hostProgress = math.huge
+        due.hostProgress = now + INTERVAL.hostProgress
         return false
     end
     local data = state.get()
     if not hostProgressState then
-        if host_cycle.needsSample(now) then
-            hostProgressState = { phase = "progress" }
-            return true
-        end
-        local started = host_cycle.tick(now)
-        if started then
-            activeRequested = true
-            due.active = now
-        end
-        due.hostProgress = host_cycle.nextDue(now)
-        return false
-    end
-    if hostProgressState.phase == "progress" then
-        local value, err = probes.progress(host.address)
-        if value == nil then
-            facts.fail(data.facts.host.progress, err or "主机进度读取失败")
-            host_cycle.sampleFailed()
-            hostProgressState = nil
-            due.hostProgress = host_cycle.nextDue(now)
-            return false
-        end
-        hostProgressState = { phase = "max", progress = value }
+        hostProgressState = { phase = "before_progress" }
         return true
     end
-    local maxProgress, maxErr = probes.progressMax(host.address)
-    if maxProgress == nil then
-        facts.fail(data.facts.host.progressMax, maxErr or "主机总进度读取失败")
-        maxProgress = data.facts.host.progressMax.value
+    local phase = hostProgressState.phase
+    if phase == "before_progress" then
+        yieldOnce()
+        hostProgressState.phase = "progress"
+        return true
     end
-    local started = host_cycle.observe(hostProgressState.progress, maxProgress, now)
+    if phase == "progress" then
+        local value, err = probes.progress(host.address)
+        hostProgressState = {
+            phase = "after_progress",
+            progress = value,
+            progressErr = err,
+        }
+        return true
+    end
+    if phase == "after_progress" then
+        yieldOnce()
+        if hostProgressState.progress == nil then
+            facts.fail(data.facts.host.progress,
+                hostProgressState.progressErr or "主机进度读取失败")
+            hostProgressState = nil
+            due.hostProgress = clock.uptime() + INTERVAL.hostProgress
+            return false
+        end
+        hostProgressState.phase = "max"
+        return true
+    end
+    if phase == "max" then
+        local maxProgress, maxErr = probes.progressMax(host.address)
+        hostProgressState.maxProgress = maxProgress
+        hostProgressState.maxErr = maxErr
+        hostProgressState.phase = "after_max"
+        return true
+    end
+    if phase == "after_max" then
+        yieldOnce()
+        if hostProgressState.maxProgress == nil then
+            facts.fail(data.facts.host.progressMax,
+                hostProgressState.maxErr or "主机总进度读取失败")
+        end
+        local started = host_cycle.observe(
+            hostProgressState.progress, hostProgressState.maxProgress)
+        hostProgressState = nil
+        if started then
+            activeRequested = true
+            due.active = clock.uptime()
+        end
+        due.hostProgress = clock.uptime() + INTERVAL.hostProgress
+        return false
+    end
     hostProgressState = nil
-    if started then
-        activeRequested = true
-        due.active = now
-    end
-    due.hostProgress = host_cycle.nextDue(now)
+    due.hostProgress = clock.uptime() + INTERVAL.hostProgress
     return false
 end
 local function newPlantScan()
@@ -6085,7 +6101,7 @@ function service.step(now)
     for _, item in ipairs(PENDING) do
         if item.state() then return item.run(now) end
     end
-    local order = { "scan", "active", "plantSwitch", "plantSample", "hostSwitch", "hostProgress", "energy", "water" }
+    local order = { "scan", "active", "plantSwitch", "plantSample", "hostProgress", "hostSwitch", "energy", "water" }
     for _, key in ipairs(order) do
         if due[key] <= now then
             if key == "scan" then return stepScan(now) end
@@ -6103,15 +6119,12 @@ end
 function service.requestRefresh()
     scanState = nil
     forceRefresh = true
-    host_cycle.requestSample()
     due.scan = 0
 end
 function service.load()
     machines.load(hardware_store.loadLines())
     machines.consumeChanged()
     rebuildLevels()
-    host_cycle.requestSample()
-    due.hostProgress = 0
 end
 return service
 
@@ -6299,157 +6312,35 @@ function service.capacity() return CAPACITY end
 return service
 
 services/host_cycle.lua
-4989
-local config = require("shared.config")
+1142
 local state = require("services.state")
 local facts = require("services.facts")
 local host_cycle = {}
-local TICKS_PER_SECOND = (config.HOST_PROGRESS and config.HOST_PROGRESS.TICKS_PER_SECOND) or 20
-local SAFETY_TICKS = (config.HOST_PROGRESS and config.HOST_PROGRESS.SAFETY_TICKS) or 1
-local UI_INTERVAL = (config.INTERVAL and config.INTERVAL.HOST_PROGRESS) or 3
-local model = {
-    confirmedProgress = nil,
-    confirmedMax = nil,
-    sampledAt = nil,
-    estimatedProgress = nil,
-    estimatedMax = nil,
-    nextDisplayAt = 0,
-    sampleRequested = true,
-    running = nil,
-    frozen = false,
-}
 local armed = false
-local function requestSample()
-    model.sampleRequested = true
-    model.nextDisplayAt = 0
-end
-local function sample(progress, maxProgress, now)
-    if type(progress) ~= "number" then return false, "progress is not numeric" end
-    now = tonumber(now) or 0
-    maxProgress = tonumber(maxProgress) or model.confirmedMax
+function host_cycle.observe(progress, maxProgress)
+    if type(progress) ~= "number" then return false end
     local data = state.get()
     local cycle = data.facts.host.cycle
     local previous = cycle.progress
-    facts.publish(data.facts.host.progress, progress)
+    local progressFact = data.facts.host.progress
+    facts.publish(progressFact, progress)
     if type(maxProgress) == "number" then
         facts.publish(data.facts.host.progressMax, maxProgress)
     end
     if previous == nil then
         armed = progress <= 1
-    elseif progress < previous and progress <= 1 then
-        armed = true
+        cycle.progress = progress
+        return false
     end
-    local started = previous ~= nil and (
-        (progress < previous and progress > 1)
+    if progress < previous and progress <= 1 then armed = true end
+    local started = (progress < previous and progress > 1)
         or (armed and previous <= 1 and progress > 1)
-    )
     cycle.progress = progress
-    if started then
-        armed = false
-        cycle.seq = (cycle.seq or 0) + 1
-        cycle.detectedAt = data.facts.host.progress.observedAt
-    end
-    model.confirmedProgress = progress
-    model.confirmedMax = maxProgress
-    model.sampledAt = now
-    model.estimatedProgress = progress
-    model.estimatedMax = maxProgress
-    model.nextDisplayAt = now + UI_INTERVAL
-    model.sampleRequested = false
-    return started, cycle.seq
-end
-local function sampleFailed()
-    model.sampleRequested = false
-end
-local function setRunning(running, now)
-    running = running == true
-    local previous = model.running
-    model.running = running
-    if previous == nil then
-        model.frozen = not running
-        return false
-    end
-    if previous == running then return false end
-    if not running then
-        model.frozen = true
-        model.nextDisplayAt = math.huge
-        return true
-    end
-    model.frozen = false
-    requestSample()
-    return true
-end
-local function tick(now, force)
-    now = tonumber(now) or 0
-    if model.frozen or not model.confirmedProgress or not model.confirmedMax then
-        return false
-    end
-    if not force and now < model.nextDisplayAt then return false end
-    local maxProgress = model.confirmedMax
-    local elapsed = math.max(0, now - (model.sampledAt or now))
-    local rawTicks = math.floor(elapsed * TICKS_PER_SECOND + 0.000001)
-    local safeTicks = math.max(0, rawTicks - SAFETY_TICKS)
-    local remaining = math.max(0, maxProgress - model.confirmedProgress)
-    if remaining > 0 and safeTicks >= remaining then
-        local data = state.get()
-        local cycle = data.facts.host.cycle
-        cycle.seq = (cycle.seq or 0) + 1
-        cycle.detectedAt = now
-        cycle.progress = 0
-        armed = false
-        model.confirmedProgress = 0
-        model.sampledAt = now
-        model.estimatedProgress = 0
-        model.nextDisplayAt = now + UI_INTERVAL
-        state.bump()
-        return true
-    end
-    local estimated = math.min(maxProgress, model.confirmedProgress + safeTicks)
-    if estimated ~= model.estimatedProgress then
-        model.estimatedProgress = estimated
-        state.bump()
-    end
-    model.nextDisplayAt = now + UI_INTERVAL
-    return false
-end
-local function view()
-    local data = state.get()
-    return {
-        progress = model.estimatedProgress or data.facts.host.progress.value,
-        progressMax = model.estimatedMax or data.facts.host.progressMax.value,
-    }
-end
-local function nextDue(now)
-    if model.sampleRequested then return tonumber(now) or 0 end
-    if model.sampledAt == nil or model.frozen or not model.confirmedMax then return math.huge end
-    return model.nextDisplayAt
-end
-local function needsSample(now)
-    return model.sampleRequested
-end
-function host_cycle.observe(progress, maxProgress, now)
-    return sample(progress, maxProgress, now)
-end
-function host_cycle.requestSample()
-    requestSample()
-end
-function host_cycle.sampleFailed()
-    sampleFailed()
-end
-function host_cycle.setRunning(running, now)
-    return setRunning(running, now)
-end
-function host_cycle.tick(now, force)
-    return tick(now, force)
-end
-function host_cycle.view()
-    return view()
-end
-function host_cycle.nextDue(now)
-    return nextDue(now)
-end
-function host_cycle.needsSample(now)
-    return needsSample(now)
+    if not started then return false end
+    armed = false
+    cycle.seq = (cycle.seq or 0) + 1
+    cycle.detectedAt = progressFact.observedAt
+    return true, cycle.seq
 end
 function host_cycle.seq()
     return state.get().facts.host.cycle.seq or 0
@@ -6825,14 +6716,13 @@ end
 return service
 
 services/produce_runtime.lua
-13040
+12978
 local CONFIG = require("shared.config")
 local constants = require("shared.constants")
 local state = require("services.state")
 local log = require("services.log")
 local control = require("services.control")
 local clock = require("services.clock")
-local host_cycle = require("services.host_cycle")
 local probes = require("hardware.probes")
 local gt_infodata = require("hardware.gt_infodata")
 local transposer = require("hardware.transposer")
@@ -7057,9 +6947,8 @@ local function disableLevel(level, status, reason)
 end
 local function spawnCycle(seq, now)
     if seq <= 0 or not control.isRunning(data()) then return end
-    local cycleView = host_cycle.view()
-    local progress = tonumber(cycleView.progress)
-    local maxProgress = tonumber(cycleView.progressMax)
+    local progress = tonumber(data().facts.host.progress.value)
+    local maxProgress = tonumber(data().facts.host.progressMax.value)
     if progress and maxProgress and maxProgress > 0
         and progress / maxProgress > (CONFIG.PRODUCE.CYCLE_CUTOFF or 0.9) then
         return
@@ -8179,12 +8068,11 @@ end
 return produce_store
 
 services/read_model.lua
-10125
+10059
 local constants = require("shared.constants")
 local log = require("services.log")
 local state = require("services.state")
 local facts = require("services.facts")
-local host_cycle = require("services.host_cycle")
 local machines = require("hardware.machines")
 local layout = require("business.produce.layout")
 local util = require("shared.util")
@@ -8345,7 +8233,6 @@ function read_model.snapshot()
         }
     end
     local entries = log.entries()
-    local cycleView = host_cycle.view()
     return {
         version = constants.CODE_VERSION,
         revision = read_model.revision(),
@@ -8386,8 +8273,8 @@ function read_model.snapshot()
         host = {
             switch = data.facts.host.switch.value,
             active = data.facts.host.active.value,
-            progress = cycleView.progress,
-            progressMax = cycleView.progressMax,
+            progress = data.facts.host.progress.value,
+            progressMax = data.facts.host.progressMax.value,
             cycleSeq = data.facts.host.cycle.seq,
         },
         power = {
@@ -9125,18 +9012,14 @@ end
 return work
 
 shared/config.lua
-1482
+1397
 local CONFIG = {
     LOOP_MIN_IDLE = 0.05,
     LOOP_MAX_IDLE = 1.0,
     INTERVAL = {
         HARDWARE = 10,
-        HOST_PROGRESS = 3,
+        HOST_PROGRESS = 10,
         WATER = 5,
-    },
-    HOST_PROGRESS = {
-        TICKS_PER_SECOND = 20,
-        SAFETY_TICKS = 1,
     },
     PRODUCE = {
         SCAN = 10,
