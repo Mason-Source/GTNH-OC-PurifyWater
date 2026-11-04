@@ -2,7 +2,7 @@
 -- PurifyWater/frontend/ui/components/status.lua
 --
 -- 定位：等级状态总览与单级详情组件。
--- 功能：绘制 T1-T8 开关、水量、并行、成功率、周期进度和机器明细。
+-- 功能：绘制 T1-T8 开关、水量、并行、成功率和机器明细；周期条由独立组件绘制。
 -- 边界：只展示 ViewModel，不读取硬件或业务状态。
 --------------------------------------------------------------------------------
 
@@ -13,7 +13,7 @@ local Status = {}
 
 --- 创建等级状态组件。
 function Status.new()
-    local self = Component.new("status", { levels = {}, cycle = {} })
+    local self = Component.new("status", { levels = {} })
     self.fingerprint = Status.fingerprint
     self.render = Status.render
     return self
@@ -21,17 +21,15 @@ end
 
 --- 生成等级状态、详情层级和尺寸的渲染指纹。
 function Status:fingerprint(context)
-    local cycle = self.props.cycle or {}
     local parts = {
         self.key, self.rect.x, self.rect.y, self.rect.w, self.rect.h,
         context.themeId,
         tostring(context.ui.detailLevel or 0),
-        tostring(cycle.text), tostring(math.floor((cycle.ratio or 0) * 100)),
     }
     for level = 1, 8 do
         local row = self.props.levels[level] or {}
         parts[#parts + 1] = table.concat({
-            row.label, tostring(row.switchText), tostring(row.waterOfText),
+            tostring(row.label), tostring(row.switchText), tostring(row.waterOfText),
             tostring(math.floor((row.ratio or 0) * 100)), tostring(row.rateText),
             tostring(row.sample), tostring(row.sampleText), tostring(row.learned),
             tostring(row.suggestText), tostring(row.sampleRole), tostring(row.suggestRole),
@@ -52,6 +50,34 @@ function Status:fingerprint(context)
     return table.concat(parts, "\x1f")
 end
 
+--- 计算周期条区域，并供状态组件和独立进度条组件共用。
+function Status.layoutCycle(rect, measure)
+    local title = "各级净水状态"
+    local label = "运行周期 "
+    local hint = "点某一级看详情 →"
+    local titleY = rect.y + 1
+    local labelX = rect.x + 3 + measure(title)
+    local barX = labelX + measure(label)
+    local pctW = 7
+    local hintW = measure(hint)
+    local pctX = rect.x + rect.w - 2 - pctW
+    local hintShown = pctX - barX > hintW + 2
+    if hintShown then
+        pctX = rect.x + rect.w - 3 - hintW - pctW - 1
+    end
+    return {
+        title = title,
+        titleY = titleY,
+        label = label,
+        labelX = labelX,
+        hint = hint,
+        hintShown = hintShown,
+        barX = barX,
+        barW = math.max(0, pctX - barX - 1),
+        pctX = pctX,
+        pctW = pctW,
+    }
+end
 local function columns(area, weights)
     local out, total = {}, 0
     for _, weight in ipairs(weights) do total = total + weight end
@@ -213,7 +239,6 @@ end
 function Status:render(context)
     local p = context.painter
     local r = self.rect
-    local cycle = self.props.cycle or {}
 
     if context.ui.detailLevel then
         detail(self, context)
@@ -221,28 +246,15 @@ function Status:render(context)
     end
 
     p:panel(r)
-    local titleY = r.y + 1
-    local title = "各级净水状态"
-    p:text(r.x + 2, titleY, title, "accent", "surface", p:measure(title) + 1)
-
-    local label = "运行周期 "
-    local labelX = r.x + 3 + p:measure(title)
-    local barX = labelX + p:measure(label)
-    local pctW = 7
-    local hint = "点某一级看详情 →"
-    local hintW = p:measure(hint)
-    local pctX = r.x + r.w - 2 - pctW
-    if pctX - barX > hintW + 2 then
-        p:textRight(r.x, titleY, r.w - 3, hint, "muted", "surface")
-        pctX = r.x + r.w - 3 - hintW - pctW - 1
+    local cycleLayout = Status.layoutCycle(r, function(text) return p:measure(text) end)
+    p:text(r.x + 2, cycleLayout.titleY, cycleLayout.title, "accent", "surface",
+        p:measure(cycleLayout.title) + 1)
+    if cycleLayout.hintShown then
+        p:textRight(r.x, cycleLayout.titleY, r.w - 3, cycleLayout.hint, "muted", "surface")
     end
-    local barW = pctX - barX - 1
-    if barW >= 8 then
-        p:text(labelX, titleY, label, "muted", "surface")
-        p:bar({ x = barX, y = titleY, w = barW, h = 1 }, cycle.ratio or 0,
-            "cycleFill", "cycleTrack", "cycleTrack")
+    if cycleLayout.barW >= 8 then
+        p:text(cycleLayout.labelX, cycleLayout.titleY, cycleLayout.label, "muted", "surface")
     end
-    p:textRight(pctX, titleY, pctW, tostring(cycle.text or "-"), "accent", "surface")
 
     local top = r.y + 2
     local bottom = r.y + r.h - 2

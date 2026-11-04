@@ -57,6 +57,7 @@ local FILE_LIST_COMMON = {
     "frontend/ui/base.lua",
     "frontend/ui/components/chart.lua",
     "frontend/ui/components/control.lua",
+    "frontend/ui/components/cycle_progress.lua",
     "frontend/ui/components/log.lua",
     "frontend/ui/components/status.lua",
     "frontend/ui/components/tabbar.lua",

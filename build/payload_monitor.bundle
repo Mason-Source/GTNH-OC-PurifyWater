@@ -1,4 +1,4 @@
-PW1	role=monitor	version=v6.0.2	count=24
+PW1	role=monitor	version=v6.0.2	count=25
 core/bootstrap.lua
 1308
 local constants = require("shared.constants")
@@ -698,10 +698,12 @@ end
 return overview
 
 frontend/pages/overview.lua
-1896
+2356
+local unicode = require("unicode")
 local TabBar = require("frontend.ui.components.tabbar")
 local Control = require("frontend.ui.components.control")
 local Status = require("frontend.ui.components.status")
+local CycleProgress = require("frontend.ui.components.cycle_progress")
 local Chart = require("frontend.ui.components.chart")
 local LogPanel = require("frontend.ui.components.log")
 local Page = {}
@@ -711,16 +713,23 @@ function Page.new()
     self.tabbar = TabBar.new()
     self.control = Control.new()
     self.status = Status.new()
+    self.cycle = CycleProgress.new()
     self.chart = Chart.new()
     self.log = LogPanel.new()
-    self.components = { self.tabbar, self.control, self.status, self.chart, self.log }
+    self.components = { self.tabbar, self.control, self.status, self.cycle, self.chart, self.log }
     return self
 end
 function Page:update(view)
     self.view = view
     self.tabbar:setProps({ page = "overview" })
     self.control:setProps(view.control or {})
-    self.status:setProps({ levels = view.levels or {}, cycle = view.cycle or {} })
+    self.status:setProps({ levels = view.levels or {} })
+    local cycle = view.cycle or {}
+    self.cycle:setProps({
+        ratio = cycle.ratio,
+        text = cycle.text,
+        revision = view.revision,
+    })
     self.chart:setProps({ history = view.chart and view.chart.history or { times = {}, values = {} } })
     self.log:setProps({ log = view.logs })
 end
@@ -739,6 +748,10 @@ function Page:layout(width, height)
     local statusH = bodyH >= 30 and 19 or 12
     local chartH = math.max(4, bodyH - statusH - gap)
     self.status:setRect({ x = rightX, y = bodyY, w = rightW, h = statusH })
+    local cycleLayout = Status.layoutCycle(self.status.rect, function(text)
+        return unicode.wlen(tostring(text or ""))
+    end)
+    self.cycle:setLayout(cycleLayout)
     self.chart:setRect({ x = rightX, y = bodyY + statusH + gap, w = rightW, h = chartH })
 end
 return Page
@@ -1229,6 +1242,69 @@ function Control:render(context)
 end
 return Control
 
+frontend/ui/components/cycle_progress.lua
+1934
+local Component = require("frontend.ui.base")
+local CycleProgress = {}
+function CycleProgress.new()
+    local self = Component.new("cycle", { ratio = 0, text = "-" })
+    self.barRect = { x = 1, y = 1, w = 0, h = 1 }
+    self.pctX = 1
+    self.pctW = 7
+    self.showBar = false
+    self.setLayout = CycleProgress.setLayout
+    self.fingerprint = CycleProgress.fingerprint
+    self.render = CycleProgress.render
+    return self
+end
+function CycleProgress:setLayout(layout)
+    self.barRect = {
+        x = layout.barX,
+        y = layout.titleY,
+        w = layout.barW,
+        h = 1,
+    }
+    self.pctX = layout.pctX
+    self.pctW = layout.pctW
+    self.showBar = layout.barW >= 8
+    local x = self.showBar and layout.barX or layout.pctX
+    self:setRect({
+        x = x,
+        y = layout.titleY,
+        w = math.max(1, layout.pctX + layout.pctW - x),
+        h = 1,
+    })
+end
+function CycleProgress:fingerprint(context)
+    if context.ui.detailLevel then
+        return table.concat({ self.key, "detail", self.rect.x, self.rect.y }, ":")
+    end
+    local ratio = tonumber(self.props.ratio) or 0
+    return table.concat({
+        self.key,
+        self.rect.x, self.rect.y, self.rect.w, self.rect.h,
+        context.themeId,
+        tostring(self.showBar),
+        tostring(self.barRect.w),
+        tostring(self.pctW),
+        tostring(math.floor(math.max(0, math.min(1, ratio)) * 100 + 0.5)),
+        tostring(self.props.text or "-"),
+        tostring(self.props.revision or "-"),
+    }, "\x1f")
+end
+function CycleProgress:render(context)
+    if context.ui.detailLevel then return end
+    local p = context.painter
+    p:fill(self.rect, "surface")
+    if self.showBar then
+        p:bar(self.barRect, self.props.ratio or 0,
+            "cycleFill", "cycleTrack", "cycleTrack")
+    end
+    p:textRight(self.pctX, self.rect.y, self.pctW,
+        tostring(self.props.text or "-"), "accent", "surface")
+end
+return CycleProgress
+
 frontend/ui/components/log.lua
 2594
 local unicode = require("unicode")
@@ -1314,29 +1390,27 @@ end
 return LogPanel
 
 frontend/ui/components/status.lua
-12354
+12558
 local Component = require("frontend.ui.base")
 local constants = require("shared.constants")
 local util = require("shared.util")
 local Status = {}
 function Status.new()
-    local self = Component.new("status", { levels = {}, cycle = {} })
+    local self = Component.new("status", { levels = {} })
     self.fingerprint = Status.fingerprint
     self.render = Status.render
     return self
 end
 function Status:fingerprint(context)
-    local cycle = self.props.cycle or {}
     local parts = {
         self.key, self.rect.x, self.rect.y, self.rect.w, self.rect.h,
         context.themeId,
         tostring(context.ui.detailLevel or 0),
-        tostring(cycle.text), tostring(math.floor((cycle.ratio or 0) * 100)),
     }
     for level = 1, 8 do
         local row = self.props.levels[level] or {}
         parts[#parts + 1] = table.concat({
-            row.label, tostring(row.switchText), tostring(row.waterOfText),
+            tostring(row.label), tostring(row.switchText), tostring(row.waterOfText),
             tostring(math.floor((row.ratio or 0) * 100)), tostring(row.rateText),
             tostring(row.sample), tostring(row.sampleText), tostring(row.learned),
             tostring(row.suggestText), tostring(row.sampleRole), tostring(row.suggestRole),
@@ -1355,6 +1429,33 @@ function Status:fingerprint(context)
         end
     end
     return table.concat(parts, "\x1f")
+end
+function Status.layoutCycle(rect, measure)
+    local title = "各级净水状态"
+    local label = "运行周期 "
+    local hint = "点某一级看详情 →"
+    local titleY = rect.y + 1
+    local labelX = rect.x + 3 + measure(title)
+    local barX = labelX + measure(label)
+    local pctW = 7
+    local hintW = measure(hint)
+    local pctX = rect.x + rect.w - 2 - pctW
+    local hintShown = pctX - barX > hintW + 2
+    if hintShown then
+        pctX = rect.x + rect.w - 3 - hintW - pctW - 1
+    end
+    return {
+        title = title,
+        titleY = titleY,
+        label = label,
+        labelX = labelX,
+        hint = hint,
+        hintShown = hintShown,
+        barX = barX,
+        barW = math.max(0, pctX - barX - 1),
+        pctX = pctX,
+        pctW = pctW,
+    }
 end
 local function columns(area, weights)
     local out, total = {}, 0
@@ -1496,33 +1597,20 @@ end
 function Status:render(context)
     local p = context.painter
     local r = self.rect
-    local cycle = self.props.cycle or {}
     if context.ui.detailLevel then
         detail(self, context)
         return
     end
     p:panel(r)
-    local titleY = r.y + 1
-    local title = "各级净水状态"
-    p:text(r.x + 2, titleY, title, "accent", "surface", p:measure(title) + 1)
-    local label = "运行周期 "
-    local labelX = r.x + 3 + p:measure(title)
-    local barX = labelX + p:measure(label)
-    local pctW = 7
-    local hint = "点某一级看详情 →"
-    local hintW = p:measure(hint)
-    local pctX = r.x + r.w - 2 - pctW
-    if pctX - barX > hintW + 2 then
-        p:textRight(r.x, titleY, r.w - 3, hint, "muted", "surface")
-        pctX = r.x + r.w - 3 - hintW - pctW - 1
+    local cycleLayout = Status.layoutCycle(r, function(text) return p:measure(text) end)
+    p:text(r.x + 2, cycleLayout.titleY, cycleLayout.title, "accent", "surface",
+        p:measure(cycleLayout.title) + 1)
+    if cycleLayout.hintShown then
+        p:textRight(r.x, cycleLayout.titleY, r.w - 3, cycleLayout.hint, "muted", "surface")
     end
-    local barW = pctX - barX - 1
-    if barW >= 8 then
-        p:text(labelX, titleY, label, "muted", "surface")
-        p:bar({ x = barX, y = titleY, w = barW, h = 1 }, cycle.ratio or 0,
-            "cycleFill", "cycleTrack", "cycleTrack")
+    if cycleLayout.barW >= 8 then
+        p:text(cycleLayout.labelX, cycleLayout.titleY, cycleLayout.label, "muted", "surface")
     end
-    p:textRight(pctX, titleY, pctW, tostring(cycle.text or "-"), "accent", "surface")
     local top = r.y + 2
     local bottom = r.y + r.h - 2
     local available = math.max(0, bottom - top + 1)
@@ -2008,14 +2096,17 @@ bootstrap.releaseConsole()
 print("镜像端已退出")
 
 services/clock.lua
-236
+319
 local computer = require("computer")
 local clock = {}
 function clock.uptime()
     return computer.uptime()
 end
 function clock.realTime()
-    return computer.realTime()
+    if type(computer.realTime) == "function" then
+        return computer.realTime()
+    end
+    return os.time()
 end
 function clock.cpuTime()
     return os.clock()
@@ -2023,7 +2114,7 @@ end
 return clock
 
 shared/config.lua
-1396
+1482
 local CONFIG = {
     LOOP_MIN_IDLE = 0.05,
     LOOP_MAX_IDLE = 1.0,
@@ -2031,6 +2122,10 @@ local CONFIG = {
         HARDWARE = 10,
         HOST_PROGRESS = 3,
         WATER = 5,
+    },
+    HOST_PROGRESS = {
+        TICKS_PER_SECOND = 20,
+        SAFETY_TICKS = 1,
     },
     PRODUCE = {
         SCAN = 10,

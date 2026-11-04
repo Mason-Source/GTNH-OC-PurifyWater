@@ -12,6 +12,7 @@ local state = require("services.state")
 local log = require("services.log")
 local control = require("services.control")
 local clock = require("services.clock")
+local host_cycle = require("services.host_cycle")
 local probes = require("hardware.probes")
 local gt_infodata = require("hardware.gt_infodata")
 local transposer = require("hardware.transposer")
@@ -273,8 +274,9 @@ end
 --- 在新主机周期为所有就绪且已启用的绑定创建制作任务。
 local function spawnCycle(seq, now)
     if seq <= 0 or not control.isRunning(data()) then return end
-    local progress = tonumber(data().facts.host.progress.value)
-    local maxProgress = tonumber(data().facts.host.progressMax.value)
+    local cycleView = host_cycle.view()
+    local progress = tonumber(cycleView.progress)
+    local maxProgress = tonumber(cycleView.progressMax)
     if progress and maxProgress and maxProgress > 0
         and progress / maxProgress > (CONFIG.PRODUCE.CYCLE_CUTOFF or 0.9) then
         return

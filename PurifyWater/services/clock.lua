@@ -16,8 +16,13 @@ function clock.uptime()
 end
 
 --- 返回 OC 墙钟时间（秒）。
+--- 2.8.4 使用 OpenComputers 1.11.20，沙箱未暴露 computer.realTime；
+--- 仅为该旧版本回退到 os.time()，精度降为整秒。1.12+ 仍使用高精度 realTime。
 function clock.realTime()
-    return computer.realTime()
+    if type(computer.realTime) == "function" then
+        return computer.realTime()
+    end
+    return os.time()
 end
 
 --- 返回当前 Lua 进程 CPU 时间（秒）。

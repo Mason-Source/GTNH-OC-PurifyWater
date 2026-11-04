@@ -6,9 +6,11 @@
 -- 边界：不处理输入或业务命令；只消费 ViewModel。
 --------------------------------------------------------------------------------
 
+local unicode = require("unicode")
 local TabBar = require("frontend.ui.components.tabbar")
 local Control = require("frontend.ui.components.control")
 local Status = require("frontend.ui.components.status")
+local CycleProgress = require("frontend.ui.components.cycle_progress")
 local Chart = require("frontend.ui.components.chart")
 local LogPanel = require("frontend.ui.components.log")
 
@@ -21,9 +23,10 @@ function Page.new()
     self.tabbar = TabBar.new()
     self.control = Control.new()
     self.status = Status.new()
+    self.cycle = CycleProgress.new()
     self.chart = Chart.new()
     self.log = LogPanel.new()
-    self.components = { self.tabbar, self.control, self.status, self.chart, self.log }
+    self.components = { self.tabbar, self.control, self.status, self.cycle, self.chart, self.log }
     return self
 end
 
@@ -32,7 +35,13 @@ function Page:update(view)
     self.view = view
     self.tabbar:setProps({ page = "overview" })
     self.control:setProps(view.control or {})
-    self.status:setProps({ levels = view.levels or {}, cycle = view.cycle or {} })
+    self.status:setProps({ levels = view.levels or {} })
+    local cycle = view.cycle or {}
+    self.cycle:setProps({
+        ratio = cycle.ratio,
+        text = cycle.text,
+        revision = view.revision,
+    })
     self.chart:setProps({ history = view.chart and view.chart.history or { times = {}, values = {} } })
     self.log:setProps({ log = view.logs })
 end
@@ -56,6 +65,10 @@ function Page:layout(width, height)
     local statusH = bodyH >= 30 and 19 or 12
     local chartH = math.max(4, bodyH - statusH - gap)
     self.status:setRect({ x = rightX, y = bodyY, w = rightW, h = statusH })
+    local cycleLayout = Status.layoutCycle(self.status.rect, function(text)
+        return unicode.wlen(tostring(text or ""))
+    end)
+    self.cycle:setLayout(cycleLayout)
     self.chart:setRect({ x = rightX, y = bodyY + statusH + gap, w = rightW, h = chartH })
 end
 
